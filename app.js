@@ -32,23 +32,33 @@ function decodeFlags(line) {
   return found;
 }
 
-function parseBlock(lines) {
-  let i = 0;
+const ON_TIME_RE = /^Nog\s+(\d+)\s+dagen$/i;
+const OVERDUE_RE = /^(\d+)\s+dagen\s+verlopen$/i;
+const ORDER_LABEL_RE = /^order:?$/i;
+const ASSET_LABEL_RE = /^asset:?$/i;
+const MAX_MIDDLE_LINES = 12; // veiligheidsgrens tegen een ontbrekende "Nog X dagen"-regel
+
+// Parseert precies één storing vanaf lines[start] en geeft { storing, next } terug,
+// waarbij `next` de regel-index is waar de volgende storing begint. Er wordt geen
+// lege regel tussen storingen verondersteld: veel paste-bronnen plakken alles
+// direct achter elkaar, dus we lopen de regels aan één stuk door.
+function parseOneEntry(lines, start) {
+  let i = start;
   const type = lines[i++];
-  if (type === undefined) throw new Error('Leeg blok');
+  if (type === undefined) throw new Error('Onverwacht einde van de tekst');
 
   const locLine = lines[i++];
-  if (!locLine) throw new Error('Locatieregel ontbreekt');
+  if (!locLine) throw new Error('Locatieregel ontbreekt na: ' + type);
   const locParts = locLine.split('|').map(s => s.trim());
   if (locParts.length < 3) throw new Error('Locatieregel kon niet worden gesplitst op "|": ' + locLine);
   const [city, street, postcode] = locParts;
 
-  if (!lines[i] || !/^order:?$/i.test(lines[i])) throw new Error('Verwachtte "Order:" label, kreeg: ' + lines[i]);
+  if (!lines[i] || !ORDER_LABEL_RE.test(lines[i])) throw new Error('Verwachtte "Order:" label, kreeg: ' + lines[i]);
   i++;
   const order = lines[i++];
   if (!order || !/^\d{6,12}$/.test(order)) throw new Error('Ordernummer onherkenbaar: ' + order);
 
-  if (!lines[i] || !/^asset:?$/i.test(lines[i])) throw new Error('Verwachtte "Asset:" label, kreeg: ' + lines[i]);
+  if (!lines[i] || !ASSET_LABEL_RE.test(lines[i])) throw new Error('Verwachtte "Asset:" label, kreeg: ' + lines[i]);
   i++;
   const asset = lines[i++];
   if (!asset) throw new Error('Assetnummer ontbreekt');
@@ -57,22 +67,26 @@ function parseBlock(lines) {
     assetType = lines[i++].toUpperCase();
   }
 
-  const onTimeRe = /^Nog\s+(\d+)\s+dagen$/i;
-  const overdueRe = /^(\d+)\s+dagen\s+verlopen$/i;
   const middleLines = [];
-  while (i < lines.length && !onTimeRe.test(lines[i]) && !overdueRe.test(lines[i])) {
+  const middleStart = i;
+  while (i < lines.length && !ON_TIME_RE.test(lines[i]) && !OVERDUE_RE.test(lines[i])) {
+    if (i - middleStart >= MAX_MIDDLE_LINES) {
+      throw new Error(`Geen "Nog X dagen" / "X dagen verlopen" regel gevonden binnen ${MAX_MIDDLE_LINES} regels na order ${order}`);
+    }
     middleLines.push(lines[i++]);
   }
-  if (i >= lines.length) throw new Error('Geen "Nog X dagen" / "X dagen verlopen" regel gevonden');
+  if (i >= lines.length) throw new Error(`Geen "Nog X dagen" / "X dagen verlopen" regel gevonden voor order ${order}`);
   let daysLeft, overdue;
-  const mOn = lines[i].match(onTimeRe);
+  const mOn = lines[i].match(ON_TIME_RE);
   if (mOn) { daysLeft = parseInt(mOn[1], 10); overdue = false; }
-  else { const mOff = lines[i].match(overdueRe); daysLeft = -parseInt(mOff[1], 10); overdue = true; }
+  else { const mOff = lines[i].match(OVERDUE_RE); daysLeft = -parseInt(mOff[1], 10); overdue = true; }
   i++;
 
+  // De uitvoeringsdatum-regel wordt alleen geconsumeerd als hij ook echt op een
+  // datum/"onbekend" lijkt — anders is het de type-regel van de vólgende storing.
   let executionDate = null;
   let executionDateRaw = null;
-  if (i < lines.length) {
+  if (i < lines.length && (/onbekend/i.test(lines[i]) || parseDutchDate(lines[i]))) {
     executionDateRaw = lines[i];
     if (!/onbekend/i.test(lines[i])) executionDate = parseDutchDate(lines[i]);
     i++;
@@ -89,22 +103,42 @@ function parseBlock(lines) {
   flagLines.forEach(fl => { flags = flags.concat(decodeFlags(fl)); });
   flags = [...new Set(flags)];
 
-  return {
+  const storing = {
     type, city, street, postcode, order, asset, assetType,
     wvNaam, flags, daysLeft, overdue, executionDate, executionDateRaw,
-    raw: lines.join('\n'),
+    raw: lines.slice(start, i).join('\n'),
   };
+  return { storing, next: i };
+}
+
+function findNextOrderLabel(lines, from) {
+  for (let j = from; j < lines.length; j++) {
+    if (ORDER_LABEL_RE.test(lines[j])) return j;
+  }
+  return -1;
 }
 
 function parseText(raw) {
-  const blocks = raw.split(/\r?\n\s*\r?\n+/).map(b => b.trim()).filter(b => b.length > 0);
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
   const storingen = [];
   const errors = [];
-  blocks.forEach(block => {
-    const lines = block.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
-    try { storingen.push(parseBlock(lines)); }
-    catch (e) { errors.push({ message: e.message, raw: block }); }
-  });
+  let i = 0;
+  while (i < lines.length) {
+    const start = i;
+    try {
+      const { storing, next } = parseOneEntry(lines, i);
+      storingen.push(storing);
+      i = next;
+    } catch (e) {
+      errors.push({ message: e.message, raw: lines.slice(start, start + 8).join('\n') });
+      // Herstel: zoek de eerstvolgende "Order:"-regel en begin twee regels
+      // daarvoor (type + locatie) opnieuw, zodat één kapot blok niet de rest
+      // van de plak-tekst laat verdwijnen.
+      const nextOrder = findNextOrderLabel(lines, start + 1);
+      if (nextOrder === -1) break;
+      i = Math.max(nextOrder - 2, start + 1);
+    }
+  }
   return { storingen, errors };
 }
 
