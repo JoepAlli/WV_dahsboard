@@ -106,7 +106,6 @@ function parseOneEntry(lines, start) {
   const storing = {
     type, city, street, postcode, order, asset, assetType,
     wvNaam, flags, daysLeft, overdue, executionDate, executionDateRaw,
-    raw: lines.slice(start, i).join('\n'),
   };
   return { storing, next: i };
 }
@@ -145,6 +144,7 @@ function parseText(raw) {
 /* ---------- Storage ---------- */
 
 const STORAGE_KEY = 'nusdash_snapshots_v1';
+const REGIO_MAP_KEY = 'nusdash_regio_map_v1';
 
 function loadSnapshots() {
   try {
@@ -154,12 +154,52 @@ function loadSnapshots() {
 }
 function saveSnapshots(snaps) {
   snaps.sort((a, b) => a.week.localeCompare(b.week));
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(snaps));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(snaps));
+  } catch (e) {
+    throw new Error('Opslag van de browser zit vol. Verwijder een oudere week (onderaan de pagina) en probeer het opnieuw.');
+  }
+}
+
+function loadRegioMap() {
+  try {
+    const raw = localStorage.getItem(REGIO_MAP_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) { console.error(e); return {}; }
+}
+function saveRegioMap(map) {
+  try { localStorage.setItem(REGIO_MAP_KEY, JSON.stringify(map)); }
+  catch (e) { console.error(e); }
+}
+
+function storageUsageBytes() {
+  const raw = (localStorage.getItem(STORAGE_KEY) || '') + (localStorage.getItem(REGIO_MAP_KEY) || '');
+  return new Blob([raw]).size;
 }
 
 /* ---------- Derived helpers ---------- */
 
 function regioOf(s) { return s.city || 'Onbekend'; }
+
+// Vaste regio-indeling: elke plaats wordt door de gebruiker toegewezen aan
+// Haarlem of Leiden; niet-toegewezen plaatsen vallen in "Overig".
+const REGIO_GROUP_ORDER = ['Haarlem', 'Leiden', 'Overig'];
+const REGIO_GROUP_COLOR = { Haarlem: 'var(--series-1)', Leiden: 'var(--series-2)', Overig: 'var(--series-other)' };
+
+function regioGroupOf(s) { return state.regioMap[s.city] || 'Overig'; }
+function regioGroupLabel(g) { return g === 'Overig' ? 'Overig' : `Regio ${g}`; }
+function sortByGroupOrder(names) {
+  return names.slice().sort((a, b) => REGIO_GROUP_ORDER.indexOf(a) - REGIO_GROUP_ORDER.indexOf(b));
+}
+function allCities(snapshots) {
+  const set = new Set();
+  snapshots.forEach(sn => sn.storingen.forEach(s => set.add(s.city)));
+  return Array.from(set).sort();
+}
+function filterByActive(list) {
+  if (state.activeFilter === 'Totaal') return list;
+  return list.filter(s => regioGroupOf(s) === state.activeFilter);
+}
 
 function statusOf(s) {
   if (s.overdue) return 'critical';
@@ -170,15 +210,6 @@ function statusOf(s) {
 const STATUS_LABELS = { good: 'Op tijd', warning: 'Aandacht', serious: 'Bijna verlopen', critical: 'Verlopen' };
 const STATUS_ICONS = { good: '✓', warning: '!', serious: '⚠', critical: '✕' };
 const STATUS_ORDER = ['good', 'warning', 'serious', 'critical'];
-
-function buildRegioColors(snapshots) {
-  const names = new Set();
-  snapshots.forEach(sn => sn.storingen.forEach(s => names.add(regioOf(s))));
-  const sorted = Array.from(names).sort();
-  const map = {};
-  sorted.forEach((name, idx) => { map[name] = idx < 8 ? `var(--series-${idx + 1})` : 'var(--series-other)'; });
-  return map;
-}
 
 function computeMutations(current, previous) {
   if (!previous) return { nieuw: [], uitgegaan: [], hasPrevious: false };
@@ -204,7 +235,8 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s == 
 
 const state = {
   snapshots: [],
-  regioColors: {},
+  regioMap: {},
+  activeFilter: 'Totaal',
   sortState: { key: 'daysLeft', dir: 1 },
   regioViewMode: 'chart',
   trendViewMode: 'chart',
@@ -253,19 +285,19 @@ function renderRegioChart(current) {
   const container = document.getElementById('regio-chart');
   const byRegio = {};
   current.forEach(s => {
-    const r = regioOf(s);
+    const r = regioGroupOf(s);
     if (!byRegio[r]) byRegio[r] = { good: 0, warning: 0, serious: 0, critical: 0, total: 0 };
     byRegio[r][statusOf(s)]++;
     byRegio[r].total++;
   });
-  const regios = Object.keys(byRegio).sort();
+  const regios = sortByGroupOrder(Object.keys(byRegio));
 
   if (regios.length === 0) { container.innerHTML = '<p class="empty-note">Geen data.</p>'; return; }
 
   if (state.regioViewMode === 'table') {
     let rows = regios.map(r => {
       const b = byRegio[r];
-      return `<tr><td>${esc(r)}</td><td class="num">${b.good}</td><td class="num">${b.warning}</td><td class="num">${b.serious}</td><td class="num">${b.critical}</td><td class="num">${b.total}</td></tr>`;
+      return `<tr><td>${esc(regioGroupLabel(r))}</td><td class="num">${b.good}</td><td class="num">${b.warning}</td><td class="num">${b.serious}</td><td class="num">${b.critical}</td><td class="num">${b.total}</td></tr>`;
     }).join('');
     container.innerHTML = `<table><thead><tr><th>Regio</th><th class="num">Op tijd</th><th class="num">Aandacht</th><th class="num">Bijna verlopen</th><th class="num">Verlopen</th><th class="num">Totaal</th></tr></thead><tbody>${rows}</tbody></table>`;
     return;
@@ -296,12 +328,12 @@ function renderRegioChart(current) {
       if (val <= 0) return;
       const h = val * scale;
       const yTop = yCursor - h;
-      bars += `<rect class="seg" data-regio="${esc(r)}" data-status="${st}" data-count="${val}"
+      bars += `<rect class="seg" data-regio="${esc(regioGroupLabel(r))}" data-status="${st}" data-count="${val}"
         x="${x}" y="${yTop + 1}" width="${barW}" height="${Math.max(h - 2, 0)}" rx="3"
         fill="var(--status-${st})" />`;
       yCursor = yTop;
     });
-    bars += `<text x="${x + barW / 2}" y="${topPad + plotH + 20}" text-anchor="middle">${esc(r)}</text>`;
+    bars += `<text x="${x + barW / 2}" y="${topPad + plotH + 20}" text-anchor="middle">${esc(regioGroupLabel(r))}</text>`;
     bars += `<text x="${x + barW / 2}" y="${topPad + plotH - b.total * scale - 6}" text-anchor="middle" style="fill:var(--text-primary);font-weight:600;">${b.total}</text>`;
   });
 
@@ -331,12 +363,12 @@ function renderTrendChart(snapshots) {
     return;
   }
 
-  const regios = Object.keys(state.regioColors).sort();
+  const regios = sortByGroupOrder(Array.from(new Set(snapshots.flatMap(sn => sn.storingen.map(s => regioGroupOf(s))))));
   const series = {};
-  regios.forEach(r => { series[r] = snapshots.map(sn => sn.storingen.filter(s => regioOf(s) === r).length); });
+  regios.forEach(r => { series[r] = snapshots.map(sn => sn.storingen.filter(s => regioGroupOf(s) === r).length); });
 
   if (state.trendViewMode === 'table') {
-    let head = `<th>Week</th>` + regios.map(r => `<th class="num">${esc(r)}</th>`).join('');
+    let head = `<th>Week</th>` + regios.map(r => `<th class="num">${esc(regioGroupLabel(r))}</th>`).join('');
     let rows = snapshots.map((sn, wi) => `<tr><td>${esc(sn.week)}</td>${regios.map(r => `<td class="num">${series[r][wi]}</td>`).join('')}</tr>`).join('');
     container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
     return;
@@ -363,16 +395,16 @@ function renderTrendChart(snapshots) {
   let lines = '';
   let markers = '';
   regios.forEach(r => {
-    const color = state.regioColors[r];
+    const color = REGIO_GROUP_COLOR[r];
     const pts = series[r].map((v, wi) => `${leftPad + wi * stepX},${topPad + plotH - v * scaleY}`).join(' ');
     lines += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />`;
     series[r].forEach((v, wi) => {
       const cx = leftPad + wi * stepX, cy = topPad + plotH - v * scaleY;
-      markers += `<circle class="pt" data-regio="${esc(r)}" data-week="${esc(snapshots[wi].week)}" data-val="${v}" cx="${cx}" cy="${cy}" r="4" fill="${color}" />`;
+      markers += `<circle class="pt" data-regio="${esc(regioGroupLabel(r))}" data-week="${esc(snapshots[wi].week)}" data-val="${v}" cx="${cx}" cy="${cy}" r="4" fill="${color}" />`;
     });
     const lastX = leftPad + (series[r].length - 1) * stepX;
     const lastY = topPad + plotH - series[r][series[r].length - 1] * scaleY;
-    lines += `<text x="${lastX + 8}" y="${lastY + 4}" style="fill:${color};font-weight:600;">${esc(r)}</text>`;
+    lines += `<text x="${lastX + 8}" y="${lastY + 4}" style="fill:${color};font-weight:600;">${esc(regioGroupLabel(r))}</text>`;
   });
 
   container.innerHTML = `
@@ -385,7 +417,7 @@ function renderTrendChart(snapshots) {
       ${xLabels}
     </svg>
     <div class="legend">
-      ${regios.map(r => `<span class="legend-item"><span class="legend-swatch" style="background:${state.regioColors[r]}"></span>${esc(r)}</span>`).join('')}
+      ${regios.map(r => `<span class="legend-item"><span class="legend-swatch" style="background:${REGIO_GROUP_COLOR[r]}"></span>${esc(regioGroupLabel(r))}</span>`).join('')}
     </div>`;
 
   container.querySelectorAll('.pt').forEach(pt => {
@@ -418,7 +450,8 @@ function renderMutationTables(mutations) {
 /* ---------- Rendering: full table ---------- */
 
 const COLUMNS = [
-  { key: 'city', label: 'Regio' },
+  { key: 'regioGroup', label: 'Regio' },
+  { key: 'city', label: 'Plaats' },
   { key: 'street', label: 'Adres' },
   { key: 'order', label: 'Order' },
   { key: 'asset', label: 'Asset' },
@@ -444,7 +477,8 @@ function sortRows(rows) {
 function renderTableAll(current) {
   const container = document.getElementById('table-all');
   if (current.length === 0) { container.innerHTML = '<p class="empty-note">Geen storingen.</p>'; return; }
-  const rows = sortRows(current);
+  const annotated = current.map(s => Object.assign({}, s, { regioGroup: regioGroupOf(s) }));
+  const rows = sortRows(annotated);
   const head = COLUMNS.map(c => {
     const active = state.sortState.key === c.key ? (state.sortState.dir === 1 ? ' ↑' : ' ↓') : '';
     return `<th data-key="${c.key}" class="${c.num ? 'num' : ''}">${esc(c.label)}${active}</th>`;
@@ -456,7 +490,8 @@ function renderTableAll(current) {
       ? s.flags.map(f => `<span class="badge" title="${esc(FLAG_LABELS[f])}">${esc(f)}</span>`).join(' ')
       : '—';
     return `<tr>
-      <td>${esc(regioOf(s))}</td>
+      <td>${esc(regioGroupLabel(s.regioGroup))}</td>
+      <td>${esc(s.city)}</td>
       <td>${esc(s.street)}, ${esc(s.postcode)}</td>
       <td>${esc(s.order)}</td>
       <td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>
@@ -494,6 +529,54 @@ function renderWeeksList() {
   });
 }
 
+function updateStorageUsage() {
+  const el = document.getElementById('storage-usage');
+  if (!el) return;
+  const bytes = storageUsageBytes();
+  const kb = bytes / 1024;
+  const text = kb < 1024 ? `${kb.toFixed(0)} KB` : `${(kb / 1024).toFixed(2)} MB`;
+  el.textContent = `Huidige opslag: ${text} — browsers bieden meestal 5–10 MB per site.`;
+}
+
+/* ---------- Rendering: regio-indeling & filters ---------- */
+
+function renderRegioConfig() {
+  const container = document.getElementById('regio-config');
+  const cities = allCities(state.snapshots);
+  if (cities.length === 0) { container.innerHTML = '<p class="empty-note">Nog geen plaatsen bekend — verwerk eerst een week.</p>'; return; }
+  const rows = cities.map(city => {
+    const current = state.regioMap[city] || 'Overig';
+    const options = REGIO_GROUP_ORDER.map(g => `<option value="${esc(g)}" ${current === g ? 'selected' : ''}>${esc(regioGroupLabel(g))}</option>`).join('');
+    return `<tr><td>${esc(city)}</td><td><select data-city="${esc(city)}">${options}</select></td></tr>`;
+  }).join('');
+  container.innerHTML = `<table><thead><tr><th>Plaats</th><th>Regio</th></tr></thead><tbody>${rows}</tbody></table>`;
+  container.querySelectorAll('select[data-city]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      state.regioMap[sel.dataset.city] = sel.value;
+      saveRegioMap(state.regioMap);
+      renderDashboardFromState();
+    });
+  });
+}
+
+function renderFilterTabs() {
+  const container = document.getElementById('filter-tabs');
+  const latest = state.snapshots[state.snapshots.length - 1];
+  const present = latest ? sortByGroupOrder(Array.from(new Set(latest.storingen.map(s => regioGroupOf(s))))) : [];
+  if (!present.includes(state.activeFilter) && state.activeFilter !== 'Totaal') state.activeFilter = 'Totaal';
+  const tabs = ['Totaal', ...present];
+  container.innerHTML = tabs.map(t => {
+    const active = state.activeFilter === t ? ' active' : '';
+    return `<button class="filter-tab${active}" data-filter="${esc(t)}">${esc(t === 'Totaal' ? 'Totaal' : regioGroupLabel(t))}</button>`;
+  }).join('');
+  container.querySelectorAll('button[data-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.activeFilter = btn.dataset.filter;
+      renderDashboardFromState();
+    });
+  });
+}
+
 /* ---------- Orchestration ---------- */
 
 function renderDashboardFromState() {
@@ -502,15 +585,22 @@ function renderDashboardFromState() {
   if (snaps.length === 0) { document.getElementById('dashboard').classList.add('hidden'); return; }
   const latest = snaps[snaps.length - 1];
   const previous = snaps.length > 1 ? snaps[snaps.length - 2] : null;
-  state.regioColors = buildRegioColors(snaps);
-  const mutations = computeMutations(latest.storingen, previous);
+
+  renderRegioConfig();
+  renderFilterTabs();
+
+  const latestFiltered = filterByActive(latest.storingen);
+  const previousFiltered = previous ? { storingen: filterByActive(previous.storingen) } : null;
+  const mutations = computeMutations(latestFiltered, previousFiltered);
+
   document.getElementById('dashboard').classList.remove('hidden');
-  renderStatTiles(latest.storingen, mutations);
-  renderRegioChart(latest.storingen);
-  renderTrendChart(snaps);
+  renderStatTiles(latestFiltered, mutations);
+  renderRegioChart(latest.storingen); // altijd volledige regio-vergelijking, los van de actieve filtertab
+  renderTrendChart(snaps); // idem
   renderMutationTables(mutations);
-  renderTableAll(latest.storingen);
+  renderTableAll(latestFiltered);
   renderWeeksList();
+  updateStorageUsage();
 }
 
 function showParseWarning(errors, okCount) {
@@ -543,7 +633,12 @@ function wireEvents() {
     const idx = snaps.findIndex(s => s.week === week);
     const snapshot = { week, savedAt: new Date().toISOString(), storingen };
     if (idx >= 0) snaps[idx] = snapshot; else snaps.push(snapshot);
-    saveSnapshots(snaps);
+    try {
+      saveSnapshots(snaps);
+    } catch (err) {
+      statusEl.textContent = err.message;
+      return;
+    }
     state.snapshots = snaps;
 
     renderDashboardFromState();
@@ -581,13 +676,14 @@ function wireEvents() {
     if (state.sortState.key === th.dataset.key) state.sortState.dir *= -1;
     else { state.sortState.key = th.dataset.key; state.sortState.dir = 1; }
     const latest = state.snapshots[state.snapshots.length - 1];
-    if (latest) renderTableAll(latest.storingen);
+    if (latest) renderTableAll(filterByActive(latest.storingen));
   });
 }
 
 function init() {
   document.getElementById('week-date').value = new Date().toISOString().slice(0, 10);
   state.snapshots = loadSnapshots();
+  state.regioMap = loadRegioMap();
   wireEvents();
   if (state.snapshots.length > 0) renderDashboardFromState();
 }

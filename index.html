@@ -29,6 +29,14 @@
 
   <section id="dashboard" class="hidden">
 
+    <section class="card">
+      <h2>Regio-indeling</h2>
+      <p class="muted small">Wijs elke plaats toe aan Regio Haarlem of Regio Leiden. Plaatsen zonder toewijzing tellen mee als "Overig".</p>
+      <div id="regio-config"></div>
+    </section>
+
+    <div class="filter-tabs" id="filter-tabs"></div>
+
     <section class="stat-row" id="stat-tiles"></section>
 
     <section class="card">
@@ -71,6 +79,7 @@
         <h2>Opgeslagen weken</h2>
         <button class="btn-link danger" id="clear-all-btn">Wis alle opgeslagen data</button>
       </div>
+      <div id="storage-usage" class="muted small"></div>
       <div id="weeks-list"></div>
     </section>
 
