@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NUS Dashboard — Weekoverzicht</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="page-header">
+  <h1>NUS Dashboard <span class="muted">— niet-urgente storingen</span></h1>
+  <p class="muted">Tijdelijk lokaal dashboard. Alle data blijft in je browser (localStorage) — er wordt niets verzonden.</p>
+</header>
+
+<main>
+
+  <section class="card" id="input-card">
+    <h2>Nieuwe week verwerken</h2>
+    <p class="muted small">Plak hieronder de volledige lijst van open storingen zoals gekopieerd uit de Instandhoudingsapp.</p>
+    <textarea id="paste-input" rows="10" placeholder="Plak hier de volledige pagina met open storingen…"></textarea>
+    <div class="input-row">
+      <label for="week-date">Weekdatum</label>
+      <input type="date" id="week-date">
+      <button id="process-btn" class="btn-primary">Verwerken &amp; opslaan als deze week</button>
+      <span id="process-status" class="muted small"></span>
+    </div>
+    <div id="parse-warning" class="warning-box hidden"></div>
+  </section>
+
+  <section id="dashboard" class="hidden">
+
+    <section class="stat-row" id="stat-tiles"></section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Open storingen per regio</h2>
+        <button class="btn-link toggle-table" data-target="regio-chart">Toon als tabel</button>
+      </div>
+      <div id="regio-chart"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Trend over tijd</h2>
+        <button class="btn-link toggle-table" data-target="trend-chart">Toon als tabel</button>
+      </div>
+      <div id="trend-chart"></div>
+    </section>
+
+    <section class="card">
+      <h2>Mutaties deze week</h2>
+      <div class="mutations-grid">
+        <div>
+          <h3>Nieuw binnengekomen <span id="count-in" class="badge"></span></h3>
+          <div id="table-in"></div>
+        </div>
+        <div>
+          <h3>Afgesloten / uitgegaan <span id="count-out" class="badge"></span></h3>
+          <div id="table-out"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Volledige lijst — open storingen</h2>
+      <div id="table-all"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Opgeslagen weken</h2>
+        <button class="btn-link danger" id="clear-all-btn">Wis alle opgeslagen data</button>
+      </div>
+      <div id="weeks-list"></div>
+    </section>
+
+  </section>
+
+</main>
+
+<div id="tooltip" class="tooltip hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
