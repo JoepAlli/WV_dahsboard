@@ -38,6 +38,12 @@ const ORDER_LABEL_RE = /^order:?$/i;
 const ASSET_LABEL_RE = /^asset:?$/i;
 const MAX_MIDDLE_LINES = 12; // veiligheidsgrens tegen een ontbrekende "Nog X dagen"-regel
 
+// Een gebiedscode-regel (bv. "ZZE10A") staat los vóór een reeks storingen en geldt
+// voor alle storingen erna, tot de volgende gebiedscode-regel verschijnt. Herkenning:
+// alleen hoofdletters/cijfers, geen spaties — dat onderscheidt hem van een type-regel
+// (die altijd kleine letters/spaties bevat).
+const GEBIEDSCODE_RE = /^[A-Z]+[0-9]+[A-Z]*$/;
+
 // Parseert precies één storing vanaf lines[start] en geeft { storing, next } terug,
 // waarbij `next` de regel-index is waar de volgende storing begint. Er wordt geen
 // lege regel tussen storingen verondersteld: veel paste-bronnen plakken alles
@@ -122,10 +128,17 @@ function parseText(raw) {
   const storingen = [];
   const errors = [];
   let i = 0;
+  let currentGebiedscode = null;
   while (i < lines.length) {
+    while (i < lines.length && GEBIEDSCODE_RE.test(lines[i])) {
+      currentGebiedscode = lines[i];
+      i++;
+    }
+    if (i >= lines.length) break;
     const start = i;
     try {
       const { storing, next } = parseOneEntry(lines, i);
+      storing.gebiedscode = currentGebiedscode;
       storingen.push(storing);
       i = next;
     } catch (e) {
@@ -144,7 +157,16 @@ function parseText(raw) {
 /* ---------- Storage ---------- */
 
 const STORAGE_KEY = 'nusdash_snapshots_v1';
-const REGIO_MAP_KEY = 'nusdash_regio_map_v1';
+const TYPE_WHITELIST_KEY = 'nusdash_type_whitelist_v1';
+
+const DEFAULT_TYPE_WHITELIST = [
+  'Stra[a]t[en] zonder OV Infra',
+  'OV aansluitkabel',
+  'Onveilige situatie/gehele wijk',
+  'Mast geen spanning Infra',
+  'OV Mof',
+  'Branden overdag Infra',
+];
 
 function loadSnapshots() {
   try {
@@ -161,19 +183,19 @@ function saveSnapshots(snaps) {
   }
 }
 
-function loadRegioMap() {
+function loadTypeWhitelist() {
   try {
-    const raw = localStorage.getItem(REGIO_MAP_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch (e) { console.error(e); return {}; }
+    const raw = localStorage.getItem(TYPE_WHITELIST_KEY);
+    return raw ? JSON.parse(raw) : DEFAULT_TYPE_WHITELIST.slice();
+  } catch (e) { console.error(e); return DEFAULT_TYPE_WHITELIST.slice(); }
 }
-function saveRegioMap(map) {
-  try { localStorage.setItem(REGIO_MAP_KEY, JSON.stringify(map)); }
+function saveTypeWhitelist(list) {
+  try { localStorage.setItem(TYPE_WHITELIST_KEY, JSON.stringify(list)); }
   catch (e) { console.error(e); }
 }
 
 function storageUsageBytes() {
-  const raw = (localStorage.getItem(STORAGE_KEY) || '') + (localStorage.getItem(REGIO_MAP_KEY) || '');
+  const raw = (localStorage.getItem(STORAGE_KEY) || '') + (localStorage.getItem(TYPE_WHITELIST_KEY) || '');
   return new Blob([raw]).size;
 }
 
@@ -181,25 +203,31 @@ function storageUsageBytes() {
 
 function regioOf(s) { return s.city || 'Onbekend'; }
 
-// Vaste regio-indeling: elke plaats wordt door de gebruiker toegewezen aan
-// Haarlem of Leiden; niet-toegewezen plaatsen vallen in "Overig".
+// Regio wordt bepaald door de gebiedscode die voor de storing stond in de
+// paste: ZZE9(A/B) en ZZE10(A/B) zijn Regio Haarlem, elke andere gebiedscode
+// is Regio Leiden. Ontbreekt de gebiedscode (bv. oudere paste zonder codes),
+// dan weten we het niet zeker en valt de storing onder "Overig".
 const REGIO_GROUP_ORDER = ['Haarlem', 'Leiden', 'Overig'];
 const REGIO_GROUP_COLOR = { Haarlem: 'var(--series-1)', Leiden: 'var(--series-2)', Overig: 'var(--series-other)' };
 
-function regioGroupOf(s) { return state.regioMap[s.city] || 'Overig'; }
+function regioGroupOf(s) {
+  const code = (s.gebiedscode || '').toUpperCase();
+  if (!code) return 'Overig';
+  if (code.startsWith('ZZE9') || code.startsWith('ZZE10')) return 'Haarlem';
+  return 'Leiden';
+}
 function regioGroupLabel(g) { return g === 'Overig' ? 'Overig' : `Regio ${g}`; }
 function sortByGroupOrder(names) {
   return names.slice().sort((a, b) => REGIO_GROUP_ORDER.indexOf(a) - REGIO_GROUP_ORDER.indexOf(b));
-}
-function allCities(snapshots) {
-  const set = new Set();
-  snapshots.forEach(sn => sn.storingen.forEach(s => set.add(s.city)));
-  return Array.from(set).sort();
 }
 function filterByActive(list) {
   if (state.activeFilter === 'Totaal') return list;
   return list.filter(s => regioGroupOf(s) === state.activeFilter);
 }
+
+// Alleen storingen met een type in de whitelist tellen mee (zie "Type-filter").
+function isTypeIncluded(s) { return state.typeWhitelist.includes(s.type); }
+function typeFiltered(list) { return list.filter(isTypeIncluded); }
 
 function statusOf(s) {
   if (s.overdue) return 'critical';
@@ -235,7 +263,7 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s == 
 
 const state = {
   snapshots: [],
-  regioMap: {},
+  typeWhitelist: [],
   activeFilter: 'Totaal',
   sortState: { key: 'daysLeft', dir: 1 },
   regioViewMode: 'chart',
@@ -363,9 +391,9 @@ function renderTrendChart(snapshots) {
     return;
   }
 
-  const regios = sortByGroupOrder(Array.from(new Set(snapshots.flatMap(sn => sn.storingen.map(s => regioGroupOf(s))))));
+  const regios = sortByGroupOrder(Array.from(new Set(snapshots.flatMap(sn => typeFiltered(sn.storingen).map(s => regioGroupOf(s))))));
   const series = {};
-  regios.forEach(r => { series[r] = snapshots.map(sn => sn.storingen.filter(s => regioGroupOf(s) === r).length); });
+  regios.forEach(r => { series[r] = snapshots.map(sn => typeFiltered(sn.storingen).filter(s => regioGroupOf(s) === r).length); });
 
   if (state.trendViewMode === 'table') {
     let head = `<th>Week</th>` + regios.map(r => `<th class="num">${esc(regioGroupLabel(r))}</th>`).join('');
@@ -451,6 +479,7 @@ function renderMutationTables(mutations) {
 
 const COLUMNS = [
   { key: 'regioGroup', label: 'Regio' },
+  { key: 'gebiedscode', label: 'Gebied' },
   { key: 'city', label: 'Plaats' },
   { key: 'street', label: 'Adres' },
   { key: 'order', label: 'Order' },
@@ -491,6 +520,7 @@ function renderTableAll(current) {
       : '—';
     return `<tr>
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
+      <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
       <td>${esc(s.street)}, ${esc(s.postcode)}</td>
       <td>${esc(s.order)}</td>
@@ -538,31 +568,53 @@ function updateStorageUsage() {
   el.textContent = `Huidige opslag: ${text} — browsers bieden meestal 5–10 MB per site.`;
 }
 
-/* ---------- Rendering: regio-indeling & filters ---------- */
+/* ---------- Rendering: type-filter & regio-filters ---------- */
 
-function renderRegioConfig() {
-  const container = document.getElementById('regio-config');
-  const cities = allCities(state.snapshots);
-  if (cities.length === 0) { container.innerHTML = '<p class="empty-note">Nog geen plaatsen bekend — verwerk eerst een week.</p>'; return; }
-  const rows = cities.map(city => {
-    const current = state.regioMap[city] || 'Overig';
-    const options = REGIO_GROUP_ORDER.map(g => `<option value="${esc(g)}" ${current === g ? 'selected' : ''}>${esc(regioGroupLabel(g))}</option>`).join('');
-    return `<tr><td>${esc(city)}</td><td><select data-city="${esc(city)}">${options}</select></td></tr>`;
-  }).join('');
-  container.innerHTML = `<table><thead><tr><th>Plaats</th><th>Regio</th></tr></thead><tbody>${rows}</tbody></table>`;
-  container.querySelectorAll('select[data-city]').forEach(sel => {
-    sel.addEventListener('change', () => {
-      state.regioMap[sel.dataset.city] = sel.value;
-      saveRegioMap(state.regioMap);
+function renderTypeWhitelist() {
+  const listEl = document.getElementById('type-whitelist');
+  if (state.typeWhitelist.length === 0) {
+    listEl.innerHTML = '<p class="empty-note">Geen types ingesteld — alle storingen worden genegeerd totdat je er een toevoegt.</p>';
+  } else {
+    listEl.innerHTML = state.typeWhitelist.map(t => `
+      <span class="type-chip">${esc(t)}<button class="remove-type" data-type="${esc(t)}" title="Verwijderen">×</button></span>
+    `).join('');
+    listEl.querySelectorAll('.remove-type').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.typeWhitelist = state.typeWhitelist.filter(t => t !== btn.dataset.type);
+        saveTypeWhitelist(state.typeWhitelist);
+        renderDashboardFromState();
+      });
+    });
+  }
+
+  const unknownEl = document.getElementById('type-unknown');
+  const latest = state.snapshots[state.snapshots.length - 1];
+  if (!latest) { unknownEl.classList.add('hidden'); unknownEl.innerHTML = ''; return; }
+  const unknownCounts = {};
+  latest.storingen.forEach(s => {
+    if (!isTypeIncluded(s)) unknownCounts[s.type] = (unknownCounts[s.type] || 0) + 1;
+  });
+  const unknownTypes = Object.keys(unknownCounts);
+  if (unknownTypes.length === 0) { unknownEl.classList.add('hidden'); unknownEl.innerHTML = ''; return; }
+  unknownEl.classList.remove('hidden');
+  unknownEl.innerHTML = `<strong>${unknownTypes.length} onbekend(e) type(s) deze week — niet meegeteld:</strong>` +
+    unknownTypes.map(t => `
+      <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span>${esc(t)} (${unknownCounts[t]}×)</span>
+        <button class="btn-link add-type-btn" data-type="${esc(t)}">+ Meetellen</button>
+      </div>`).join('');
+  unknownEl.querySelectorAll('.add-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!state.typeWhitelist.includes(btn.dataset.type)) state.typeWhitelist.push(btn.dataset.type);
+      saveTypeWhitelist(state.typeWhitelist);
       renderDashboardFromState();
     });
   });
 }
 
-function renderFilterTabs() {
+function renderFilterTabs(latestVisible) {
   const container = document.getElementById('filter-tabs');
-  const latest = state.snapshots[state.snapshots.length - 1];
-  const present = latest ? sortByGroupOrder(Array.from(new Set(latest.storingen.map(s => regioGroupOf(s))))) : [];
+  const present = latestVisible ? sortByGroupOrder(Array.from(new Set(latestVisible.map(s => regioGroupOf(s))))) : [];
   if (!present.includes(state.activeFilter) && state.activeFilter !== 'Totaal') state.activeFilter = 'Totaal';
   const tabs = ['Totaal', ...present];
   container.innerHTML = tabs.map(t => {
@@ -586,16 +638,19 @@ function renderDashboardFromState() {
   const latest = snaps[snaps.length - 1];
   const previous = snaps.length > 1 ? snaps[snaps.length - 2] : null;
 
-  renderRegioConfig();
-  renderFilterTabs();
+  const latestVisible = typeFiltered(latest.storingen);
+  const previousVisible = previous ? typeFiltered(previous.storingen) : null;
 
-  const latestFiltered = filterByActive(latest.storingen);
-  const previousFiltered = previous ? { storingen: filterByActive(previous.storingen) } : null;
+  renderTypeWhitelist();
+  renderFilterTabs(latestVisible);
+
+  const latestFiltered = filterByActive(latestVisible);
+  const previousFiltered = previousVisible ? { storingen: filterByActive(previousVisible) } : null;
   const mutations = computeMutations(latestFiltered, previousFiltered);
 
   document.getElementById('dashboard').classList.remove('hidden');
   renderStatTiles(latestFiltered, mutations);
-  renderRegioChart(latest.storingen); // altijd volledige regio-vergelijking, los van de actieve filtertab
+  renderRegioChart(latestVisible); // altijd volledige regio-vergelijking, los van de actieve filtertab
   renderTrendChart(snaps); // idem
   renderMutationTables(mutations);
   renderTableAll(latestFiltered);
@@ -661,7 +716,7 @@ function wireEvents() {
         state.regioViewMode = state.regioViewMode === 'chart' ? 'table' : 'chart';
         btn.textContent = state.regioViewMode === 'chart' ? 'Toon als tabel' : 'Toon als grafiek';
         const latest = state.snapshots[state.snapshots.length - 1];
-        if (latest) renderRegioChart(latest.storingen);
+        if (latest) renderRegioChart(typeFiltered(latest.storingen));
       } else if (target === 'trend-chart') {
         state.trendViewMode = state.trendViewMode === 'chart' ? 'table' : 'chart';
         btn.textContent = state.trendViewMode === 'chart' ? 'Toon als tabel' : 'Toon als grafiek';
@@ -676,16 +731,27 @@ function wireEvents() {
     if (state.sortState.key === th.dataset.key) state.sortState.dir *= -1;
     else { state.sortState.key = th.dataset.key; state.sortState.dir = 1; }
     const latest = state.snapshots[state.snapshots.length - 1];
-    if (latest) renderTableAll(filterByActive(latest.storingen));
+    if (latest) renderTableAll(filterByActive(typeFiltered(latest.storingen)));
+  });
+
+  document.getElementById('add-type-btn').addEventListener('click', () => {
+    const input = document.getElementById('new-type-input');
+    const val = input.value.trim();
+    if (!val) return;
+    if (!state.typeWhitelist.includes(val)) state.typeWhitelist.push(val);
+    saveTypeWhitelist(state.typeWhitelist);
+    input.value = '';
+    renderDashboardFromState();
   });
 }
 
 function init() {
   document.getElementById('week-date').value = new Date().toISOString().slice(0, 10);
   state.snapshots = loadSnapshots();
-  state.regioMap = loadRegioMap();
+  state.typeWhitelist = loadTypeWhitelist();
   wireEvents();
   if (state.snapshots.length > 0) renderDashboardFromState();
+  else renderTypeWhitelist();
 }
 
 document.addEventListener('DOMContentLoaded', init);

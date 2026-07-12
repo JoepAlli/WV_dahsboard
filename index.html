@@ -15,7 +15,7 @@
 <main>
 
   <section class="card" id="input-card">
-    <h2>Nieuwe week verwerken</h2>
+    <h2>Nieuwe week verwerken — OV NUSsen</h2>
     <p class="muted small">Plak hieronder de volledige lijst van open storingen zoals gekopieerd uit de Instandhoudingsapp.</p>
     <textarea id="paste-input" rows="10" placeholder="Plak hier de volledige pagina met open storingen…"></textarea>
     <div class="input-row">
@@ -27,13 +27,18 @@
     <div id="parse-warning" class="warning-box hidden"></div>
   </section>
 
-  <section id="dashboard" class="hidden">
+  <section class="card" id="type-filter-card">
+    <h2>Type-filter</h2>
+    <p class="muted small">Alleen storingen met een type hieronder tellen mee in het dashboard. Nieuwe/onbekende types uit de laatst verwerkte week verschijnen apart, zodat je ze kan beoordelen.</p>
+    <div id="type-whitelist"></div>
+    <div class="input-row">
+      <input type="text" id="new-type-input" placeholder="Nieuw type handmatig toevoegen…">
+      <button id="add-type-btn" class="btn-link">Toevoegen</button>
+    </div>
+    <div id="type-unknown" class="warning-box hidden"></div>
+  </section>
 
-    <section class="card">
-      <h2>Regio-indeling</h2>
-      <p class="muted small">Wijs elke plaats toe aan Regio Haarlem of Regio Leiden. Plaatsen zonder toewijzing tellen mee als "Overig".</p>
-      <div id="regio-config"></div>
-    </section>
+  <section id="dashboard" class="hidden">
 
     <div class="filter-tabs" id="filter-tabs"></div>
 

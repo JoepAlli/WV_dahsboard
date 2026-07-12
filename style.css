@@ -276,14 +276,35 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   font-weight: 600;
 }
 
-#regio-config select {
-  font-family: inherit;
-  font-size: 0.85rem;
-  padding: 4px 8px;
+.type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--gridline);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 3px 6px 3px 10px;
+  font-size: 0.8rem;
+  margin: 2px 4px 2px 0;
+}
+.type-chip button {
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0 2px;
+}
+#new-type-input {
+  flex: 1;
+  min-width: 200px;
+  padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--page-plane);
   color: var(--text-primary);
+  font-family: inherit;
 }
 
 .weeks-list-row {
