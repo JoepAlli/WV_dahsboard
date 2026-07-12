@@ -44,6 +44,11 @@ const MAX_MIDDLE_LINES = 12; // veiligheidsgrens tegen een ontbrekende "Nog X da
 // (die altijd kleine letters/spaties bevat).
 const GEBIEDSCODE_RE = /^[A-Z]+[0-9]+[A-Z]*$/;
 
+// Titel-/tellingregels zoals "24 Te controleren onderzoeken" bovenaan een paste:
+// beginnen met een getal + spatie + tekst. Ordernummers zijn puur cijfers (geen
+// spatie), dus dit kan nooit een ordernummer raken.
+const COUNT_HEADER_RE = /^\d+\s+\S.*$/;
+
 // Parseert precies één storing vanaf lines[start] en geeft { storing, next } terug,
 // waarbij `next` de regel-index is waar de volgende storing begint. Er wordt geen
 // lege regel tussen storingen verondersteld: veel paste-bronnen plakken alles
@@ -111,7 +116,7 @@ function parseOneEntry(lines, start) {
 
   const storing = {
     type, city, street, postcode, order, asset, assetType,
-    wvNaam, flags, daysLeft, overdue, executionDate, executionDateRaw,
+    wvNaam, names: nameLines, flags, daysLeft, overdue, executionDate, executionDateRaw,
   };
   return { storing, next: i };
 }
@@ -134,6 +139,7 @@ function parseText(raw) {
       currentGebiedscode = lines[i];
       i++;
     }
+    while (i < lines.length && COUNT_HEADER_RE.test(lines[i])) i++;
     if (i >= lines.length) break;
     const start = i;
     try {
@@ -194,9 +200,64 @@ function saveTypeWhitelist(list) {
   catch (e) { console.error(e); }
 }
 
+const TO_STORAGE_KEY = 'nusdash_snapshots_teonderzoeken_v1';
+const MEETDIENST_LIST_KEY = 'nusdash_meetdienst_namen_v1';
+const HANDOFF_LIST_KEY = 'nusdash_handoff_namen_v1';
+const DEFAULT_MEETDIENST_NAMEN = ['Kees Smit', 'Bas M. Oudshoorn'];
+const DEFAULT_HANDOFF_NAMEN = ['Conor', 'Patricia', 'Dulani'];
+
+function loadToSnapshots() {
+  try {
+    const raw = localStorage.getItem(TO_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) { console.error(e); return []; }
+}
+function saveToSnapshots(snaps) {
+  snaps.sort((a, b) => a.week.localeCompare(b.week));
+  try {
+    localStorage.setItem(TO_STORAGE_KEY, JSON.stringify(snaps));
+  } catch (e) {
+    throw new Error('Opslag van de browser zit vol. Verwijder een oudere week (onderaan de pagina) en probeer het opnieuw.');
+  }
+}
+function loadNameList(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback.slice();
+  } catch (e) { console.error(e); return fallback.slice(); }
+}
+function saveNameList(key, list) {
+  try { localStorage.setItem(key, JSON.stringify(list)); }
+  catch (e) { console.error(e); }
+}
+
 function storageUsageBytes() {
-  const raw = (localStorage.getItem(STORAGE_KEY) || '') + (localStorage.getItem(TYPE_WHITELIST_KEY) || '');
+  const keys = [STORAGE_KEY, TYPE_WHITELIST_KEY, TO_STORAGE_KEY, MEETDIENST_LIST_KEY, HANDOFF_LIST_KEY];
+  const raw = keys.map(k => localStorage.getItem(k) || '').join('');
   return new Blob([raw]).size;
+}
+
+// Classificatie voor de "te onderzoeken storingen"-bak:
+// - 1 naam: telt alleen mee als die naam een meetdienst-collega is (anders is
+//   het een andere monteur, niet voor onze werkvoorbereiders).
+// - 2 namen: telt alleen mee als de 2e naam een overdracht-naam is (dan is 'm
+//   overgedragen aan de werkvoorbereiders om in te plannen).
+// - 0 namen: standaard genegeerd, maar zichtbaar in het "genegeerd"-overzicht.
+function classifyTeOnderzoeken(s) {
+  const names = s.names || [];
+  if (names.length === 1) {
+    const isMeetdienst = state.meetdienstNamen.some(m => m.trim().toLowerCase() === names[0].trim().toLowerCase());
+    return isMeetdienst
+      ? { status: 'meetdienst', reden: null }
+      : { status: 'genegeerd', reden: `andere monteur (${names[0]}), niet de meetdienst` };
+  }
+  if (names.length === 2) {
+    const isHandoff = state.handoffNamen.some(h => names[1].toLowerCase().includes(h.trim().toLowerCase()));
+    return isHandoff
+      ? { status: 'werkvoorbereiders', reden: null }
+      : { status: 'genegeerd', reden: `2e naam (${names[1]}) is geen overdracht naar ons` };
+  }
+  return { status: 'genegeerd', reden: 'geen naam vermeld' };
 }
 
 /* ---------- Derived helpers ---------- */
@@ -268,6 +329,10 @@ const state = {
   sortState: { key: 'daysLeft', dir: 1 },
   regioViewMode: 'chart',
   trendViewMode: 'chart',
+  toSnapshots: [],
+  meetdienstNamen: [],
+  handoffNamen: [],
+  toSortState: { key: 'daysLeft', dir: 1 },
 };
 
 /* ---------- Tooltip ---------- */
@@ -629,6 +694,167 @@ function renderFilterTabs(latestVisible) {
   });
 }
 
+/* ---------- Te onderzoeken storingen (tweede bak) ---------- */
+
+function renderNameChipList(containerId, list, onRemove) {
+  const container = document.getElementById(containerId);
+  if (list.length === 0) { container.innerHTML = '<p class="empty-note">Nog geen namen ingesteld.</p>'; return; }
+  container.innerHTML = list.map(n => `<span class="type-chip">${esc(n)}<button class="remove-name" data-name="${esc(n)}" title="Verwijderen">×</button></span>`).join('');
+  container.querySelectorAll('.remove-name').forEach(btn => {
+    btn.addEventListener('click', () => onRemove(btn.dataset.name));
+  });
+}
+
+function renderMeetdienstList() {
+  renderNameChipList('meetdienst-list', state.meetdienstNamen, (name) => {
+    state.meetdienstNamen = state.meetdienstNamen.filter(n => n !== name);
+    saveNameList(MEETDIENST_LIST_KEY, state.meetdienstNamen);
+    renderToDashboardFromState();
+  });
+}
+function renderHandoffList() {
+  renderNameChipList('handoff-list', state.handoffNamen, (name) => {
+    state.handoffNamen = state.handoffNamen.filter(n => n !== name);
+    saveNameList(HANDOFF_LIST_KEY, state.handoffNamen);
+    renderToDashboardFromState();
+  });
+}
+
+function renderToStatTiles(classified) {
+  const el = document.getElementById('to-stat-tiles');
+  const meetdienstCount = classified.filter(c => c.status === 'meetdienst').length;
+  const wvCount = classified.filter(c => c.status === 'werkvoorbereiders').length;
+  const tiles = [
+    { label: 'Totaal relevant', value: meetdienstCount + wvCount },
+    { label: 'Bij meetdienst', value: meetdienstCount, note: 'nog niets aan te doen' },
+    { label: 'Open voor werkvoorbereiders', value: wvCount, note: 'moet ingepland worden' },
+  ];
+  el.innerHTML = tiles.map(t => `
+    <div class="stat-tile">
+      <div class="label">${esc(t.label)}</div>
+      <div class="value">${esc(t.value)}</div>
+      ${t.note ? `<div class="delta muted">${esc(t.note)}</div>` : ''}
+    </div>`).join('');
+}
+
+function renderToIgnored(classified) {
+  const container = document.getElementById('to-ignored');
+  const ignored = classified.filter(c => c.status === 'genegeerd');
+  if (ignored.length === 0) { container.innerHTML = '<p class="empty-note">Niets genegeerd deze week.</p>'; return; }
+  const rows = ignored.map(c => `<tr>
+      <td>${esc(c.storing.order)}</td>
+      <td>${esc(c.storing.city)} — ${esc(c.storing.street)}</td>
+      <td>${esc((c.storing.names || []).join(' → ') || '—')}</td>
+      <td>${esc(c.reden)}</td>
+    </tr>`).join('');
+  container.innerHTML = `<table><thead><tr><th>Order</th><th>Adres</th><th>Naam</th><th>Reden</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+const TO_COLUMNS = [
+  { key: 'regioGroup', label: 'Regio' },
+  { key: 'gebiedscode', label: 'Gebied' },
+  { key: 'city', label: 'Plaats' },
+  { key: 'street', label: 'Adres' },
+  { key: 'order', label: 'Order' },
+  { key: 'toStatusLabel', label: 'Status' },
+  { key: 'namesLabel', label: 'Naam' },
+  { key: 'daysLeft', label: 'Dagen', num: true },
+  { key: 'executionDate', label: 'Uitvoering' },
+  { key: 'type', label: 'Type' },
+];
+
+function sortToRows(rows) {
+  const { key, dir } = state.toSortState;
+  return rows.slice().sort((a, b) => {
+    let va = a[key], vb = b[key];
+    if (va == null) va = '';
+    if (vb == null) vb = '';
+    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+    return String(va).localeCompare(String(vb)) * dir;
+  });
+}
+
+function renderToTableAll(classified) {
+  const container = document.getElementById('to-table-all');
+  const relevant = classified.filter(c => c.status !== 'genegeerd');
+  if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen relevante storingen.</p>'; return; }
+  const annotated = relevant.map(c => Object.assign({}, c.storing, {
+    regioGroup: regioGroupOf(c.storing),
+    toStatusLabel: c.status === 'meetdienst' ? 'Bij meetdienst' : "Open voor WV'ers",
+    namesLabel: (c.storing.names || []).join(' → ') || '—',
+  }));
+  const rows = sortToRows(annotated);
+  const head = TO_COLUMNS.map(col => {
+    const active = state.toSortState.key === col.key ? (state.toSortState.dir === 1 ? ' ↑' : ' ↓') : '';
+    return `<th data-key="${col.key}" class="${col.num ? 'num' : ''}">${esc(col.label)}${active}</th>`;
+  }).join('');
+  const body = rows.map(s => {
+    const status = statusOf(s);
+    const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : `nog ${s.daysLeft} dgn`;
+    return `<tr>
+      <td>${esc(regioGroupLabel(s.regioGroup))}</td>
+      <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
+      <td>${esc(s.city)}</td>
+      <td>${esc(s.street)}, ${esc(s.postcode)}</td>
+      <td>${esc(s.order)}</td>
+      <td>${esc(s.toStatusLabel)}</td>
+      <td>${esc(s.namesLabel)}</td>
+      <td class="num"><span class="status-pill ${status}">${STATUS_ICONS[status]} ${esc(daysText)}</span></td>
+      <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
+      <td>${esc(s.type)}</td>
+    </tr>`;
+  }).join('');
+  container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function renderToWeeksList() {
+  const container = document.getElementById('to-weeks-list');
+  if (state.toSnapshots.length === 0) { container.innerHTML = '<p class="empty-note">Nog geen weken opgeslagen.</p>'; return; }
+  const rows = state.toSnapshots.slice().sort((a, b) => b.week.localeCompare(a.week)).map(sn => `
+    <div class="weeks-list-row">
+      <span>Week van <strong>${esc(sn.week)}</strong> — ${sn.storingen.length} storingen (opgeslagen ${esc(fmtDate(sn.savedAt))})</span>
+      <button class="btn-link danger" data-to-week="${esc(sn.week)}">Verwijderen</button>
+    </div>`).join('');
+  container.innerHTML = rows;
+  container.querySelectorAll('button[data-to-week]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm(`Week ${btn.dataset.toWeek} verwijderen?`)) return;
+      const snaps = loadToSnapshots().filter(s => s.week !== btn.dataset.toWeek);
+      saveToSnapshots(snaps);
+      state.toSnapshots = snaps;
+      if (snaps.length === 0) document.getElementById('to-dashboard').classList.add('hidden');
+      else renderToDashboardFromState();
+      renderToWeeksList();
+    });
+  });
+}
+
+function showToParseWarning(errors, okCount) {
+  const el = document.getElementById('to-parse-warning');
+  if (errors.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = `<strong>${errors.length} van de ${errors.length + okCount} blokken kon niet worden herkend.</strong>
+    <details><summary>Bekijk details</summary>
+      ${errors.map(e => `<div style="margin-top:8px;"><em>${esc(e.message)}</em><pre style="white-space:pre-wrap;font-size:0.75rem;">${esc(e.raw)}</pre></div>`).join('')}
+    </details>`;
+}
+
+function renderToDashboardFromState() {
+  const snaps = state.toSnapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  state.toSnapshots = snaps;
+  renderMeetdienstList();
+  renderHandoffList();
+  if (snaps.length === 0) { document.getElementById('to-dashboard').classList.add('hidden'); return; }
+  const latest = snaps[snaps.length - 1];
+  const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoeken(s)));
+  document.getElementById('to-dashboard').classList.remove('hidden');
+  renderToStatTiles(classified);
+  renderToIgnored(classified);
+  renderToTableAll(classified);
+  renderToWeeksList();
+  updateStorageUsage();
+}
+
 /* ---------- Orchestration ---------- */
 
 function renderDashboardFromState() {
@@ -743,15 +969,93 @@ function wireEvents() {
     input.value = '';
     renderDashboardFromState();
   });
+
+  document.getElementById('to-process-btn').addEventListener('click', () => {
+    const textarea = document.getElementById('to-paste-input');
+    const raw = textarea.value;
+    const statusEl = document.getElementById('to-process-status');
+    const week = document.getElementById('to-week-date').value;
+    if (!raw.trim()) { statusEl.textContent = 'Plak eerst tekst.'; return; }
+    if (!week) { statusEl.textContent = 'Kies een weekdatum.'; return; }
+
+    const { storingen, errors } = parseText(raw);
+    if (storingen.length === 0) {
+      statusEl.textContent = 'Geen storingen herkend — controleer het formaat hieronder.';
+      showToParseWarning(errors, 0);
+      return;
+    }
+
+    const snaps = loadToSnapshots();
+    const idx = snaps.findIndex(s => s.week === week);
+    const snapshot = { week, savedAt: new Date().toISOString(), storingen };
+    if (idx >= 0) snaps[idx] = snapshot; else snaps.push(snapshot);
+    try {
+      saveToSnapshots(snaps);
+    } catch (err) {
+      statusEl.textContent = err.message;
+      return;
+    }
+    state.toSnapshots = snaps;
+
+    renderToDashboardFromState();
+    showToParseWarning(errors, storingen.length);
+    statusEl.textContent = `${storingen.length} storingen verwerkt voor week ${week}` + (errors.length ? `, ${errors.length} regels niet herkend` : '');
+    textarea.value = '';
+  });
+
+  document.getElementById('to-clear-all-btn').addEventListener('click', () => {
+    if (!confirm('Alle opgeslagen weken (te onderzoeken storingen) verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
+    localStorage.removeItem(TO_STORAGE_KEY);
+    state.toSnapshots = [];
+    document.getElementById('to-dashboard').classList.add('hidden');
+  });
+
+  document.getElementById('add-meetdienst-btn').addEventListener('click', () => {
+    const input = document.getElementById('new-meetdienst-input');
+    const val = input.value.trim();
+    if (!val) return;
+    if (!state.meetdienstNamen.includes(val)) state.meetdienstNamen.push(val);
+    saveNameList(MEETDIENST_LIST_KEY, state.meetdienstNamen);
+    input.value = '';
+    renderToDashboardFromState();
+  });
+
+  document.getElementById('add-handoff-btn').addEventListener('click', () => {
+    const input = document.getElementById('new-handoff-input');
+    const val = input.value.trim();
+    if (!val) return;
+    if (!state.handoffNamen.includes(val)) state.handoffNamen.push(val);
+    saveNameList(HANDOFF_LIST_KEY, state.handoffNamen);
+    input.value = '';
+    renderToDashboardFromState();
+  });
+
+  document.getElementById('to-table-all').addEventListener('click', e => {
+    const th = e.target.closest('th[data-key]');
+    if (!th) return;
+    if (state.toSortState.key === th.dataset.key) state.toSortState.dir *= -1;
+    else { state.toSortState.key = th.dataset.key; state.toSortState.dir = 1; }
+    const latest = state.toSnapshots[state.toSnapshots.length - 1];
+    if (latest) {
+      const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoeken(s)));
+      renderToTableAll(classified);
+    }
+  });
 }
 
 function init() {
   document.getElementById('week-date').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('to-week-date').value = new Date().toISOString().slice(0, 10);
   state.snapshots = loadSnapshots();
   state.typeWhitelist = loadTypeWhitelist();
+  state.toSnapshots = loadToSnapshots();
+  state.meetdienstNamen = loadNameList(MEETDIENST_LIST_KEY, DEFAULT_MEETDIENST_NAMEN);
+  state.handoffNamen = loadNameList(HANDOFF_LIST_KEY, DEFAULT_HANDOFF_NAMEN);
   wireEvents();
   if (state.snapshots.length > 0) renderDashboardFromState();
   else renderTypeWhitelist();
+  if (state.toSnapshots.length > 0) renderToDashboardFromState();
+  else { renderMeetdienstList(); renderHandoffList(); }
 }
 
 document.addEventListener('DOMContentLoaded', init);

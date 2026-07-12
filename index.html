@@ -90,6 +90,65 @@
 
   </section>
 
+  <section class="card" id="to-input-card">
+    <h2>Nieuwe week verwerken — Te onderzoeken storingen</h2>
+    <p class="muted small">Plak hieronder de volledige lijst uit de "te onderzoeken"-bak van de Instandhoudingsapp.</p>
+    <textarea id="to-paste-input" rows="10" placeholder="Plak hier de volledige pagina met te onderzoeken storingen…"></textarea>
+    <div class="input-row">
+      <label for="to-week-date">Weekdatum</label>
+      <input type="date" id="to-week-date">
+      <button id="to-process-btn" class="btn-primary">Verwerken &amp; opslaan als deze week</button>
+      <span id="to-process-status" class="muted small"></span>
+    </div>
+    <div id="to-parse-warning" class="warning-box hidden"></div>
+  </section>
+
+  <section class="card" id="to-names-card">
+    <h2>Naamlijsten — te onderzoeken storingen</h2>
+    <p class="muted small">Bij 1 naam telt een storing alleen mee als het een meetdienst-collega is. Bij 2 namen telt hij alleen mee als de 2e naam een overdracht-naam is (dan is 'm overgedragen aan de werkvoorbereiders).</p>
+    <div>
+      <strong class="small">Meetdienst-collega's</strong>
+      <div id="meetdienst-list"></div>
+      <div class="input-row">
+        <input type="text" id="new-meetdienst-input" placeholder="Naam toevoegen…">
+        <button id="add-meetdienst-btn" class="btn-link">Toevoegen</button>
+      </div>
+    </div>
+    <div style="margin-top:16px;">
+      <strong class="small">Overdracht-namen (2e naam)</strong>
+      <div id="handoff-list"></div>
+      <div class="input-row">
+        <input type="text" id="new-handoff-input" placeholder="Naam toevoegen…">
+        <button id="add-handoff-btn" class="btn-link">Toevoegen</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="to-dashboard" class="hidden">
+
+    <section class="stat-row" id="to-stat-tiles"></section>
+
+    <section class="card">
+      <h2>Genegeerd deze week</h2>
+      <p class="muted small">Storingen die niet voor onze werkvoorbereiders zijn (andere monteur, of geen overdracht naar ons).</p>
+      <div id="to-ignored"></div>
+    </section>
+
+    <section class="card">
+      <h2>Volledige lijst — relevante te onderzoeken storingen</h2>
+      <div id="to-table-all"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Opgeslagen weken</h2>
+        <button class="btn-link danger" id="to-clear-all-btn">Wis alle opgeslagen data</button>
+      </div>
+      <div id="to-weeks-list"></div>
+    </section>
+
+  </section>
+
 </main>
 
 <div id="tooltip" class="tooltip hidden"></div>
