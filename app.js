@@ -269,7 +269,7 @@ async function saveTypeWhitelist(list) {
 const TO_STORAGE_KEY = 'nusdash_snapshots_teonderzoeken_v1';
 const MEETDIENST_LIST_KEY = 'nusdash_meetdienst_namen_v1';
 const HANDOFF_LIST_KEY = 'nusdash_handoff_namen_v1';
-const DEFAULT_MEETDIENST_NAMEN = ['Kees Smit', 'Bas M. Oudshoorn'];
+const DEFAULT_MEETDIENST_NAMEN = ['Kees Smit', 'Bas M. Oudshoorn', 'Mark Rollenberg'];
 const DEFAULT_HANDOFF_NAMEN = ['Conor', 'Patricia', 'Dulani'];
 
 async function loadToSnapshots() {
