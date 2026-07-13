@@ -8,8 +8,10 @@
   --baseline:       #c3c2b7;
   --border:         rgba(11,11,11,0.10);
 
-  --series-1: #2a78d6; /* blue */
-  --series-2: #1baf7a; /* aqua */
+  /* Liander-huisstijl: petrolblauw/turquoise + paars (uit het logo), gevalideerd
+     op contrast/CVD-scheiding met scripts/validate_palette.js uit de dataviz-skill. */
+  --series-1: #129AAE; /* Liander teal */
+  --series-2: #A8309B; /* Liander paars */
   --series-3: #eda100; /* yellow */
   --series-4: #008300; /* green */
   --series-5: #4a3aa7; /* violet */
@@ -35,8 +37,8 @@
     --baseline:       #383835;
     --border:         rgba(255,255,255,0.10);
 
-    --series-1: #3987e5;
-    --series-2: #199e70;
+    --series-1: #0C93A8; /* Liander teal (dark) */
+    --series-2: #CE5CC8; /* Liander paars (dark) */
     --series-3: #c98500;
     --series-4: #008300;
     --series-5: #9085e9;
@@ -63,8 +65,17 @@ body {
 
 .page-header {
   padding: 24px clamp(16px, 4vw, 48px) 8px;
+  position: relative;
 }
 .page-header h1 { margin: 0 0 4px; font-size: 1.5rem; }
+.page-header::after {
+  content: "";
+  display: block;
+  margin-top: 16px;
+  height: 4px;
+  background: linear-gradient(90deg, var(--series-1) 0%, var(--series-1) 55%, var(--series-2) 100%);
+  border-radius: 999px;
+}
 
 main {
   padding: 8px clamp(16px, 4vw, 48px) 48px;
@@ -275,6 +286,8 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   color: #fff;
   font-weight: 600;
 }
+#section-to .filter-tab.active { background: var(--series-2); border-color: var(--series-2); }
+#section-to .btn-primary { background: var(--series-2); }
 
 .type-chip {
   display: inline-flex;
@@ -339,6 +352,8 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   white-space: nowrap;
 }
 .section-nav a:hover { background: var(--gridline); color: var(--text-primary); }
+.section-nav a:nth-child(1):hover { background: color-mix(in srgb, var(--series-1) 16%, transparent); color: var(--series-1); }
+.section-nav a:nth-child(2):hover { background: color-mix(in srgb, var(--series-2) 16%, transparent); color: var(--series-2); }
 
 .bucket-section {
   display: flex;
@@ -352,6 +367,12 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   padding-top: 28px;
 }
 
+.section-title {
+  border-left: 4px solid var(--gridline);
+  padding-left: 14px;
+}
+#section-ov .section-title { border-left-color: var(--series-1); }
+#section-to .section-title { border-left-color: var(--series-2); }
 .section-title h1 {
   margin: 0 0 2px;
   font-size: 1.3rem;
