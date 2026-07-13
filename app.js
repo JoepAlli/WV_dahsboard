@@ -877,17 +877,19 @@ function renderToFilterTabs(classifiedRelevant) {
   });
 }
 
-// Handmatige WV-status: alleen zinvol voor storingen die al "open voor
-// werkvoorbereiders" zijn — "bij meetdienst" is per definitie al wachtend.
+// Handmatige WV-status: instelbaar voor elke relevante storing (zowel "bij
+// meetdienst" als "open voor werkvoorbereiders"), zodat je ook kan vastleggen
+// dat een storing bij de meetdienst ligt te wachten op iets specifieks.
 function wvStatusOf(order) { return state.wvStatus[order] || {}; }
 
 function renderToStatTiles(classified) {
   const el = document.getElementById('to-stat-tiles');
   const meetdienstCount = classified.filter(c => c.status === 'meetdienst').length;
   const wvItems = classified.filter(c => c.status === 'werkvoorbereiders');
-  const oppakkenCount = wvItems.filter(c => wvStatusOf(c.storing.order).status === 'oppakken').length;
-  const wachtendCount = wvItems.filter(c => wvStatusOf(c.storing.order).status === 'wachtend').length;
-  const onbepaaldCount = wvItems.length - oppakkenCount - wachtendCount;
+  const relevant = classified.filter(c => c.status !== 'genegeerd');
+  const oppakkenCount = relevant.filter(c => wvStatusOf(c.storing.order).status === 'oppakken').length;
+  const wachtendCount = relevant.filter(c => wvStatusOf(c.storing.order).status === 'wachtend').length;
+  const onbepaaldCount = relevant.length - oppakkenCount - wachtendCount;
   const tiles = [
     { label: 'Totaal relevant', value: meetdienstCount + wvItems.length },
     { label: 'Bij meetdienst', value: meetdienstCount, note: 'nog niets aan te doen' },
@@ -966,7 +968,7 @@ function renderToTableAll(classified) {
     const status = statusOf(s);
     const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : (s.daysLeft === 0 ? 'verloopt vandaag' : `nog ${s.daysLeft} dgn`);
     const wv = wvStatusOf(s.order);
-    const wvCell = s.toStatus !== 'werkvoorbereiders' ? '—' : `
+    const wvCell = `
       <select class="wv-status-select" data-order="${esc(s.order)}">
         <option value="" ${!wv.status ? 'selected' : ''}>— Nog te bepalen —</option>
         <option value="oppakken" ${wv.status === 'oppakken' ? 'selected' : ''}>Moet opgepakt worden</option>
