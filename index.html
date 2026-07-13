@@ -9,10 +9,21 @@
 <body>
 <header class="page-header">
   <h1>NUS Dashboard <span class="muted">— niet-urgente storingen</span></h1>
-  <p class="muted">Tijdelijk lokaal dashboard. Alle data blijft in je browser (localStorage) — er wordt niets verzonden.</p>
+  <p class="muted">Tijdelijk lokaal dashboard. Alle data blijft in je browser (IndexedDB) — er wordt niets verzonden.</p>
 </header>
 
 <main>
+
+  <section class="card" id="backup-card">
+    <h2>Back-up</h2>
+    <p class="muted small">Download een back-upbestand met alle opgeslagen weken en instellingen (beide bakken), of herstel een eerder gedownload back-upbestand.</p>
+    <div class="input-row">
+      <button id="export-backup-btn" class="btn-primary">Exporteer back-up</button>
+      <button id="import-backup-btn" class="btn-link">Importeer back-up…</button>
+      <input type="file" id="import-backup-input" accept="application/json" class="hidden">
+      <span id="backup-status" class="muted small"></span>
+    </div>
+  </section>
 
   <section class="card" id="input-card">
     <h2>Nieuwe week verwerken — OV NUSsen</h2>

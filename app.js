@@ -289,6 +289,44 @@ async function getStorageEstimate() {
   return null;
 }
 
+// Back-up: alle weken (beide bakken) en instellingen (types/namenlijsten) in
+// één downloadbaar JSON-bestand, los van de browseropslag.
+async function exportBackup() {
+  const backup = {
+    exportedAt: new Date().toISOString(),
+    version: 1,
+    ovSnapshots: await loadSnapshots(),
+    typeWhitelist: await loadTypeWhitelist(),
+    teOnderzoekenSnapshots: await loadToSnapshots(),
+    meetdienstNamen: await loadNameList(MEETDIENST_LIST_KEY, DEFAULT_MEETDIENST_NAMEN),
+    handoffNamen: await loadNameList(HANDOFF_LIST_KEY, DEFAULT_HANDOFF_NAMEN),
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `nus-dashboard-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function importBackup(file) {
+  let backup;
+  try {
+    backup = JSON.parse(await file.text());
+  } catch (e) {
+    throw new Error('bestand is geen geldig back-upbestand (JSON kon niet worden gelezen)');
+  }
+  if (!backup || typeof backup !== 'object') throw new Error('bestand is geen geldig back-upbestand');
+  if (Array.isArray(backup.ovSnapshots)) await saveSnapshots(backup.ovSnapshots);
+  if (Array.isArray(backup.typeWhitelist)) await saveTypeWhitelist(backup.typeWhitelist);
+  if (Array.isArray(backup.teOnderzoekenSnapshots)) await saveToSnapshots(backup.teOnderzoekenSnapshots);
+  if (Array.isArray(backup.meetdienstNamen)) await saveNameList(MEETDIENST_LIST_KEY, backup.meetdienstNamen);
+  if (Array.isArray(backup.handoffNamen)) await saveNameList(HANDOFF_LIST_KEY, backup.handoffNamen);
+}
+
 // Classificatie voor de "te onderzoeken storingen"-bak:
 // - 1 naam: telt alleen mee als die naam een meetdienst-collega is (anders is
 //   het een andere monteur, niet voor onze werkvoorbereiders).
@@ -980,7 +1018,48 @@ function showParseWarning(errors, okCount) {
     </details>`;
 }
 
+async function reloadAllStateAndRender() {
+  state.snapshots = await loadSnapshots();
+  state.typeWhitelist = await loadTypeWhitelist();
+  state.toSnapshots = await loadToSnapshots();
+  state.meetdienstNamen = await loadNameList(MEETDIENST_LIST_KEY, DEFAULT_MEETDIENST_NAMEN);
+  state.handoffNamen = await loadNameList(HANDOFF_LIST_KEY, DEFAULT_HANDOFF_NAMEN);
+  if (state.snapshots.length > 0) renderDashboardFromState();
+  else { document.getElementById('dashboard').classList.add('hidden'); renderTypeWhitelist(); }
+  if (state.toSnapshots.length > 0) renderToDashboardFromState();
+  else { document.getElementById('to-dashboard').classList.add('hidden'); renderMeetdienstList(); renderHandoffList(); }
+}
+
 function wireEvents() {
+  document.getElementById('export-backup-btn').addEventListener('click', async () => {
+    const statusEl = document.getElementById('backup-status');
+    try {
+      await exportBackup();
+      statusEl.textContent = 'Back-up gedownload.';
+    } catch (e) {
+      statusEl.textContent = 'Exporteren mislukt: ' + e.message;
+    }
+  });
+
+  document.getElementById('import-backup-btn').addEventListener('click', () => {
+    document.getElementById('import-backup-input').click();
+  });
+
+  document.getElementById('import-backup-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!confirm('Dit overschrijft alle huidige opgeslagen weken en instellingen (beide bakken) met de inhoud van dit back-upbestand. Doorgaan?')) return;
+    const statusEl = document.getElementById('backup-status');
+    try {
+      await importBackup(file);
+      await reloadAllStateAndRender();
+      statusEl.textContent = 'Back-up hersteld.';
+    } catch (e) {
+      statusEl.textContent = 'Importeren mislukt: ' + e.message;
+    }
+  });
+
   document.getElementById('process-btn').addEventListener('click', async () => {
     const textarea = document.getElementById('paste-input');
     const raw = textarea.value;
@@ -1132,16 +1211,8 @@ function wireEvents() {
 async function init() {
   document.getElementById('week-date').value = new Date().toISOString().slice(0, 10);
   document.getElementById('to-week-date').value = new Date().toISOString().slice(0, 10);
-  state.snapshots = await loadSnapshots();
-  state.typeWhitelist = await loadTypeWhitelist();
-  state.toSnapshots = await loadToSnapshots();
-  state.meetdienstNamen = await loadNameList(MEETDIENST_LIST_KEY, DEFAULT_MEETDIENST_NAMEN);
-  state.handoffNamen = await loadNameList(HANDOFF_LIST_KEY, DEFAULT_HANDOFF_NAMEN);
   wireEvents();
-  if (state.snapshots.length > 0) renderDashboardFromState();
-  else renderTypeWhitelist();
-  if (state.toSnapshots.length > 0) renderToDashboardFromState();
-  else { renderMeetdienstList(); renderHandoffList(); }
+  await reloadAllStateAndRender();
 }
 
 document.addEventListener('DOMContentLoaded', init);
