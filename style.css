@@ -296,7 +296,7 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   line-height: 1;
   padding: 0 2px;
 }
-#new-type-input {
+.input-row input[type="text"] {
   flex: 1;
   min-width: 200px;
   padding: 6px 8px;
@@ -315,3 +315,80 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   border-bottom: 1px solid var(--gridline);
   font-size: 0.85rem;
 }
+
+/* ---------- Navigatie & sectie-indeling ---------- */
+
+.section-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  gap: 4px;
+  padding: 8px clamp(16px, 4vw, 48px);
+  background: var(--page-plane);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.section-nav a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.section-nav a:hover { background: var(--gridline); color: var(--text-primary); }
+
+.bucket-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 8px;
+  scroll-margin-top: 52px;
+}
+.bucket-section + .bucket-section {
+  border-top: 2px solid var(--gridline);
+  padding-top: 28px;
+}
+
+.section-title h1 {
+  margin: 0 0 2px;
+  font-size: 1.3rem;
+}
+.section-title p { margin: 0; }
+
+/* Instellingen staat standaard ingeklapt: minder relevant voor het
+   wekelijkse ritme, wel direct bereikbaar via de navigatiebalk. */
+.settings-section {
+  scroll-margin-top: 52px;
+  border-top: 2px solid var(--gridline);
+  padding-top: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.settings-section > .card:not(:first-of-type) { margin-top: 0; }
+.section-title-summary {
+  cursor: pointer;
+  font-size: 1.3rem;
+  font-weight: 600;
+  list-style: none;
+}
+.section-title-summary::-webkit-details-marker { display: none; }
+.section-title-summary::before { content: "▸ "; color: var(--text-muted); }
+.settings-section[open] > .section-title-summary::before { content: "▾ "; }
+.section-subtitle { margin: 2px 0 0; }
+
+/* "Opgeslagen weken" per bak staat standaard ingeklapt (geschiedenis/beheer,
+   geen wekelijks te checken info). */
+.details-card summary {
+  cursor: pointer;
+  font-size: 1.1rem;
+  font-weight: 600;
+  list-style: none;
+}
+.details-card summary::-webkit-details-marker { display: none; }
+.details-card summary::before { content: "▸ "; color: var(--text-muted); font-size: 0.85rem; }
+.details-card[open] summary::before { content: "▾ "; }
+.details-body-header { margin-top: 12px; }

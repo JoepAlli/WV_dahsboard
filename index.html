@@ -12,155 +12,183 @@
   <p class="muted">Tijdelijk lokaal dashboard. Alle data blijft in je browser (IndexedDB) — er wordt niets verzonden.</p>
 </header>
 
+<nav class="section-nav">
+  <a href="#section-ov">OV NUSsen</a>
+  <a href="#section-to">Te onderzoeken storingen</a>
+  <a href="#section-settings">Instellingen</a>
+</nav>
+
 <main>
 
-  <section class="card" id="backup-card">
-    <h2>Back-up</h2>
-    <p class="muted small">Download een back-upbestand met alle opgeslagen weken en instellingen (beide bakken), of herstel een eerder gedownload back-upbestand.</p>
-    <div class="input-row">
-      <button id="export-backup-btn" class="btn-primary">Exporteer back-up</button>
-      <button id="import-backup-btn" class="btn-link">Importeer back-up…</button>
-      <input type="file" id="import-backup-input" accept="application/json" class="hidden">
-      <span id="backup-status" class="muted small"></span>
+  <section class="bucket-section" id="section-ov">
+    <div class="section-title">
+      <h1>OV NUSsen</h1>
+      <p class="muted">Openbare-verlichtingsstoringen — target: 10 werkdagen.</p>
     </div>
-  </section>
 
-  <section class="card" id="input-card">
-    <h2>Nieuwe week verwerken — OV NUSsen</h2>
-    <p class="muted small">Plak hieronder de volledige lijst van open storingen zoals gekopieerd uit de Instandhoudingsapp.</p>
-    <textarea id="paste-input" rows="10" placeholder="Plak hier de volledige pagina met open storingen…"></textarea>
-    <div class="input-row">
-      <label for="week-date">Weekdatum</label>
-      <input type="date" id="week-date">
-      <button id="process-btn" class="btn-primary">Verwerken &amp; opslaan als deze week</button>
-      <span id="process-status" class="muted small"></span>
-    </div>
-    <div id="parse-warning" class="warning-box hidden"></div>
-  </section>
-
-  <section class="card" id="type-filter-card">
-    <h2>Type-filter</h2>
-    <p class="muted small">Alleen storingen met een type hieronder tellen mee in het dashboard. Nieuwe/onbekende types uit de laatst verwerkte week verschijnen apart, zodat je ze kan beoordelen.</p>
-    <div id="type-whitelist"></div>
-    <div class="input-row">
-      <input type="text" id="new-type-input" placeholder="Nieuw type handmatig toevoegen…">
-      <button id="add-type-btn" class="btn-link">Toevoegen</button>
-    </div>
-    <div id="type-unknown" class="warning-box hidden"></div>
-  </section>
-
-  <section id="dashboard" class="hidden">
-
-    <div class="filter-tabs" id="filter-tabs"></div>
-
-    <section class="stat-row" id="stat-tiles"></section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>Open storingen per regio</h2>
-        <button class="btn-link toggle-table" data-target="regio-chart">Toon als tabel</button>
+    <section class="card" id="input-card">
+      <h2>Nieuwe week verwerken</h2>
+      <p class="muted small">Plak hieronder de volledige lijst van open storingen zoals gekopieerd uit de Instandhoudingsapp.</p>
+      <textarea id="paste-input" rows="10" placeholder="Plak hier de volledige pagina met open storingen…"></textarea>
+      <div class="input-row">
+        <label for="week-date">Weekdatum</label>
+        <input type="date" id="week-date">
+        <button id="process-btn" class="btn-primary">Verwerken &amp; opslaan als deze week</button>
+        <span id="process-status" class="muted small"></span>
       </div>
-      <div id="regio-chart"></div>
+      <div id="parse-warning" class="warning-box hidden"></div>
+      <div id="type-unknown" class="warning-box hidden"></div>
     </section>
 
-    <section class="card">
-      <div class="card-header">
-        <h2>Trend over tijd</h2>
-        <button class="btn-link toggle-table" data-target="trend-chart">Toon als tabel</button>
-      </div>
-      <div id="trend-chart"></div>
-    </section>
+    <section id="dashboard" class="hidden">
 
-    <section class="card">
-      <h2>Mutaties deze week</h2>
-      <div class="mutations-grid">
-        <div>
-          <h3>Nieuw binnengekomen <span id="count-in" class="badge"></span></h3>
-          <div id="table-in"></div>
+      <div class="filter-tabs" id="filter-tabs"></div>
+
+      <section class="stat-row" id="stat-tiles"></section>
+
+      <section class="card">
+        <div class="card-header">
+          <h2>Open storingen per regio</h2>
+          <button class="btn-link toggle-table" data-target="regio-chart">Toon als tabel</button>
         </div>
-        <div>
-          <h3>Afgesloten / uitgegaan <span id="count-out" class="badge"></span></h3>
-          <div id="table-out"></div>
+        <div id="regio-chart"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <h2>Trend over tijd</h2>
+          <button class="btn-link toggle-table" data-target="trend-chart">Toon als tabel</button>
         </div>
+        <div id="trend-chart"></div>
+      </section>
+
+      <section class="card">
+        <h2>Mutaties deze week</h2>
+        <div class="mutations-grid">
+          <div>
+            <h3>Nieuw binnengekomen <span id="count-in" class="badge"></span></h3>
+            <div id="table-in"></div>
+          </div>
+          <div>
+            <h3>Afgesloten / uitgegaan <span id="count-out" class="badge"></span></h3>
+            <div id="table-out"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Volledige lijst — open storingen</h2>
+        <div id="table-all"></div>
+      </section>
+
+      <details class="card details-card">
+        <summary>Opgeslagen weken</summary>
+        <div class="card-header details-body-header">
+          <span></span>
+          <button class="btn-link danger" id="clear-all-btn">Wis alle opgeslagen data</button>
+        </div>
+        <div id="weeks-list"></div>
+      </details>
+
+    </section>
+  </section>
+
+  <section class="bucket-section" id="section-to">
+    <div class="section-title">
+      <h1>Te onderzoeken storingen</h1>
+      <p class="muted">Onderzoek bij de meetdienst, of overgedragen aan de werkvoorbereiders om in te plannen.</p>
+    </div>
+
+    <section class="card" id="to-input-card">
+      <h2>Nieuwe week verwerken</h2>
+      <p class="muted small">Plak hieronder de volledige lijst uit de "te onderzoeken"-bak van de Instandhoudingsapp.</p>
+      <textarea id="to-paste-input" rows="10" placeholder="Plak hier de volledige pagina met te onderzoeken storingen…"></textarea>
+      <div class="input-row">
+        <label for="to-week-date">Weekdatum</label>
+        <input type="date" id="to-week-date">
+        <button id="to-process-btn" class="btn-primary">Verwerken &amp; opslaan als deze week</button>
+        <span id="to-process-status" class="muted small"></span>
       </div>
+      <div id="to-parse-warning" class="warning-box hidden"></div>
     </section>
 
-    <section class="card">
-      <h2>Volledige lijst — open storingen</h2>
-      <div id="table-all"></div>
-    </section>
+    <section id="to-dashboard" class="hidden">
 
-    <section class="card">
-      <div class="card-header">
-        <h2>Opgeslagen weken</h2>
-        <button class="btn-link danger" id="clear-all-btn">Wis alle opgeslagen data</button>
+      <div class="filter-tabs" id="to-filter-tabs"></div>
+
+      <section class="stat-row" id="to-stat-tiles"></section>
+
+      <section class="card">
+        <h2>Genegeerd deze week</h2>
+        <p class="muted small">Storingen die niet voor onze werkvoorbereiders zijn (andere monteur, of geen overdracht naar ons).</p>
+        <div id="to-ignored"></div>
+      </section>
+
+      <section class="card">
+        <h2>Volledige lijst — relevante te onderzoeken storingen</h2>
+        <div id="to-table-all"></div>
+      </section>
+
+      <details class="card details-card">
+        <summary>Opgeslagen weken</summary>
+        <div class="card-header details-body-header">
+          <span></span>
+          <button class="btn-link danger" id="to-clear-all-btn">Wis alle opgeslagen data</button>
+        </div>
+        <div id="to-weeks-list"></div>
+      </details>
+
+    </section>
+  </section>
+
+  <details class="settings-section" id="section-settings">
+    <summary class="section-title-summary">⚙ Instellingen</summary>
+    <p class="muted section-subtitle">Back-up, type-filter en naamlijsten — dingen die je niet elke week hoeft aan te passen.</p>
+
+    <section class="card" id="backup-card">
+      <h2>Back-up</h2>
+      <p class="muted small">Download een back-upbestand met alle opgeslagen weken en instellingen (beide bakken), of herstel een eerder gedownload back-upbestand.</p>
+      <div class="input-row">
+        <button id="export-backup-btn" class="btn-primary">Exporteer back-up</button>
+        <button id="import-backup-btn" class="btn-link">Importeer back-up…</button>
+        <input type="file" id="import-backup-input" accept="application/json" class="hidden">
+        <span id="backup-status" class="muted small"></span>
       </div>
       <div id="storage-usage" class="muted small"></div>
-      <div id="weeks-list"></div>
     </section>
 
-  </section>
-
-  <section class="card" id="to-input-card">
-    <h2>Nieuwe week verwerken — Te onderzoeken storingen</h2>
-    <p class="muted small">Plak hieronder de volledige lijst uit de "te onderzoeken"-bak van de Instandhoudingsapp.</p>
-    <textarea id="to-paste-input" rows="10" placeholder="Plak hier de volledige pagina met te onderzoeken storingen…"></textarea>
-    <div class="input-row">
-      <label for="to-week-date">Weekdatum</label>
-      <input type="date" id="to-week-date">
-      <button id="to-process-btn" class="btn-primary">Verwerken &amp; opslaan als deze week</button>
-      <span id="to-process-status" class="muted small"></span>
-    </div>
-    <div id="to-parse-warning" class="warning-box hidden"></div>
-  </section>
-
-  <section class="card" id="to-names-card">
-    <h2>Naamlijsten — te onderzoeken storingen</h2>
-    <p class="muted small">Bij 1 naam telt een storing alleen mee als het een meetdienst-collega is. Bij 2 namen telt hij alleen mee als de 2e naam een overdracht-naam is (dan is 'm overgedragen aan de werkvoorbereiders).</p>
-    <div>
-      <strong class="small">Meetdienst-collega's</strong>
-      <div id="meetdienst-list"></div>
+    <section class="card" id="type-filter-card">
+      <h2>Type-filter — OV NUSsen</h2>
+      <p class="muted small">Alleen storingen met een type hieronder tellen mee in het OV NUSsen-dashboard.</p>
+      <div id="type-whitelist"></div>
       <div class="input-row">
-        <input type="text" id="new-meetdienst-input" placeholder="Naam toevoegen…">
-        <button id="add-meetdienst-btn" class="btn-link">Toevoegen</button>
+        <input type="text" id="new-type-input" placeholder="Nieuw type handmatig toevoegen…">
+        <button id="add-type-btn" class="btn-link">Toevoegen</button>
       </div>
-    </div>
-    <div style="margin-top:16px;">
-      <strong class="small">Overdracht-namen (2e naam)</strong>
-      <div id="handoff-list"></div>
-      <div class="input-row">
-        <input type="text" id="new-handoff-input" placeholder="Naam toevoegen…">
-        <button id="add-handoff-btn" class="btn-link">Toevoegen</button>
-      </div>
-    </div>
-  </section>
-
-  <section id="to-dashboard" class="hidden">
-
-    <div class="filter-tabs" id="to-filter-tabs"></div>
-
-    <section class="stat-row" id="to-stat-tiles"></section>
-
-    <section class="card">
-      <h2>Genegeerd deze week</h2>
-      <p class="muted small">Storingen die niet voor onze werkvoorbereiders zijn (andere monteur, of geen overdracht naar ons).</p>
-      <div id="to-ignored"></div>
     </section>
 
-    <section class="card">
-      <h2>Volledige lijst — relevante te onderzoeken storingen</h2>
-      <div id="to-table-all"></div>
-    </section>
-
-    <section class="card">
-      <div class="card-header">
-        <h2>Opgeslagen weken</h2>
-        <button class="btn-link danger" id="to-clear-all-btn">Wis alle opgeslagen data</button>
+    <section class="card" id="to-names-card">
+      <h2>Naamlijsten — te onderzoeken storingen</h2>
+      <p class="muted small">Bij 1 naam telt een storing alleen mee als het een meetdienst-collega is. Bij 2 namen telt hij alleen mee als de 2e naam een overdracht-naam is (dan is 'm overgedragen aan de werkvoorbereiders).</p>
+      <div>
+        <strong class="small">Meetdienst-collega's</strong>
+        <div id="meetdienst-list"></div>
+        <div class="input-row">
+          <input type="text" id="new-meetdienst-input" placeholder="Naam toevoegen…">
+          <button id="add-meetdienst-btn" class="btn-link">Toevoegen</button>
+        </div>
       </div>
-      <div id="to-weeks-list"></div>
+      <div style="margin-top:16px;">
+        <strong class="small">Overdracht-namen (2e naam)</strong>
+        <div id="handoff-list"></div>
+        <div class="input-row">
+          <input type="text" id="new-handoff-input" placeholder="Naam toevoegen…">
+          <button id="add-handoff-btn" class="btn-link">Toevoegen</button>
+        </div>
+      </div>
     </section>
 
-  </section>
+  </details>
 
 </main>
 

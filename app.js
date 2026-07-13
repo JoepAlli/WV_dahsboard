@@ -34,6 +34,7 @@ function decodeFlags(line) {
 
 const ON_TIME_RE = /^Nog\s+(\d+)\s+dagen$/i;
 const OVERDUE_RE = /^(\d+)\s+dagen\s+verlopen$/i;
+const TODAY_RE = /^Verloopt\s+vandaag$/i;
 const ORDER_LABEL_RE = /^order:?$/i;
 const ASSET_LABEL_RE = /^asset:?$/i;
 const MAX_MIDDLE_LINES = 12; // veiligheidsgrens tegen een ontbrekende "Nog X dagen"-regel
@@ -80,16 +81,17 @@ function parseOneEntry(lines, start) {
 
   const middleLines = [];
   const middleStart = i;
-  while (i < lines.length && !ON_TIME_RE.test(lines[i]) && !OVERDUE_RE.test(lines[i])) {
+  while (i < lines.length && !ON_TIME_RE.test(lines[i]) && !OVERDUE_RE.test(lines[i]) && !TODAY_RE.test(lines[i])) {
     if (i - middleStart >= MAX_MIDDLE_LINES) {
-      throw new Error(`Geen "Nog X dagen" / "X dagen verlopen" regel gevonden binnen ${MAX_MIDDLE_LINES} regels na order ${order}`);
+      throw new Error(`Geen dagen-regel gevonden binnen ${MAX_MIDDLE_LINES} regels na order ${order}`);
     }
     middleLines.push(lines[i++]);
   }
-  if (i >= lines.length) throw new Error(`Geen "Nog X dagen" / "X dagen verlopen" regel gevonden voor order ${order}`);
+  if (i >= lines.length) throw new Error(`Geen dagen-regel gevonden voor order ${order}`);
   let daysLeft, overdue;
   const mOn = lines[i].match(ON_TIME_RE);
   if (mOn) { daysLeft = parseInt(mOn[1], 10); overdue = false; }
+  else if (TODAY_RE.test(lines[i])) { daysLeft = 0; overdue = false; }
   else { const mOff = lines[i].match(OVERDUE_RE); daysLeft = -parseInt(mOff[1], 10); overdue = true; }
   i++;
 
@@ -670,7 +672,7 @@ function renderTableAll(current) {
   }).join('');
   const body = rows.map(s => {
     const status = statusOf(s);
-    const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : `nog ${s.daysLeft} dgn`;
+    const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : (s.daysLeft === 0 ? 'verloopt vandaag' : `nog ${s.daysLeft} dgn`);
     const flagsHtml = s.flags.length
       ? s.flags.map(f => `<span class="badge" title="${esc(FLAG_LABELS[f])}">${esc(f)}</span>`).join(' ')
       : '—';
@@ -732,23 +734,28 @@ async function updateStorageUsage() {
 
 /* ---------- Rendering: type-filter & regio-filters ---------- */
 
+// Configuratie (in "Instellingen"): de lijst met meetellende types zelf.
 function renderTypeWhitelist() {
   const listEl = document.getElementById('type-whitelist');
   if (state.typeWhitelist.length === 0) {
     listEl.innerHTML = '<p class="empty-note">Geen types ingesteld — alle storingen worden genegeerd totdat je er een toevoegt.</p>';
-  } else {
-    listEl.innerHTML = state.typeWhitelist.map(t => `
-      <span class="type-chip">${esc(t)}<button class="remove-type" data-type="${esc(t)}" title="Verwijderen">×</button></span>
-    `).join('');
-    listEl.querySelectorAll('.remove-type').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        state.typeWhitelist = state.typeWhitelist.filter(t => t !== btn.dataset.type);
-        await saveTypeWhitelist(state.typeWhitelist);
-        renderDashboardFromState();
-      });
-    });
+    return;
   }
+  listEl.innerHTML = state.typeWhitelist.map(t => `
+    <span class="type-chip">${esc(t)}<button class="remove-type" data-type="${esc(t)}" title="Verwijderen">×</button></span>
+  `).join('');
+  listEl.querySelectorAll('.remove-type').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      state.typeWhitelist = state.typeWhitelist.filter(t => t !== btn.dataset.type);
+      await saveTypeWhitelist(state.typeWhitelist);
+      renderDashboardFromState();
+    });
+  });
+}
 
+// Wekelijks signaal (in de OV NUSsen-sectie zelf, niet in Instellingen):
+// welke types uit de laatst verwerkte week niet meetellen.
+function renderTypeUnknownReview() {
   const unknownEl = document.getElementById('type-unknown');
   const latest = state.snapshots[state.snapshots.length - 1];
   if (!latest) { unknownEl.classList.add('hidden'); unknownEl.innerHTML = ''; return; }
@@ -909,7 +916,7 @@ function renderToTableAll(classified) {
   }).join('');
   const body = rows.map(s => {
     const status = statusOf(s);
-    const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : `nog ${s.daysLeft} dgn`;
+    const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : (s.daysLeft === 0 ? 'verloopt vandaag' : `nog ${s.daysLeft} dgn`);
     return `<tr>
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
@@ -992,6 +999,7 @@ function renderDashboardFromState() {
   const previousVisible = previous ? typeFiltered(previous.storingen) : null;
 
   renderTypeWhitelist();
+  renderTypeUnknownReview();
   renderFilterTabs(latestVisible);
 
   const latestFiltered = filterByActive(latestVisible);
@@ -1025,7 +1033,7 @@ async function reloadAllStateAndRender() {
   state.meetdienstNamen = await loadNameList(MEETDIENST_LIST_KEY, DEFAULT_MEETDIENST_NAMEN);
   state.handoffNamen = await loadNameList(HANDOFF_LIST_KEY, DEFAULT_HANDOFF_NAMEN);
   if (state.snapshots.length > 0) renderDashboardFromState();
-  else { document.getElementById('dashboard').classList.add('hidden'); renderTypeWhitelist(); }
+  else { document.getElementById('dashboard').classList.add('hidden'); renderTypeWhitelist(); renderTypeUnknownReview(); }
   if (state.toSnapshots.length > 0) renderToDashboardFromState();
   else { document.getElementById('to-dashboard').classList.add('hidden'); renderMeetdienstList(); renderHandoffList(); }
 }
