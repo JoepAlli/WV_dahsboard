@@ -249,6 +249,23 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   padding: 2px 8px;
   border-radius: 999px;
 }
+
+.wv-status-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 170px;
+}
+.wv-status-cell select,
+.wv-status-cell input[type="text"] {
+  font-family: inherit;
+  font-size: 0.8rem;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--page-plane);
+  color: var(--text-primary);
+}
 .status-pill.good { color: var(--status-good); background: color-mix(in srgb, var(--status-good) 15%, transparent); }
 .status-pill.warning { color: #9a6b00; background: color-mix(in srgb, var(--status-warning) 25%, transparent); }
 .status-pill.serious { color: var(--status-serious); background: color-mix(in srgb, var(--status-serious) 18%, transparent); }

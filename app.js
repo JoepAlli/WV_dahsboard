@@ -294,6 +294,20 @@ async function saveNameList(key, list) {
   catch (e) { console.error(e); }
 }
 
+// Handmatige WV-status ("Moet opgepakt worden" / "Wachtend op iets") per
+// storing, bijgehouden op ordernummer zodat het meeloopt als dezelfde
+// storing de week erna opnieuw wordt geplakt. Onafhankelijk van de
+// wekelijkse snapshots zelf.
+const WV_STATUS_KEY = 'nusdash_wv_status_v1';
+async function loadWvStatusMap() {
+  try { return (await idbGet(WV_STATUS_KEY)) || {}; }
+  catch (e) { console.error(e); return {}; }
+}
+async function saveWvStatusMap(map) {
+  try { await idbSet(WV_STATUS_KEY, map); }
+  catch (e) { console.error(e); }
+}
+
 async function getStorageEstimate() {
   if (navigator.storage && navigator.storage.estimate) {
     try { return await navigator.storage.estimate(); }
@@ -313,6 +327,7 @@ async function exportBackup() {
     teOnderzoekenSnapshots: await loadToSnapshots(),
     meetdienstNamen: await loadNameList(MEETDIENST_LIST_KEY, DEFAULT_MEETDIENST_NAMEN),
     handoffNamen: await loadNameList(HANDOFF_LIST_KEY, DEFAULT_HANDOFF_NAMEN),
+    wvStatus: await loadWvStatusMap(),
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -338,6 +353,7 @@ async function importBackup(file) {
   if (Array.isArray(backup.teOnderzoekenSnapshots)) await saveToSnapshots(backup.teOnderzoekenSnapshots);
   if (Array.isArray(backup.meetdienstNamen)) await saveNameList(MEETDIENST_LIST_KEY, backup.meetdienstNamen);
   if (Array.isArray(backup.handoffNamen)) await saveNameList(HANDOFF_LIST_KEY, backup.handoffNamen);
+  if (backup.wvStatus && typeof backup.wvStatus === 'object') await saveWvStatusMap(backup.wvStatus);
 }
 
 // Classificatie voor de "te onderzoeken storingen"-bak:
@@ -437,6 +453,7 @@ const state = {
   handoffNamen: [],
   toSortState: { key: 'daysLeft', dir: 1 },
   toActiveFilter: 'Totaal',
+  wvStatus: {},
 };
 
 /* ---------- Tooltip ---------- */
@@ -860,14 +877,23 @@ function renderToFilterTabs(classifiedRelevant) {
   });
 }
 
+// Handmatige WV-status: alleen zinvol voor storingen die al "open voor
+// werkvoorbereiders" zijn — "bij meetdienst" is per definitie al wachtend.
+function wvStatusOf(order) { return state.wvStatus[order] || {}; }
+
 function renderToStatTiles(classified) {
   const el = document.getElementById('to-stat-tiles');
   const meetdienstCount = classified.filter(c => c.status === 'meetdienst').length;
-  const wvCount = classified.filter(c => c.status === 'werkvoorbereiders').length;
+  const wvItems = classified.filter(c => c.status === 'werkvoorbereiders');
+  const oppakkenCount = wvItems.filter(c => wvStatusOf(c.storing.order).status === 'oppakken').length;
+  const wachtendCount = wvItems.filter(c => wvStatusOf(c.storing.order).status === 'wachtend').length;
+  const onbepaaldCount = wvItems.length - oppakkenCount - wachtendCount;
   const tiles = [
-    { label: 'Totaal relevant', value: meetdienstCount + wvCount },
+    { label: 'Totaal relevant', value: meetdienstCount + wvItems.length },
     { label: 'Bij meetdienst', value: meetdienstCount, note: 'nog niets aan te doen' },
-    { label: 'Open voor werkvoorbereiders', value: wvCount, note: 'moet ingepland worden' },
+    { label: 'Open voor werkvoorbereiders', value: wvItems.length, note: 'moet ingepland worden' },
+    { label: 'Moet opgepakt worden', value: oppakkenCount },
+    { label: 'Wachtend op iets', value: wachtendCount, note: onbepaaldCount > 0 ? `${onbepaaldCount} nog niet bepaald` : undefined },
   ];
   el.innerHTML = tiles.map(t => `
     <div class="stat-tile">
@@ -901,7 +927,10 @@ const TO_COLUMNS = [
   { key: 'daysLeft', label: 'Dagen', num: true },
   { key: 'executionDate', label: 'Uitvoering' },
   { key: 'type', label: 'Type' },
+  { key: 'wvStatusSort', label: 'WV-status' },
 ];
+
+const WV_STATUS_LABELS = { oppakken: 'Moet opgepakt worden', wachtend: 'Wachtend op iets' };
 
 function sortToRows(rows) {
   const { key, dir } = state.toSortState;
@@ -918,11 +947,16 @@ function renderToTableAll(classified) {
   const container = document.getElementById('to-table-all');
   const relevant = classified.filter(c => c.status !== 'genegeerd');
   if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen relevante storingen.</p>'; return; }
-  const annotated = relevant.map(c => Object.assign({}, c.storing, {
-    regioGroup: regioGroupOf(c.storing),
-    toStatusLabel: c.status === 'meetdienst' ? 'Bij meetdienst' : "Open voor WV'ers",
-    namesLabel: (c.storing.names || []).join(' → ') || '—',
-  }));
+  const annotated = relevant.map(c => {
+    const wv = wvStatusOf(c.storing.order);
+    return Object.assign({}, c.storing, {
+      regioGroup: regioGroupOf(c.storing),
+      toStatus: c.status,
+      toStatusLabel: c.status === 'meetdienst' ? 'Bij meetdienst' : "Open voor WV'ers",
+      namesLabel: (c.storing.names || []).join(' → ') || '—',
+      wvStatusSort: c.status === 'werkvoorbereiders' ? (WV_STATUS_LABELS[wv.status] || '') : '',
+    });
+  });
   const rows = sortToRows(annotated);
   const head = TO_COLUMNS.map(col => {
     const active = state.toSortState.key === col.key ? (state.toSortState.dir === 1 ? ' ↑' : ' ↓') : '';
@@ -931,6 +965,14 @@ function renderToTableAll(classified) {
   const body = rows.map(s => {
     const status = statusOf(s);
     const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : (s.daysLeft === 0 ? 'verloopt vandaag' : `nog ${s.daysLeft} dgn`);
+    const wv = wvStatusOf(s.order);
+    const wvCell = s.toStatus !== 'werkvoorbereiders' ? '—' : `
+      <select class="wv-status-select" data-order="${esc(s.order)}">
+        <option value="" ${!wv.status ? 'selected' : ''}>— Nog te bepalen —</option>
+        <option value="oppakken" ${wv.status === 'oppakken' ? 'selected' : ''}>Moet opgepakt worden</option>
+        <option value="wachtend" ${wv.status === 'wachtend' ? 'selected' : ''}>Wachtend op iets</option>
+      </select>
+      ${wv.status === 'wachtend' ? `<input type="text" class="wv-status-note" data-order="${esc(s.order)}" placeholder="Waarop wacht je?" value="${esc(wv.note || '')}">` : ''}`;
     return `<tr>
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
@@ -942,9 +984,29 @@ function renderToTableAll(classified) {
       <td class="num"><span class="status-pill ${status}">${STATUS_ICONS[status]} ${esc(daysText)}</span></td>
       <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
       <td>${esc(s.type)}</td>
+      <td class="wv-status-cell">${wvCell}</td>
     </tr>`;
   }).join('');
   container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+
+  container.querySelectorAll('.wv-status-select').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const order = sel.dataset.order;
+      const current = state.wvStatus[order] || {};
+      state.wvStatus[order] = { status: sel.value, note: current.note || '' };
+      await saveWvStatusMap(state.wvStatus);
+      renderToDashboardFromState();
+    });
+  });
+  container.querySelectorAll('.wv-status-note').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      const order = inp.dataset.order;
+      const current = state.wvStatus[order] || {};
+      state.wvStatus[order] = { status: current.status, note: inp.value };
+      await saveWvStatusMap(state.wvStatus);
+      renderToDashboardFromState();
+    });
+  });
 }
 
 function renderToWeeksList() {
@@ -1046,6 +1108,7 @@ async function reloadAllStateAndRender() {
   state.toSnapshots = await loadToSnapshots();
   state.meetdienstNamen = await loadNameList(MEETDIENST_LIST_KEY, DEFAULT_MEETDIENST_NAMEN);
   state.handoffNamen = await loadNameList(HANDOFF_LIST_KEY, DEFAULT_HANDOFF_NAMEN);
+  state.wvStatus = await loadWvStatusMap();
   if (state.snapshots.length > 0) renderDashboardFromState();
   else { document.getElementById('dashboard').classList.add('hidden'); renderTypeWhitelist(); renderTypeUnknownReview(); }
   if (state.toSnapshots.length > 0) renderToDashboardFromState();
