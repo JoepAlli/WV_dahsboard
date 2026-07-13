@@ -419,6 +419,18 @@ const STATUS_LABELS = { good: 'Op tijd', warning: 'Aandacht', serious: 'Bijna ve
 const STATUS_ICONS = { good: '✓', warning: '!', serious: '⚠', critical: '✕' };
 const STATUS_ORDER = ['good', 'warning', 'serious', 'critical'];
 
+// Tabelweergave van de dagen-status-pill, met een apart icoon + accent voor
+// verlopen storingen zónder uitvoeringsdatum — dáár kunnen we nog op sturen.
+function renderDaysPill(s) {
+  const status = statusOf(s);
+  const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : (s.daysLeft === 0 ? 'verloopt vandaag' : `nog ${s.daysLeft} dgn`);
+  const unplanned = isUnplannedOverdue(s);
+  const icon = unplanned ? '⛔' : STATUS_ICONS[status];
+  const cls = `status-pill ${status}${unplanned ? ' status-pill-unplanned' : ''}`;
+  const title = unplanned ? 'Verlopen én nog geen uitvoeringsdatum — actie nodig' : '';
+  return `<span class="${cls}"${title ? ` title="${esc(title)}"` : ''}>${icon} ${esc(daysText)}</span>`;
+}
+
 function computeMutations(current, previous) {
   if (!previous) return { nieuw: [], uitgegaan: [], hasPrevious: false };
   const curOrders = new Set(current.map(s => s.order));
@@ -472,21 +484,30 @@ function hideTooltip() { tooltipEl.classList.add('hidden'); }
 
 /* ---------- Rendering: stat tiles ---------- */
 
+// Een storing is "onbeheerd verlopen" als het target al gemist is én er nog
+// geen uitvoeringsdatum gepland staat — dáár kunnen we nog op sturen door 'm
+// alsnog in te plannen. Verlopen storingen die al wél een datum hebben, lopen
+// gewoon (te laat, maar onderweg).
+function isUnplannedOverdue(s) { return !!s.overdue && !s.executionDate; }
+
 function renderStatTiles(current, mutations) {
   const el = document.getElementById('stat-tiles');
   const total = current.length;
-  const overdueCount = current.filter(s => s.overdue).length;
+  const overdueKnown = current.filter(s => s.overdue && s.executionDate).length;
+  const overdueUnknown = current.filter(s => isUnplannedOverdue(s)).length;
   const tiles = [
     { label: 'Totaal open', value: total },
     { label: 'Nieuw binnengekomen', value: mutations.hasPrevious ? mutations.nieuw.length : '—',
       note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
     { label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
       note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
-    { label: 'Verlopen', value: overdueCount, deltaClass: overdueCount > 0 ? 'bad' : 'good',
-      note: overdueCount > 0 ? 'target niet gehaald' : 'alles binnen target' },
+    { label: 'Verlopen — uitvoering bekend', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
+      note: overdueKnown > 0 ? 'al wel ingepland' : 'geen' },
+    { label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
+      note: overdueUnknown > 0 ? 'nog niets ingepland — actie nodig' : 'geen', alert: overdueUnknown > 0 },
   ];
   el.innerHTML = tiles.map(t => `
-    <div class="stat-tile">
+    <div class="stat-tile${t.alert ? ' stat-tile-alert' : ''}">
       <div class="label">${esc(t.label)}</div>
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta ${t.deltaClass || ''}">${esc(t.note)}</div>` : ''}
@@ -702,12 +723,10 @@ function renderTableAll(current) {
     return `<th data-key="${c.key}" class="${c.num ? 'num' : ''}">${esc(c.label)}${active}</th>`;
   }).join('');
   const body = rows.map(s => {
-    const status = statusOf(s);
-    const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : (s.daysLeft === 0 ? 'verloopt vandaag' : `nog ${s.daysLeft} dgn`);
     const flagsHtml = s.flags.length
       ? s.flags.map(f => `<span class="badge" title="${esc(FLAG_LABELS[f])}">${esc(f)}</span>`).join(' ')
       : '—';
-    return `<tr>
+    return `<tr${isUnplannedOverdue(s) ? ' class="row-alert"' : ''}>
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
@@ -715,7 +734,7 @@ function renderTableAll(current) {
       <td>${esc(s.order)}</td>
       <td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>
       <td>${s.wvNaam ? esc(s.wvNaam) : '—'}</td>
-      <td class="num"><span class="status-pill ${status}">${STATUS_ICONS[status]} ${esc(daysText)}</span></td>
+      <td class="num">${renderDaysPill(s)}</td>
       <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
       <td>${flagsHtml}</td>
       <td>${esc(s.type)}</td>
@@ -965,8 +984,6 @@ function renderToTableAll(classified) {
     return `<th data-key="${col.key}" class="${col.num ? 'num' : ''}">${esc(col.label)}${active}</th>`;
   }).join('');
   const body = rows.map(s => {
-    const status = statusOf(s);
-    const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : (s.daysLeft === 0 ? 'verloopt vandaag' : `nog ${s.daysLeft} dgn`);
     const wv = wvStatusOf(s.order);
     const wvCell = `
       <select class="wv-status-select" data-order="${esc(s.order)}">
@@ -975,7 +992,7 @@ function renderToTableAll(classified) {
         <option value="wachtend" ${wv.status === 'wachtend' ? 'selected' : ''}>Wachtend op iets</option>
       </select>
       ${wv.status === 'wachtend' ? `<input type="text" class="wv-status-note" data-order="${esc(s.order)}" placeholder="Waarop wacht je?" value="${esc(wv.note || '')}">` : ''}`;
-    return `<tr>
+    return `<tr${isUnplannedOverdue(s) ? ' class="row-alert"' : ''}>
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
@@ -983,7 +1000,7 @@ function renderToTableAll(classified) {
       <td>${esc(s.order)}</td>
       <td>${esc(s.toStatusLabel)}</td>
       <td>${esc(s.namesLabel)}</td>
-      <td class="num"><span class="status-pill ${status}">${STATUS_ICONS[status]} ${esc(daysText)}</span></td>
+      <td class="num">${renderDaysPill(s)}</td>
       <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
       <td>${esc(s.type)}</td>
       <td class="wv-status-cell">${wvCell}</td>

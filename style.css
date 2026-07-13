@@ -281,6 +281,15 @@ button {
 .stat-tile .delta.good { color: var(--status-good); }
 .stat-tile .delta.bad { color: var(--status-critical); }
 
+/* Verlopen storingen zónder uitvoeringsdatum: hier kunnen we nog op sturen,
+   dus die tegel/rij/pill moet duidelijk opvallen t.o.v. de rest. */
+.stat-tile-alert {
+  background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--status-critical) 45%, var(--border));
+}
+.stat-tile-alert::before { background: var(--status-critical); opacity: 1; }
+.stat-tile-alert .value { color: var(--status-critical); }
+
 .badge {
   display: inline-block;
   font-size: 0.75rem;
@@ -322,6 +331,8 @@ table th {
 table th:hover { color: var(--series-1); }
 table tbody tr { transition: background-color var(--ease); }
 table tbody tr:hover { background: color-mix(in srgb, var(--text-primary) 3.5%, transparent); }
+table tbody tr.row-alert { background: color-mix(in srgb, var(--status-critical) 7%, transparent); }
+table tbody tr.row-alert:hover { background: color-mix(in srgb, var(--status-critical) 12%, transparent); }
 table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .empty-note { color: var(--text-muted); font-size: 0.85rem; padding: 10px 0; }
 
@@ -355,6 +366,7 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .status-pill.warning { color: #9a6b00; background: color-mix(in srgb, var(--status-warning) 25%, transparent); }
 .status-pill.serious { color: var(--status-serious); background: color-mix(in srgb, var(--status-serious) 18%, transparent); }
 .status-pill.critical { color: var(--status-critical); background: color-mix(in srgb, var(--status-critical) 15%, transparent); }
+.status-pill-unplanned { box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-critical) 50%, transparent); }
 
 .wv-status-cell {
   display: flex;
