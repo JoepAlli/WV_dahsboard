@@ -335,6 +335,7 @@ const state = {
   meetdienstNamen: [],
   handoffNamen: [],
   toSortState: { key: 'daysLeft', dir: 1 },
+  toActiveFilter: 'Totaal',
 };
 
 /* ---------- Tooltip ---------- */
@@ -722,6 +723,28 @@ function renderHandoffList() {
   });
 }
 
+function filterToByActive(classified) {
+  if (state.toActiveFilter === 'Totaal') return classified;
+  return classified.filter(c => regioGroupOf(c.storing) === state.toActiveFilter);
+}
+
+function renderToFilterTabs(classifiedRelevant) {
+  const container = document.getElementById('to-filter-tabs');
+  const present = sortByGroupOrder(Array.from(new Set(classifiedRelevant.map(c => regioGroupOf(c.storing)))));
+  if (!present.includes(state.toActiveFilter) && state.toActiveFilter !== 'Totaal') state.toActiveFilter = 'Totaal';
+  const tabs = ['Totaal', ...present];
+  container.innerHTML = tabs.map(t => {
+    const active = state.toActiveFilter === t ? ' active' : '';
+    return `<button class="filter-tab${active}" data-to-filter="${esc(t)}">${esc(t === 'Totaal' ? 'Totaal' : regioGroupLabel(t))}</button>`;
+  }).join('');
+  container.querySelectorAll('button[data-to-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.toActiveFilter = btn.dataset.toFilter;
+      renderToDashboardFromState();
+    });
+  });
+}
+
 function renderToStatTiles(classified) {
   const el = document.getElementById('to-stat-tiles');
   const meetdienstCount = classified.filter(c => c.status === 'meetdienst').length;
@@ -849,10 +872,15 @@ function renderToDashboardFromState() {
   if (snaps.length === 0) { document.getElementById('to-dashboard').classList.add('hidden'); return; }
   const latest = snaps[snaps.length - 1];
   const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoeken(s)));
+  const relevantAll = classified.filter(c => c.status !== 'genegeerd');
+
+  renderToFilterTabs(relevantAll);
+  const classifiedFiltered = filterToByActive(classified);
+
   document.getElementById('to-dashboard').classList.remove('hidden');
-  renderToStatTiles(classified);
-  renderToIgnored(classified);
-  renderToTableAll(classified);
+  renderToStatTiles(classifiedFiltered);
+  renderToIgnored(classifiedFiltered);
+  renderToTableAll(classifiedFiltered);
   renderToWeeksList();
   updateStorageUsage();
 }
@@ -1040,7 +1068,7 @@ function wireEvents() {
     const latest = state.toSnapshots[state.toSnapshots.length - 1];
     if (latest) {
       const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoeken(s)));
-      renderToTableAll(classified);
+      renderToTableAll(filterToByActive(classified));
     }
   });
 }
