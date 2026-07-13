@@ -135,11 +135,13 @@ function parseText(raw) {
   let i = 0;
   let currentGebiedscode = null;
   while (i < lines.length) {
-    while (i < lines.length && GEBIEDSCODE_RE.test(lines[i])) {
-      currentGebiedscode = lines[i];
+    // Combineer beide skip-checks in één lus: een gebiedscode kan vlak na een
+    // titel-/tellingregel staan (of andersom), dus we blijven controleren tot
+    // geen van beide patronen meer matcht.
+    while (i < lines.length && (GEBIEDSCODE_RE.test(lines[i]) || COUNT_HEADER_RE.test(lines[i]))) {
+      if (GEBIEDSCODE_RE.test(lines[i])) currentGebiedscode = lines[i];
       i++;
     }
-    while (i < lines.length && COUNT_HEADER_RE.test(lines[i])) i++;
     if (i >= lines.length) break;
     const start = i;
     try {
