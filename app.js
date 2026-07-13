@@ -560,9 +560,12 @@ function renderTrendChart(snapshots) {
     return;
   }
 
-  const regios = sortByGroupOrder(Array.from(new Set(snapshots.flatMap(sn => typeFiltered(sn.storingen).map(s => regioGroupOf(s))))));
+  // Volgt de actieve filtertab: bij "Totaal" alle regio's naast elkaar, bij een
+  // gekozen regio alleen die ene lijn.
+  const visiblePerSnapshot = snapshots.map(sn => filterByActive(typeFiltered(sn.storingen)));
+  const regios = sortByGroupOrder(Array.from(new Set(visiblePerSnapshot.flatMap(list => list.map(s => regioGroupOf(s))))));
   const series = {};
-  regios.forEach(r => { series[r] = snapshots.map(sn => typeFiltered(sn.storingen).filter(s => regioGroupOf(s) === r).length); });
+  regios.forEach(r => { series[r] = visiblePerSnapshot.map(list => list.filter(s => regioGroupOf(s) === r).length); });
 
   if (state.trendViewMode === 'table') {
     let head = `<th>Week</th>` + regios.map(r => `<th class="num">${esc(regioGroupLabel(r))}</th>`).join('');
@@ -1019,8 +1022,8 @@ function renderDashboardFromState() {
 
   document.getElementById('dashboard').classList.remove('hidden');
   renderStatTiles(latestFiltered, mutations);
-  renderRegioChart(latestVisible); // altijd volledige regio-vergelijking, los van de actieve filtertab
-  renderTrendChart(snaps); // idem
+  renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
+  renderTrendChart(snaps); // idem, filtert zelf op state.activeFilter
   renderMutationTables(mutations);
   renderTableAll(latestFiltered);
   renderWeeksList();
@@ -1126,7 +1129,7 @@ function wireEvents() {
         state.regioViewMode = state.regioViewMode === 'chart' ? 'table' : 'chart';
         btn.textContent = state.regioViewMode === 'chart' ? 'Toon als tabel' : 'Toon als grafiek';
         const latest = state.snapshots[state.snapshots.length - 1];
-        if (latest) renderRegioChart(typeFiltered(latest.storingen));
+        if (latest) renderRegioChart(filterByActive(typeFiltered(latest.storingen)));
       } else if (target === 'trend-chart') {
         state.trendViewMode = state.trendViewMode === 'chart' ? 'table' : 'chart';
         btn.textContent = state.trendViewMode === 'chart' ? 'Toon als tabel' : 'Toon als grafiek';
