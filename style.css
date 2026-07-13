@@ -81,18 +81,72 @@ summary:focus-visible, [tabindex]:focus-visible {
   border-radius: 2px;
 }
 
-.page-header {
-  padding: 28px clamp(16px, 4vw, 48px) 10px;
+/* ---------- Hero-kop + tabbalk ---------- */
+
+.hero {
   position: relative;
+  overflow: hidden;
+  background: linear-gradient(120deg, var(--series-1) 0%, var(--series-2) 100%);
+  padding: 30px clamp(16px, 4vw, 48px) 0;
 }
-.page-header h1 { margin: 0 0 4px; font-size: 1.55rem; font-weight: 800; letter-spacing: -0.01em; }
-.page-header::after {
+.hero::before, .hero::after {
   content: "";
-  display: block;
-  margin-top: 18px;
-  height: 4px;
-  background: linear-gradient(90deg, var(--series-1) 0%, var(--series-1) 55%, var(--series-2) 100%);
+  position: absolute;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0.16;
+  filter: blur(6px);
+  pointer-events: none;
+}
+.hero::before { width: 280px; height: 280px; top: -140px; right: 6%; }
+.hero::after { width: 200px; height: 200px; bottom: -130px; left: 18%; opacity: 0.12; }
+
+.hero-inner { position: relative; z-index: 1; }
+.hero h1 {
+  margin: 0 0 6px;
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #fff;
+}
+.hero-sub { color: rgba(255,255,255,0.82); font-weight: 500; }
+.hero-tagline { margin: 0 0 20px; color: rgba(255,255,255,0.88); font-size: 0.9rem; }
+
+.tab-nav {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  background: rgba(255,255,255,0.16);
   border-radius: 999px;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.tab-btn {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.85);
+  font-weight: 700;
+  font-size: 0.88rem;
+  padding: 10px 18px;
+  border-radius: 999px;
+  white-space: nowrap;
+  transition: background-color var(--ease), color var(--ease);
+}
+.tab-btn:hover { background: rgba(255,255,255,0.14); color: #fff; }
+.tab-btn.active { background: #fff; color: var(--series-1); box-shadow: 0 2px 10px rgba(0,0,0,0.18); }
+.tab-btn[data-tab="to"].active { color: var(--series-2); }
+.tab-btn[data-tab="settings"].active { color: var(--text-secondary); }
+
+.hero-wave {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 34px;
+  margin-top: 22px;
 }
 
 main {
@@ -421,88 +475,57 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   gap: 12px;
 }
 
-/* ---------- Navigatie & sectie-indeling ---------- */
+/* ---------- Tabblad-panelen ---------- */
 
-.section-nav {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  display: flex;
-  gap: 4px;
-  padding: 10px clamp(16px, 4vw, 48px);
-  background: color-mix(in srgb, var(--page-plane) 90%, transparent);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-}
-.section-nav a {
-  color: var(--text-secondary);
-  text-decoration: none;
-  font-size: 0.85rem;
-  font-weight: 700;
-  padding: 7px 14px;
-  border-radius: 999px;
-  white-space: nowrap;
-  transition: background-color var(--ease), color var(--ease);
-}
-.section-nav a:hover { background: var(--gridline); color: var(--text-primary); }
-.section-nav a:nth-child(1):hover,
-.section-nav a:nth-child(1).active { background: color-mix(in srgb, var(--series-1) 16%, transparent); color: var(--series-1); }
-.section-nav a:nth-child(2):hover,
-.section-nav a:nth-child(2).active { background: color-mix(in srgb, var(--series-2) 16%, transparent); color: var(--series-2); }
-.section-nav a:nth-child(3):hover,
-.section-nav a:nth-child(3).active { background: var(--gridline); color: var(--text-primary); }
-
-.bucket-section {
+.tab-panel {
   display: flex;
   flex-direction: column;
   gap: 22px;
-  padding-top: 8px;
-  scroll-margin-top: 60px;
+  padding-top: 4px;
+  animation: panel-in 220ms ease;
 }
-.bucket-section + .bucket-section {
-  border-top: 2px solid var(--gridline);
-  padding-top: 30px;
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-.section-title {
-  border-left: 4px solid var(--gridline);
-  padding-left: 14px;
-}
-#section-ov .section-title { border-left-color: var(--series-1); }
-#section-to .section-title { border-left-color: var(--series-2); }
-.section-title h1 {
-  margin: 0 0 2px;
-  font-size: 1.3rem;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-}
-.section-title p { margin: 0; }
-
-/* Instellingen staat standaard ingeklapt: minder relevant voor het
-   wekelijkse ritme, wel direct bereikbaar via de navigatiebalk. */
-.settings-section {
-  scroll-margin-top: 60px;
-  border-top: 2px solid var(--gridline);
-  padding-top: 30px;
+.panel-banner {
   display: flex;
-  flex-direction: column;
-  gap: 22px;
+  align-items: center;
+  gap: 16px;
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  color: #fff;
+  box-shadow: var(--shadow-card);
 }
-.settings-section > .card:not(:first-of-type) { margin-top: 0; }
+.panel-banner h2 { margin: 0 0 2px; font-size: 1.35rem; font-weight: 800; letter-spacing: -0.01em; color: #fff; }
+.panel-banner p { margin: 0; opacity: 0.92; font-size: 0.9rem; }
+.panel-icon {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  font-size: 1.4rem;
+  background: rgba(255,255,255,0.2);
+  border-radius: var(--radius-md);
+}
+.panel-banner-ov { background: linear-gradient(135deg, var(--series-1) 0%, color-mix(in srgb, var(--series-1) 55%, var(--series-2)) 140%); }
+.panel-banner-to { background: linear-gradient(135deg, var(--series-2) 0%, color-mix(in srgb, var(--series-2) 55%, var(--series-1)) 140%); }
+.panel-banner-settings { background: linear-gradient(135deg, #57564f 0%, #2c2b28 140%); }
 
-.section-title-summary,
+/* "Opgeslagen weken" / "Genegeerd deze week" staan standaard ingeklapt
+   (geschiedenis/beheer, geen wekelijks te checken info). */
 .details-card summary {
   cursor: pointer;
   list-style: none;
   display: flex;
   align-items: center;
   gap: 10px;
+  font-size: 1.05rem;
+  font-weight: 700;
 }
-.section-title-summary::-webkit-details-marker,
 .details-card summary::-webkit-details-marker { display: none; }
-.section-title-summary::before,
 .details-card summary::before {
   content: "";
   width: 0;
@@ -513,21 +536,5 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   border-bottom: 4.5px solid transparent;
   transition: transform var(--ease);
 }
-.settings-section[open] > .section-title-summary::before,
-.details-card[open] > summary::before {
-  transform: rotate(90deg);
-}
-.section-title-summary {
-  font-size: 1.3rem;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-}
-.section-subtitle { margin: 2px 0 0 16px; }
-
-/* "Opgeslagen weken" per bak staat standaard ingeklapt (geschiedenis/beheer,
-   geen wekelijks te checken info). */
-.details-card summary {
-  font-size: 1.05rem;
-  font-weight: 700;
-}
+.details-card[open] > summary::before { transform: rotate(90deg); }
 .details-body-header { margin-top: 12px; }

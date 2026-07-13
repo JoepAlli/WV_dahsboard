@@ -1295,36 +1295,35 @@ function wireEvents() {
   });
 }
 
-// Markeert in de navigatiebalk welke sectie momenteel in beeld is. Houdt de
-// zichtbaarheidsverhouding van élke sectie bij (niet alleen wat er in de
-// laatste observer-batch veranderde), zodat de juiste sectie actief blijft
-// ook als de vorige nog gedeeltelijk in beeld is.
-function setupScrollSpy() {
-  const navLinks = Array.from(document.querySelectorAll('.section-nav a'));
-  const sections = navLinks.map(a => document.querySelector(a.getAttribute('href'))).filter(Boolean);
-  if (!('IntersectionObserver' in window) || sections.length === 0) return;
-  const ratios = new Map();
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(entry => ratios.set(entry.target, entry.intersectionRatio));
-    let best = null, bestRatio = 0;
-    sections.forEach(s => {
-      const r = ratios.get(s) || 0;
-      if (r > bestRatio) { bestRatio = r; best = s; }
-    });
-    if (best) {
-      const idx = sections.indexOf(best);
-      navLinks.forEach(a => a.classList.remove('active'));
-      navLinks[idx].classList.add('active');
-    }
-  }, { rootMargin: '-56px 0px -40% 0px', threshold: [0, 0.1, 0.25, 0.5, 0.75, 1] });
-  sections.forEach(s => observer.observe(s));
+// Echte tabbladen: precies één paneel zichtbaar tegelijk, in plaats van één
+// lange scrollpagina. Onthoudt de laatst gekozen tab binnen dit tabblad
+// (sessionStorage) zodat een herlaad niet steeds terug naar OV NUSsen springt.
+const TAB_SESSION_KEY = 'nusdash_active_tab';
+function switchTab(tab) {
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    p.classList.toggle('hidden', p.dataset.tabPanel !== tab);
+  });
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    const active = b.dataset.tab === tab;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  try { sessionStorage.setItem(TAB_SESSION_KEY, tab); } catch (e) { /* privénavigatie o.i.d. */ }
+}
+function setupTabNav() {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+  let initial = 'ov';
+  try { initial = sessionStorage.getItem(TAB_SESSION_KEY) || 'ov'; } catch (e) { /* privénavigatie o.i.d. */ }
+  switchTab(initial);
 }
 
 async function init() {
   document.getElementById('week-date').value = new Date().toISOString().slice(0, 10);
   document.getElementById('to-week-date').value = new Date().toISOString().slice(0, 10);
   wireEvents();
-  setupScrollSpy();
+  setupTabNav();
   await reloadAllStateAndRender();
 }
 

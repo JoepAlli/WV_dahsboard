@@ -7,23 +7,31 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="page-header">
-  <h1>NUS Dashboard <span class="muted">— niet-urgente storingen</span></h1>
-  <p class="muted">Tijdelijk lokaal dashboard. Alle data blijft in je browser (IndexedDB) — er wordt niets verzonden.</p>
-</header>
 
-<nav class="section-nav">
-  <a href="#section-ov">OV NUSsen</a>
-  <a href="#section-to">Te onderzoeken storingen</a>
-  <a href="#section-settings">Instellingen</a>
-</nav>
+<header class="hero">
+  <div class="hero-inner">
+    <h1>NUS Dashboard <span class="hero-sub">— niet-urgente storingen</span></h1>
+    <p class="hero-tagline">Tijdelijk lokaal dashboard. Alle data blijft in je browser (IndexedDB) — er wordt niets verzonden.</p>
+    <nav class="tab-nav" role="tablist" aria-label="Onderdelen">
+      <button class="tab-btn active" data-tab="ov" role="tab" aria-selected="true">💡 OV NUSsen</button>
+      <button class="tab-btn" data-tab="to" role="tab" aria-selected="false">🔍 Te onderzoeken storingen</button>
+      <button class="tab-btn" data-tab="settings" role="tab" aria-selected="false">⚙️ Instellingen</button>
+    </nav>
+  </div>
+  <svg class="hero-wave" viewBox="0 0 1440 60" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0,32 C240,58 480,4 720,22 C960,40 1200,10 1440,28 L1440,60 L0,60 Z" fill="var(--page-plane)"></path>
+  </svg>
+</header>
 
 <main>
 
-  <section class="bucket-section" id="section-ov">
-    <div class="section-title">
-      <h1>OV NUSsen</h1>
-      <p class="muted">Openbare-verlichtingsstoringen — target: 10 werkdagen.</p>
+  <section class="tab-panel" id="section-ov" data-tab-panel="ov">
+    <div class="panel-banner panel-banner-ov">
+      <span class="panel-icon">💡</span>
+      <div>
+        <h2>OV NUSsen</h2>
+        <p>Openbare-verlichtingsstoringen — target: 10 werkdagen.</p>
+      </div>
     </div>
 
     <section class="card" id="input-card">
@@ -93,10 +101,13 @@
     </section>
   </section>
 
-  <section class="bucket-section" id="section-to">
-    <div class="section-title">
-      <h1>Te onderzoeken storingen</h1>
-      <p class="muted">Onderzoek bij de meetdienst, of overgedragen aan de werkvoorbereiders om in te plannen.</p>
+  <section class="tab-panel hidden" id="section-to" data-tab-panel="to">
+    <div class="panel-banner panel-banner-to">
+      <span class="panel-icon">🔍</span>
+      <div>
+        <h2>Te onderzoeken storingen</h2>
+        <p>Onderzoek bij de meetdienst, of overgedragen aan de werkvoorbereiders om in te plannen.</p>
+      </div>
     </div>
 
     <section class="card" id="to-input-card">
@@ -141,9 +152,14 @@
     </section>
   </section>
 
-  <details class="settings-section" id="section-settings">
-    <summary class="section-title-summary">⚙ Instellingen</summary>
-    <p class="muted section-subtitle">Back-up, type-filter en naamlijsten — dingen die je niet elke week hoeft aan te passen.</p>
+  <section class="tab-panel hidden" id="section-settings" data-tab-panel="settings">
+    <div class="panel-banner panel-banner-settings">
+      <span class="panel-icon">⚙️</span>
+      <div>
+        <h2>Instellingen</h2>
+        <p>Back-up, type-filter en naamlijsten — dingen die je niet elke week hoeft aan te passen.</p>
+      </div>
+    </div>
 
     <section class="card" id="backup-card">
       <h2>Back-up</h2>
@@ -188,7 +204,7 @@
       </div>
     </section>
 
-  </details>
+  </section>
 
 </main>
 
