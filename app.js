@@ -37,6 +37,7 @@ const OVERDUE_RE = /^(\d+)\s+dagen\s+verlopen$/i;
 const TODAY_RE = /^Verloopt\s+vandaag$/i;
 const ORDER_LABEL_RE = /^order:?$/i;
 const ASSET_LABEL_RE = /^asset:?$/i;
+const COORDS_LABEL_RE = /^coords:?$/i;
 const MAX_MIDDLE_LINES = 12; // veiligheidsgrens tegen een ontbrekende "Nog X dagen"-regel
 
 // Een gebiedscode-regel (bv. "ZZE10A") staat los vóór een reeks storingen en geldt
@@ -70,13 +71,23 @@ function parseOneEntry(lines, start) {
   const order = lines[i++];
   if (!order || !/^\d{6,12}$/.test(order)) throw new Error('Ordernummer onherkenbaar: ' + order);
 
-  if (!lines[i] || !ASSET_LABEL_RE.test(lines[i])) throw new Error('Verwachtte "Asset:" label, kreeg: ' + lines[i]);
-  i++;
-  const asset = lines[i++];
-  if (!asset) throw new Error('Assetnummer ontbreekt');
-  let assetType = null;
-  if (lines[i] && /^(MSR|LSKN|LSKOV)$/i.test(lines[i])) {
-    assetType = lines[i++].toUpperCase();
+  // Meestal "Asset:" + assetnummer (+ evt. MSR/LSKN/LSKOV op de regel erna).
+  // Is het assetnummer onbekend, dan staat er in plaats daarvan "Coords:" met
+  // de coördinaten als waarde — zonder MSR/LSKN/LSKOV-regel erna.
+  let asset, assetType = null;
+  if (lines[i] && ASSET_LABEL_RE.test(lines[i])) {
+    i++;
+    asset = lines[i++];
+    if (!asset) throw new Error('Assetnummer ontbreekt');
+    if (lines[i] && /^(MSR|LSKN|LSKOV)$/i.test(lines[i])) {
+      assetType = lines[i++].toUpperCase();
+    }
+  } else if (lines[i] && COORDS_LABEL_RE.test(lines[i])) {
+    i++;
+    asset = lines[i++];
+    if (!asset) throw new Error('Coördinaten ontbreken na "Coords:"');
+  } else {
+    throw new Error('Verwachtte "Asset:" of "Coords:" label, kreeg: ' + lines[i]);
   }
 
   const middleLines = [];
