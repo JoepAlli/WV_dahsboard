@@ -225,6 +225,21 @@ table th:hover { color: var(--text-primary); }
 table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .empty-note { color: var(--text-muted); font-size: 0.85rem; padding: 8px 0; }
 
+/* Grote lijsten (500+ storingen) krijgen hun eigen scrollgebied in plaats van
+   de hele pagina te verlengen; de kolomkoppen blijven zichtbaar tijdens het
+   scrollen. */
+.table-scroll {
+  max-height: 560px;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+.table-scroll table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-1);
+  box-shadow: 0 1px 0 var(--gridline);
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
