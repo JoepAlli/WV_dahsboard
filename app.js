@@ -162,7 +162,62 @@ function parseText(raw) {
   return { storingen, errors };
 }
 
-/* ---------- Storage ---------- */
+/* ---------- Storage (IndexedDB) ----------
+   Alles staat lokaal in IndexedDB — geen server, niets wordt verzonden.
+   IndexedDB heeft een veel hoger opslagplafond dan localStorage (waar de
+   eerdere versie van dit dashboard gebruik van maakte), belangrijk omdat
+   er over tijd makkelijk 500+ storingen per week bij kunnen komen. */
+
+const DB_NAME = 'nusdash';
+const DB_VERSION = 1;
+const STORE_NAME = 'kv';
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => { req.result.createObjectStore(STORE_NAME); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function idbGet(key) {
+  return openDb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  }));
+}
+function idbSet(key, value) {
+  return openDb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+function idbDelete(key) {
+  return openDb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
+// Eenmalige migratie: data die nog in localStorage stond van vóór de
+// overstap naar IndexedDB wordt automatisch overgenomen zodra er nog geen
+// IndexedDB-waarde voor die sleutel bestaat. De oude localStorage-waarde
+// blijft ongemoeid staan (geen dataverlies als dit twee keer draait).
+async function migrateLegacyKey(key) {
+  try {
+    const existing = await idbGet(key);
+    if (existing !== undefined) return;
+    const legacyRaw = localStorage.getItem(key);
+    if (!legacyRaw) return;
+    await idbSet(key, JSON.parse(legacyRaw));
+  } catch (e) { console.error('Migratie mislukt voor', key, e); }
+}
 
 const STORAGE_KEY = 'nusdash_snapshots_v1';
 const TYPE_WHITELIST_KEY = 'nusdash_type_whitelist_v1';
@@ -176,29 +231,25 @@ const DEFAULT_TYPE_WHITELIST = [
   'Branden overdag Infra',
 ];
 
-function loadSnapshots() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) { console.error(e); return []; }
+async function loadSnapshots() {
+  await migrateLegacyKey(STORAGE_KEY);
+  try { return (await idbGet(STORAGE_KEY)) || []; }
+  catch (e) { console.error(e); return []; }
 }
-function saveSnapshots(snaps) {
+async function saveSnapshots(snaps) {
   snaps.sort((a, b) => a.week.localeCompare(b.week));
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(snaps));
-  } catch (e) {
-    throw new Error('Opslag van de browser zit vol. Verwijder een oudere week (onderaan de pagina) en probeer het opnieuw.');
-  }
+  try { await idbSet(STORAGE_KEY, snaps); }
+  catch (e) { throw new Error('Opslaan is mislukt: ' + e.message); }
 }
+async function clearSnapshots() { await idbDelete(STORAGE_KEY); }
 
-function loadTypeWhitelist() {
-  try {
-    const raw = localStorage.getItem(TYPE_WHITELIST_KEY);
-    return raw ? JSON.parse(raw) : DEFAULT_TYPE_WHITELIST.slice();
-  } catch (e) { console.error(e); return DEFAULT_TYPE_WHITELIST.slice(); }
+async function loadTypeWhitelist() {
+  await migrateLegacyKey(TYPE_WHITELIST_KEY);
+  try { const v = await idbGet(TYPE_WHITELIST_KEY); return v || DEFAULT_TYPE_WHITELIST.slice(); }
+  catch (e) { console.error(e); return DEFAULT_TYPE_WHITELIST.slice(); }
 }
-function saveTypeWhitelist(list) {
-  try { localStorage.setItem(TYPE_WHITELIST_KEY, JSON.stringify(list)); }
+async function saveTypeWhitelist(list) {
+  try { await idbSet(TYPE_WHITELIST_KEY, list); }
   catch (e) { console.error(e); }
 }
 
@@ -208,35 +259,34 @@ const HANDOFF_LIST_KEY = 'nusdash_handoff_namen_v1';
 const DEFAULT_MEETDIENST_NAMEN = ['Kees Smit', 'Bas M. Oudshoorn'];
 const DEFAULT_HANDOFF_NAMEN = ['Conor', 'Patricia', 'Dulani'];
 
-function loadToSnapshots() {
-  try {
-    const raw = localStorage.getItem(TO_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) { console.error(e); return []; }
+async function loadToSnapshots() {
+  await migrateLegacyKey(TO_STORAGE_KEY);
+  try { return (await idbGet(TO_STORAGE_KEY)) || []; }
+  catch (e) { console.error(e); return []; }
 }
-function saveToSnapshots(snaps) {
+async function saveToSnapshots(snaps) {
   snaps.sort((a, b) => a.week.localeCompare(b.week));
-  try {
-    localStorage.setItem(TO_STORAGE_KEY, JSON.stringify(snaps));
-  } catch (e) {
-    throw new Error('Opslag van de browser zit vol. Verwijder een oudere week (onderaan de pagina) en probeer het opnieuw.');
-  }
+  try { await idbSet(TO_STORAGE_KEY, snaps); }
+  catch (e) { throw new Error('Opslaan is mislukt: ' + e.message); }
 }
-function loadNameList(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback.slice();
-  } catch (e) { console.error(e); return fallback.slice(); }
+async function clearToSnapshots() { await idbDelete(TO_STORAGE_KEY); }
+
+async function loadNameList(key, fallback) {
+  await migrateLegacyKey(key);
+  try { const v = await idbGet(key); return v || fallback.slice(); }
+  catch (e) { console.error(e); return fallback.slice(); }
 }
-function saveNameList(key, list) {
-  try { localStorage.setItem(key, JSON.stringify(list)); }
+async function saveNameList(key, list) {
+  try { await idbSet(key, list); }
   catch (e) { console.error(e); }
 }
 
-function storageUsageBytes() {
-  const keys = [STORAGE_KEY, TYPE_WHITELIST_KEY, TO_STORAGE_KEY, MEETDIENST_LIST_KEY, HANDOFF_LIST_KEY];
-  const raw = keys.map(k => localStorage.getItem(k) || '').join('');
-  return new Blob([raw]).size;
+async function getStorageEstimate() {
+  if (navigator.storage && navigator.storage.estimate) {
+    try { return await navigator.storage.estimate(); }
+    catch (e) { return null; }
+  }
+  return null;
 }
 
 // Classificatie voor de "te onderzoeken storingen"-bak:
@@ -615,10 +665,10 @@ function renderWeeksList() {
     </div>`).join('');
   container.innerHTML = rows;
   container.querySelectorAll('button[data-week]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       if (!confirm(`Week ${btn.dataset.week} verwijderen?`)) return;
-      const snaps = loadSnapshots().filter(s => s.week !== btn.dataset.week);
-      saveSnapshots(snaps);
+      const snaps = (await loadSnapshots()).filter(s => s.week !== btn.dataset.week);
+      await saveSnapshots(snaps);
       state.snapshots = snaps;
       if (snaps.length === 0) document.getElementById('dashboard').classList.add('hidden');
       else renderDashboardFromState();
@@ -627,13 +677,19 @@ function renderWeeksList() {
   });
 }
 
-function updateStorageUsage() {
+async function updateStorageUsage() {
   const el = document.getElementById('storage-usage');
   if (!el) return;
-  const bytes = storageUsageBytes();
-  const kb = bytes / 1024;
-  const text = kb < 1024 ? `${kb.toFixed(0)} KB` : `${(kb / 1024).toFixed(2)} MB`;
-  el.textContent = `Huidige opslag: ${text} — browsers bieden meestal 5–10 MB per site.`;
+  const estimate = await getStorageEstimate();
+  if (!estimate || estimate.quota == null) {
+    el.textContent = 'Opslag: kon het huidige gebruik niet opvragen in deze browser.';
+    return;
+  }
+  const usedMb = estimate.usage / 1024 / 1024;
+  const quotaMb = estimate.quota / 1024 / 1024;
+  const pct = estimate.quota ? (estimate.usage / estimate.quota) * 100 : 0;
+  const usedText = usedMb < 1 ? `${(estimate.usage / 1024).toFixed(0)} KB` : `${usedMb.toFixed(2)} MB`;
+  el.textContent = `Huidige opslag: ${usedText} van ${quotaMb.toFixed(0)} MB beschikbaar (${pct.toFixed(2)}%).`;
 }
 
 /* ---------- Rendering: type-filter & regio-filters ---------- */
@@ -647,9 +703,9 @@ function renderTypeWhitelist() {
       <span class="type-chip">${esc(t)}<button class="remove-type" data-type="${esc(t)}" title="Verwijderen">×</button></span>
     `).join('');
     listEl.querySelectorAll('.remove-type').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         state.typeWhitelist = state.typeWhitelist.filter(t => t !== btn.dataset.type);
-        saveTypeWhitelist(state.typeWhitelist);
+        await saveTypeWhitelist(state.typeWhitelist);
         renderDashboardFromState();
       });
     });
@@ -672,9 +728,9 @@ function renderTypeWhitelist() {
         <button class="btn-link add-type-btn" data-type="${esc(t)}">+ Meetellen</button>
       </div>`).join('');
   unknownEl.querySelectorAll('.add-type-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       if (!state.typeWhitelist.includes(btn.dataset.type)) state.typeWhitelist.push(btn.dataset.type);
-      saveTypeWhitelist(state.typeWhitelist);
+      await saveTypeWhitelist(state.typeWhitelist);
       renderDashboardFromState();
     });
   });
@@ -709,16 +765,16 @@ function renderNameChipList(containerId, list, onRemove) {
 }
 
 function renderMeetdienstList() {
-  renderNameChipList('meetdienst-list', state.meetdienstNamen, (name) => {
+  renderNameChipList('meetdienst-list', state.meetdienstNamen, async (name) => {
     state.meetdienstNamen = state.meetdienstNamen.filter(n => n !== name);
-    saveNameList(MEETDIENST_LIST_KEY, state.meetdienstNamen);
+    await saveNameList(MEETDIENST_LIST_KEY, state.meetdienstNamen);
     renderToDashboardFromState();
   });
 }
 function renderHandoffList() {
-  renderNameChipList('handoff-list', state.handoffNamen, (name) => {
+  renderNameChipList('handoff-list', state.handoffNamen, async (name) => {
     state.handoffNamen = state.handoffNamen.filter(n => n !== name);
-    saveNameList(HANDOFF_LIST_KEY, state.handoffNamen);
+    await saveNameList(HANDOFF_LIST_KEY, state.handoffNamen);
     renderToDashboardFromState();
   });
 }
@@ -842,10 +898,10 @@ function renderToWeeksList() {
     </div>`).join('');
   container.innerHTML = rows;
   container.querySelectorAll('button[data-to-week]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       if (!confirm(`Week ${btn.dataset.toWeek} verwijderen?`)) return;
-      const snaps = loadToSnapshots().filter(s => s.week !== btn.dataset.toWeek);
-      saveToSnapshots(snaps);
+      const snaps = (await loadToSnapshots()).filter(s => s.week !== btn.dataset.toWeek);
+      await saveToSnapshots(snaps);
       state.toSnapshots = snaps;
       if (snaps.length === 0) document.getElementById('to-dashboard').classList.add('hidden');
       else renderToDashboardFromState();
@@ -925,7 +981,7 @@ function showParseWarning(errors, okCount) {
 }
 
 function wireEvents() {
-  document.getElementById('process-btn').addEventListener('click', () => {
+  document.getElementById('process-btn').addEventListener('click', async () => {
     const textarea = document.getElementById('paste-input');
     const raw = textarea.value;
     const statusEl = document.getElementById('process-status');
@@ -940,12 +996,12 @@ function wireEvents() {
       return;
     }
 
-    const snaps = loadSnapshots();
+    const snaps = await loadSnapshots();
     const idx = snaps.findIndex(s => s.week === week);
     const snapshot = { week, savedAt: new Date().toISOString(), storingen };
     if (idx >= 0) snaps[idx] = snapshot; else snaps.push(snapshot);
     try {
-      saveSnapshots(snaps);
+      await saveSnapshots(snaps);
     } catch (err) {
       statusEl.textContent = err.message;
       return;
@@ -958,9 +1014,9 @@ function wireEvents() {
     textarea.value = '';
   });
 
-  document.getElementById('clear-all-btn').addEventListener('click', () => {
+  document.getElementById('clear-all-btn').addEventListener('click', async () => {
     if (!confirm('Alle opgeslagen weken verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
-    localStorage.removeItem(STORAGE_KEY);
+    await clearSnapshots();
     state.snapshots = [];
     document.getElementById('dashboard').classList.add('hidden');
   });
@@ -990,17 +1046,17 @@ function wireEvents() {
     if (latest) renderTableAll(filterByActive(typeFiltered(latest.storingen)));
   });
 
-  document.getElementById('add-type-btn').addEventListener('click', () => {
+  document.getElementById('add-type-btn').addEventListener('click', async () => {
     const input = document.getElementById('new-type-input');
     const val = input.value.trim();
     if (!val) return;
     if (!state.typeWhitelist.includes(val)) state.typeWhitelist.push(val);
-    saveTypeWhitelist(state.typeWhitelist);
+    await saveTypeWhitelist(state.typeWhitelist);
     input.value = '';
     renderDashboardFromState();
   });
 
-  document.getElementById('to-process-btn').addEventListener('click', () => {
+  document.getElementById('to-process-btn').addEventListener('click', async () => {
     const textarea = document.getElementById('to-paste-input');
     const raw = textarea.value;
     const statusEl = document.getElementById('to-process-status');
@@ -1015,12 +1071,12 @@ function wireEvents() {
       return;
     }
 
-    const snaps = loadToSnapshots();
+    const snaps = await loadToSnapshots();
     const idx = snaps.findIndex(s => s.week === week);
     const snapshot = { week, savedAt: new Date().toISOString(), storingen };
     if (idx >= 0) snaps[idx] = snapshot; else snaps.push(snapshot);
     try {
-      saveToSnapshots(snaps);
+      await saveToSnapshots(snaps);
     } catch (err) {
       statusEl.textContent = err.message;
       return;
@@ -1033,29 +1089,29 @@ function wireEvents() {
     textarea.value = '';
   });
 
-  document.getElementById('to-clear-all-btn').addEventListener('click', () => {
+  document.getElementById('to-clear-all-btn').addEventListener('click', async () => {
     if (!confirm('Alle opgeslagen weken (te onderzoeken storingen) verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
-    localStorage.removeItem(TO_STORAGE_KEY);
+    await clearToSnapshots();
     state.toSnapshots = [];
     document.getElementById('to-dashboard').classList.add('hidden');
   });
 
-  document.getElementById('add-meetdienst-btn').addEventListener('click', () => {
+  document.getElementById('add-meetdienst-btn').addEventListener('click', async () => {
     const input = document.getElementById('new-meetdienst-input');
     const val = input.value.trim();
     if (!val) return;
     if (!state.meetdienstNamen.includes(val)) state.meetdienstNamen.push(val);
-    saveNameList(MEETDIENST_LIST_KEY, state.meetdienstNamen);
+    await saveNameList(MEETDIENST_LIST_KEY, state.meetdienstNamen);
     input.value = '';
     renderToDashboardFromState();
   });
 
-  document.getElementById('add-handoff-btn').addEventListener('click', () => {
+  document.getElementById('add-handoff-btn').addEventListener('click', async () => {
     const input = document.getElementById('new-handoff-input');
     const val = input.value.trim();
     if (!val) return;
     if (!state.handoffNamen.includes(val)) state.handoffNamen.push(val);
-    saveNameList(HANDOFF_LIST_KEY, state.handoffNamen);
+    await saveNameList(HANDOFF_LIST_KEY, state.handoffNamen);
     input.value = '';
     renderToDashboardFromState();
   });
@@ -1073,14 +1129,14 @@ function wireEvents() {
   });
 }
 
-function init() {
+async function init() {
   document.getElementById('week-date').value = new Date().toISOString().slice(0, 10);
   document.getElementById('to-week-date').value = new Date().toISOString().slice(0, 10);
-  state.snapshots = loadSnapshots();
-  state.typeWhitelist = loadTypeWhitelist();
-  state.toSnapshots = loadToSnapshots();
-  state.meetdienstNamen = loadNameList(MEETDIENST_LIST_KEY, DEFAULT_MEETDIENST_NAMEN);
-  state.handoffNamen = loadNameList(HANDOFF_LIST_KEY, DEFAULT_HANDOFF_NAMEN);
+  state.snapshots = await loadSnapshots();
+  state.typeWhitelist = await loadTypeWhitelist();
+  state.toSnapshots = await loadToSnapshots();
+  state.meetdienstNamen = await loadNameList(MEETDIENST_LIST_KEY, DEFAULT_MEETDIENST_NAMEN);
+  state.handoffNamen = await loadNameList(HANDOFF_LIST_KEY, DEFAULT_HANDOFF_NAMEN);
   wireEvents();
   if (state.snapshots.length > 0) renderDashboardFromState();
   else renderTypeWhitelist();
