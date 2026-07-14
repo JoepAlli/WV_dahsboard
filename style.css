@@ -290,6 +290,25 @@ button {
 .stat-tile-alert::before { background: var(--status-critical); opacity: 1; }
 .stat-tile-alert .value { color: var(--status-critical); }
 
+.stat-tile-clickable { cursor: pointer; }
+.stat-tile-clickable:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.stat-tile-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 8px;
+  opacity: 0;
+  transition: opacity var(--ease);
+}
+.stat-tile-clickable:hover .stat-tile-hint,
+.stat-tile-clickable:focus-visible .stat-tile-hint,
+.stat-tile-selected .stat-tile-hint { opacity: 1; }
+.stat-tile-selected {
+  border-color: var(--series-1);
+  box-shadow: var(--shadow-card-hover);
+}
+.stat-tile-selected::before { opacity: 1; height: 4px; }
+.stat-tile-alert.stat-tile-selected { border-color: var(--status-critical); }
+
 .badge {
   display: inline-block;
   font-size: 0.75rem;

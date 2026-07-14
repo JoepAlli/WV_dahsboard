@@ -466,6 +466,7 @@ const state = {
   toSortState: { key: 'daysLeft', dir: 1 },
   toActiveFilter: 'Totaal',
   wvStatus: {},
+  overdueDetailFilter: null,
 };
 
 /* ---------- Tooltip ---------- */
@@ -502,16 +503,72 @@ function renderStatTiles(current, mutations) {
     { label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
       note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
     { label: 'Verlopen — uitvoering bekend', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
-      note: overdueKnown > 0 ? 'al wel ingepland' : 'geen' },
+      note: overdueKnown > 0 ? 'al wel ingepland' : 'geen', filterKey: 'known' },
     { label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
-      note: overdueUnknown > 0 ? 'nog niets ingepland — actie nodig' : 'geen', alert: overdueUnknown > 0 },
+      note: overdueUnknown > 0 ? 'nog niets ingepland — actie nodig' : 'geen', alert: overdueUnknown > 0, filterKey: 'unknown' },
   ];
-  el.innerHTML = tiles.map(t => `
-    <div class="stat-tile${t.alert ? ' stat-tile-alert' : ''}">
+  el.innerHTML = tiles.map(t => {
+    const clickable = t.filterKey ? ' stat-tile-clickable' : '';
+    const selected = t.filterKey && state.overdueDetailFilter === t.filterKey ? ' stat-tile-selected' : '';
+    const attrs = t.filterKey ? ` data-stat-filter="${t.filterKey}" tabindex="0" role="button" aria-expanded="${state.overdueDetailFilter === t.filterKey}"` : '';
+    return `
+    <div class="stat-tile${t.alert ? ' stat-tile-alert' : ''}${clickable}${selected}"${attrs}>
       <div class="label">${esc(t.label)}</div>
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta ${t.deltaClass || ''}">${esc(t.note)}</div>` : ''}
-    </div>`).join('');
+      ${t.filterKey ? '<div class="stat-tile-hint">Klik voor de lijst</div>' : ''}
+    </div>`;
+  }).join('');
+
+  const activate = (key) => {
+    state.overdueDetailFilter = state.overdueDetailFilter === key ? null : key;
+    renderStatTiles(current, mutations);
+  };
+  el.querySelectorAll('[data-stat-filter]').forEach(tile => {
+    tile.addEventListener('click', () => activate(tile.dataset.statFilter));
+    tile.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(tile.dataset.statFilter); }
+    });
+  });
+
+  renderOverdueDetail(current, mutations);
+}
+
+// Toont (indien een van de "Verlopen"-tegels is aangeklikt) de exacte lijst
+// van storingen daarachter, zodat je niet handmatig door de hele tabel hoeft
+// te zoeken naar welke opdrachten het precies betreft.
+function renderOverdueDetail(current, mutations) {
+  const container = document.getElementById('overdue-detail');
+  const filterKey = state.overdueDetailFilter;
+  if (!filterKey) { container.classList.add('hidden'); container.innerHTML = ''; return; }
+
+  const list = current.filter(s => s.overdue && (filterKey === 'known' ? !!s.executionDate : !s.executionDate));
+  const title = filterKey === 'known' ? 'Verlopen — uitvoering bekend' : 'Verlopen — uitvoering onbekend';
+  container.classList.remove('hidden');
+
+  const body = list.length === 0
+    ? '<p class="empty-note">Geen storingen in deze lijst.</p>'
+    : `<div class="table-scroll"><table><thead><tr>
+        <th>Order</th><th>Regio</th><th>Adres</th><th class="num">Dagen</th><th>Type</th><th>Uitvoering</th>
+      </tr></thead><tbody>${list.map(s => `<tr>
+        <td>${esc(s.order)}</td>
+        <td>${esc(regioGroupLabel(regioGroupOf(s)))}</td>
+        <td>${esc(s.city)} — ${esc(s.street)}, ${esc(s.postcode)}</td>
+        <td class="num">${renderDaysPill(s)}</td>
+        <td>${esc(s.type)}</td>
+        <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+
+  container.innerHTML = `
+    <div class="card-header">
+      <h3>${esc(title)} <span class="badge">${list.length}</span></h3>
+      <button class="btn-link" id="close-overdue-detail">Sluiten ✕</button>
+    </div>
+    ${body}`;
+  document.getElementById('close-overdue-detail').addEventListener('click', () => {
+    state.overdueDetailFilter = null;
+    renderStatTiles(current, mutations);
+  });
 }
 
 /* ---------- Rendering: regio chart ---------- */
