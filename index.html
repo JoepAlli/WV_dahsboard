@@ -12,6 +12,7 @@
   <div class="hero-inner">
     <h1>NUS Dashboard <span class="hero-sub">— niet-urgente storingen</span></h1>
     <p class="hero-tagline">Tijdelijk lokaal dashboard. Alle data blijft in je browser (IndexedDB) — er wordt niets verzonden.</p>
+    <p id="static-export-banner" class="hero-tagline static-export-banner hidden"></p>
     <nav class="tab-nav" role="tablist" aria-label="Onderdelen">
       <button class="tab-btn active" data-tab="ov" role="tab" aria-selected="true">💡 OV NUSsen</button>
       <button class="tab-btn" data-tab="to" role="tab" aria-selected="false">🔍 Te onderzoeken storingen</button>
@@ -91,7 +92,7 @@
         <div id="table-all" class="table-scroll"></div>
       </section>
 
-      <details class="card details-card">
+      <details class="card details-card" id="ov-weeks-card">
         <summary>Opgeslagen weken</summary>
         <div class="card-header details-body-header">
           <span></span>
@@ -142,7 +143,7 @@
         <div id="to-table-all" class="table-scroll"></div>
       </section>
 
-      <details class="card details-card">
+      <details class="card details-card" id="to-weeks-card">
         <summary>Opgeslagen weken</summary>
         <div class="card-header details-body-header">
           <span></span>
@@ -173,6 +174,15 @@
         <span id="backup-status" class="muted small"></span>
       </div>
       <div id="storage-usage" class="muted small"></div>
+    </section>
+
+    <section class="card" id="static-export-card">
+      <h2>Delen met je team</h2>
+      <p class="muted small">Genereert één zelfstandig dashboard-bestand met de actuele week erin gebakken. Zet dit in een gedeelde werkmap — teamleden dubbelklikken het gewoon open en kunnen filteren, sorteren en de lijsten bekijken, zonder dat ze iets van deze applicatie hoeven te snappen. Bewerken (WV-status, nieuwe week verwerken) kan alleen in jouw eigen dashboard.</p>
+      <div class="input-row">
+        <button id="export-static-btn" class="btn-primary">Exporteer interactief dashboard</button>
+        <span id="export-static-status" class="muted small"></span>
+      </div>
     </section>
 
     <section class="card" id="type-filter-card">
@@ -212,6 +222,7 @@
 
 <div id="tooltip" class="tooltip hidden"></div>
 
+<script src="export-template.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

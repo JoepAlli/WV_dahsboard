@@ -1,5 +1,13 @@
 'use strict';
 
+// Een geëxporteerd "interactief dashboard" (zie buildStandaloneExport) bakt de
+// data van dat moment in als window.__DASHBOARD_DATA__ i.p.v. dat er uit
+// IndexedDB gelezen wordt. In die modus is het dashboard bekijk-alleen: geen
+// nieuwe week verwerken, geen instellingen, geen WV-status bewerken — dat blijft
+// voorbehouden aan het originele dashboard waar de data vandaan komt.
+const STATIC_DATA = window.__DASHBOARD_DATA__ || null;
+const isStaticExport = !!STATIC_DATA;
+
 /* ---------- Parsing ---------- */
 
 const MONTHS = { jan:0, feb:1, mrt:2, apr:3, mei:4, jun:5, jul:6, aug:7, sep:8, okt:9, nov:10, dec:11 };
@@ -338,6 +346,52 @@ async function exportBackup() {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+// Voorkomt dat de HTML-parser een ingebedde </script> of </style> als een
+// vroegtijdig einde van de omringende tag interpreteert. Nodig omdat de
+// ingebakken app.js-broncode zélf de tekst "</script>" bevat (in deze functie).
+function escapeForInlineTag(str, tag) {
+  const re = new RegExp('</(' + tag + ')', 'gi');
+  return str.replace(re, '<\\/$1');
+}
+
+// Bouwt één zelfstandig .html-bestand met de huidige data erin gebakken:
+// bekijk-alleen, maar met dezelfde tabbladen/filters/sortering/klikbare
+// tegels als het echte dashboard. Bedoeld om in een gedeelde werkmap te
+// zetten zodat teamleden 'm gewoon kunnen dubbelklikken.
+function buildStandaloneExport() {
+  if (!window.__EXPORT_CSS__ || !window.__EXPORT_APPJS__ || !window.__EXPORT_HTML_SHELL__) {
+    throw new Error('export-template.js ontbreekt of is niet meegeladen — kan geen zelfstandig bestand genereren.');
+  }
+  const data = {
+    ovSnapshots: state.snapshots,
+    typeWhitelist: state.typeWhitelist,
+    teOnderzoekenSnapshots: state.toSnapshots,
+    meetdienstNamen: state.meetdienstNamen,
+    handoffNamen: state.handoffNamen,
+    wvStatus: state.wvStatus,
+    exportedAt: new Date().toISOString(),
+  };
+  const dataScript = escapeForInlineTag('window.__DASHBOARD_DATA__ = ' + JSON.stringify(data) + ';', 'script');
+  const appJs = escapeForInlineTag(window.__EXPORT_APPJS__, 'script');
+  const css = escapeForInlineTag(window.__EXPORT_CSS__, 'style');
+  const dateLabel = new Date().toISOString().slice(0, 10);
+
+  return `<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NUS Dashboard — Weekoverzicht (${dateLabel})</title>
+<style>${css}</style>
+</head>
+<body>
+${window.__EXPORT_HTML_SHELL__}
+<script>${dataScript}</script>
+<script>${appJs}</script>
+</body>
+</html>`;
 }
 
 async function importBackup(file) {
@@ -1042,7 +1096,11 @@ function renderToTableAll(classified) {
   }).join('');
   const body = rows.map(s => {
     const wv = wvStatusOf(s.order);
-    const wvCell = `
+    const wvCell = isStaticExport
+      ? (wv.status
+          ? `<span class="status-pill">${esc(WV_STATUS_LABELS[wv.status])}</span>${wv.note ? `<div class="muted small">${esc(wv.note)}</div>` : ''}`
+          : '<span class="muted small">— Nog te bepalen —</span>')
+      : `
       <select class="wv-status-select" data-order="${esc(s.order)}">
         <option value="" ${!wv.status ? 'selected' : ''}>— Nog te bepalen —</option>
         <option value="oppakken" ${wv.status === 'oppakken' ? 'selected' : ''}>Moet opgepakt worden</option>
@@ -1204,6 +1262,25 @@ function wireEvents() {
 
   document.getElementById('import-backup-btn').addEventListener('click', () => {
     document.getElementById('import-backup-input').click();
+  });
+
+  document.getElementById('export-static-btn').addEventListener('click', () => {
+    const statusEl = document.getElementById('export-static-status');
+    try {
+      const html = buildStandaloneExport();
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `nus-dashboard-${new Date().toISOString().slice(0, 10)}.html`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      statusEl.textContent = 'Interactief dashboard gedownload.';
+    } catch (e) {
+      statusEl.textContent = 'Exporteren mislukt: ' + e.message;
+    }
   });
 
   document.getElementById('import-backup-input').addEventListener('change', async (e) => {
@@ -1393,12 +1470,38 @@ function setupTabNav() {
   switchTab(initial);
 }
 
+function applyStaticExportData() {
+  document.body.classList.add('static-export');
+  const bannerEl = document.getElementById('static-export-banner');
+  const exportedAt = STATIC_DATA.exportedAt ? fmtDate(STATIC_DATA.exportedAt) : null;
+  bannerEl.textContent = 'Momentopname' + (exportedAt ? ` van ${exportedAt}` : '') + ' — bekijk-alleen. Voor de actuele versie of om iets aan te passen, ga naar degene die dit gedeeld heeft.';
+  bannerEl.classList.remove('hidden');
+
+  state.snapshots = STATIC_DATA.ovSnapshots || [];
+  state.typeWhitelist = STATIC_DATA.typeWhitelist || [];
+  state.toSnapshots = STATIC_DATA.teOnderzoekenSnapshots || [];
+  state.meetdienstNamen = STATIC_DATA.meetdienstNamen || [];
+  state.handoffNamen = STATIC_DATA.handoffNamen || [];
+  state.wvStatus = STATIC_DATA.wvStatus || {};
+
+  if (state.snapshots.length > 0) renderDashboardFromState();
+  else document.getElementById('dashboard').classList.add('hidden');
+  if (state.toSnapshots.length > 0) renderToDashboardFromState();
+  else document.getElementById('to-dashboard').classList.add('hidden');
+
+  // Instellingen-tab heeft niets te doen in een bekijk-alleen export: geen
+  // back-up, geen type-filter, geen naamlijsten om te bewerken.
+  const settingsBtn = document.querySelector('.tab-btn[data-tab="settings"]');
+  if (settingsBtn) settingsBtn.classList.add('hidden');
+}
+
 async function init() {
   document.getElementById('week-date').value = new Date().toISOString().slice(0, 10);
   document.getElementById('to-week-date').value = new Date().toISOString().slice(0, 10);
   wireEvents();
   setupTabNav();
-  await reloadAllStateAndRender();
+  if (isStaticExport) applyStaticExportData();
+  else await reloadAllStateAndRender();
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -111,6 +111,21 @@ summary:focus-visible, [tabindex]:focus-visible {
 }
 .hero-sub { color: rgba(255,255,255,0.82); font-weight: 500; }
 .hero-tagline { margin: 0 0 20px; color: rgba(255,255,255,0.88); font-size: 0.9rem; }
+.static-export-banner {
+  display: inline-block;
+  margin: -10px 0 20px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.18);
+  font-weight: 600;
+}
+
+/* Bekijk-alleen export voor teamleden: geen invoer, geen instellingen,
+   geen data-beheer — alleen filteren/sorteren/klikken door bestaande data. */
+.static-export #input-card,
+.static-export #to-input-card,
+.static-export #ov-weeks-card,
+.static-export #to-weeks-card { display: none; }
 
 .tab-nav {
   position: relative;
@@ -380,6 +395,8 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   padding: 3px 9px;
   border-radius: 999px;
   white-space: nowrap;
+  background: var(--gridline);
+  color: var(--text-secondary);
 }
 .status-pill.good { color: var(--status-good); background: color-mix(in srgb, var(--status-good) 15%, transparent); }
 .status-pill.warning { color: #9a6b00; background: color-mix(in srgb, var(--status-warning) 25%, transparent); }
