@@ -433,12 +433,25 @@ function classifyTeOnderzoeken(s) {
   return { status: 'genegeerd', reden: 'geen naam vermeld' };
 }
 
-// Cross-referentie tussen de twee bakken. Beide zijn losse pastes uit dezelfde
-// Instandhoudingsapp, dus hetzelfde ordernummer kan in allebei voorkomen —
-// gelijktijdig (als de bakken elkaar overlappende filters zijn) of na elkaar
-// (als een storing naar de meetdienst gaat en weer terugkomt). We doen geen
-// aanname over welke van de twee het is, en signaleren alleen dat het
-// ordernummer ook in de andere bak's laatste week staat.
+// "Te controleren onderzoeken" is geen eigen bak, maar een filter óver de OV
+// NUS-lijst: elke relevante storing daarin hoort ook in de actuele OV NUS-lijst
+// te staan. Ordernummers die daar niet in voorkomen tellen we dus ook als
+// genegeerd — mits we de OV NUS-lijst al hebben om tegen te vergelijken (staat
+// die nog leeg, dan kunnen we het niet checken en laten we de naam-classificatie
+// ongemoeid, om niet alles ten onrechte als "niet gevonden" te bestempelen).
+const NOT_IN_OV_REASON = 'niet gevonden in de actuele OV NUS-lijst';
+function classifyTeOnderzoekenFull(s) {
+  const base = classifyTeOnderzoeken(s);
+  if (base.status === 'genegeerd' || state.snapshots.length === 0) return base;
+  if (!latestOvOrderSet().has(s.order)) return { status: 'genegeerd', reden: NOT_IN_OV_REASON };
+  return base;
+}
+
+// "Te controleren onderzoeken" is een filter óver de OV NUS-lijst, geen eigen
+// bak — dus elke relevante te-onderzoeken-storing hoort ook in de actuele OV
+// NUS-lijst te staan (zie classifyTeOnderzoekenFull). Deze sets worden gebruikt
+// om dat ordernummer terug te vinden vanuit de andere kant, bv. voor het
+// "⇄ ook in te onderzoeken-bak"-badge op de OV NUS-tabel.
 function latestOvOrderSet() {
   if (state.snapshots.length === 0) return new Set();
   const latest = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).pop();
@@ -447,7 +460,7 @@ function latestOvOrderSet() {
 function latestRelevantToOrderSet() {
   if (state.toSnapshots.length === 0) return new Set();
   const latest = state.toSnapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).pop();
-  return new Set(latest.storingen.filter(s => classifyTeOnderzoeken(s).status !== 'genegeerd').map(s => s.order));
+  return new Set(latest.storingen.filter(s => classifyTeOnderzoekenFull(s).status !== 'genegeerd').map(s => s.order));
 }
 function crossBucketBadge(order, orderSet, label, seriesVar) {
   if (!orderSet || !orderSet.has(order)) return '';
@@ -813,9 +826,12 @@ function renderMutationTables(mutations) {
     document.getElementById('table-out').innerHTML = '<p class="empty-note">Nog geen vorige week om mee te vergelijken.</p>';
     return;
   }
-  const toOrderSet = latestRelevantToOrderSet();
-  document.getElementById('table-in').innerHTML = miniTable(mutations.nieuw, toOrderSet);
-  document.getElementById('table-out').innerHTML = miniTable(mutations.uitgegaan, toOrderSet);
+  // Alleen zinvol bij "nieuw binnengekomen": relevante te-onderzoeken-orders
+  // zijn per definitie ook actuele OV NUS-orders (zie classifyTeOnderzoekenFull),
+  // dus een order dat net uit OV NUS is verdwenen kan nooit meer in die set
+  // zitten — het badge zou daar dus nooit aanslaan.
+  document.getElementById('table-in').innerHTML = miniTable(mutations.nieuw, latestRelevantToOrderSet());
+  document.getElementById('table-out').innerHTML = miniTable(mutations.uitgegaan);
 }
 
 /* ---------- Rendering: full table ---------- */
@@ -1061,15 +1077,21 @@ function renderToStatTiles(classified) {
 
 function renderToIgnored(classified) {
   const container = document.getElementById('to-ignored');
+  const countEl = document.getElementById('to-ignored-count');
   const ignored = classified.filter(c => c.status === 'genegeerd');
+  const notInOvCount = ignored.filter(c => c.reden === NOT_IN_OV_REASON).length;
+  if (countEl) countEl.textContent = ignored.length ? String(ignored.length) : '';
   if (ignored.length === 0) { container.innerHTML = '<p class="empty-note">Niets genegeerd deze week.</p>'; return; }
+  const note = notInOvCount > 0
+    ? `<p class="muted small">Waarvan <strong>${notInOvCount}</strong> niet gevonden in de actuele OV NUS-lijst — "te controleren onderzoeken" is een filter óver die lijst, dus die storingen zijn (nu) niet voor ons.</p>`
+    : '';
   const rows = ignored.map(c => `<tr>
       <td>${esc(c.storing.order)}</td>
       <td>${esc(c.storing.city)} — ${esc(c.storing.street)}</td>
       <td>${esc((c.storing.names || []).join(' → ') || '—')}</td>
       <td>${esc(c.reden)}</td>
     </tr>`).join('');
-  container.innerHTML = `<table><thead><tr><th>Order</th><th>Adres</th><th>Naam</th><th>Reden</th></tr></thead><tbody>${rows}</tbody></table>`;
+  container.innerHTML = `${note}<table><thead><tr><th>Order</th><th>Adres</th><th>Naam</th><th>Reden</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 const TO_COLUMNS = [
@@ -1114,7 +1136,6 @@ function renderToTableAll(classified) {
     });
   });
   const rows = sortToRows(annotated);
-  const ovOrderSet = latestOvOrderSet();
   const head = TO_COLUMNS.map(col => {
     const active = state.toSortState.key === col.key ? (state.toSortState.dir === 1 ? ' ↑' : ' ↓') : '';
     return `<th data-key="${col.key}" class="${col.num ? 'num' : ''}">${esc(col.label)}${active}</th>`;
@@ -1137,7 +1158,7 @@ function renderToTableAll(classified) {
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
       <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-      <td>${esc(s.order)} ${crossBucketBadge(s.order, ovOrderSet, 'ook in OV NUSsen-bak', '--series-1')}</td>
+      <td>${esc(s.order)}</td>
       <td>${esc(s.toStatusLabel)}</td>
       <td>${esc(s.namesLabel)}</td>
       <td class="num">${renderDaysPill(s)}</td>
@@ -1208,7 +1229,7 @@ function renderToDashboardFromState() {
   renderHandoffList();
   if (snaps.length === 0) { document.getElementById('to-dashboard').classList.add('hidden'); return; }
   const latest = snaps[snaps.length - 1];
-  const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoeken(s)));
+  const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoekenFull(s)));
   const relevantAll = classified.filter(c => c.status !== 'genegeerd');
 
   renderToFilterTabs(relevantAll);
@@ -1470,7 +1491,7 @@ function wireEvents() {
     else { state.toSortState.key = th.dataset.key; state.toSortState.dir = 1; }
     const latest = state.toSnapshots[state.toSnapshots.length - 1];
     if (latest) {
-      const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoeken(s)));
+      const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoekenFull(s)));
       renderToTableAll(filterToByActive(classified));
     }
   });
