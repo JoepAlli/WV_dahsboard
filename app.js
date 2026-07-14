@@ -561,6 +561,16 @@ function filterByActive(list) {
   return list.filter(s => regioGroupOf(s) === state.activeFilter);
 }
 
+// Zoeken op order of adres (plaats/straat/postcode) — case-insensitive,
+// gedeeld tussen de drie volledige-lijst-tabellen.
+function matchesSearch(s, query) {
+  if (!query) return true;
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return [s.order, s.city, s.street, s.postcode].some(v => (v || '').toLowerCase().includes(q));
+}
+function searchFiltered(list, query) { return list.filter(s => matchesSearch(s, query)); }
+
 // Alleen storingen met een type in de whitelist tellen mee (zie "Type-filter").
 function isTypeIncluded(s) { return state.typeWhitelist.includes(s.type); }
 function typeFiltered(list) { return list.filter(isTypeIncluded); }
@@ -629,6 +639,10 @@ const state = {
   planSortState: { key: 'daysLeft', dir: 1 },
   planActiveFilter: 'Totaal',
   ovBlockStatus: {},
+  searchQuery: '',
+  toSearchQuery: '',
+  planSearchQuery: '',
+  ovBulkSelected: new Set(),
 };
 
 /* ---------- Tooltip ---------- */
@@ -672,6 +686,7 @@ function statTileFilters() {
   return {
     known: { title: 'Verlopen — uitvoering bekend', test: s => s.overdue && !!s.executionDate },
     unknown: { title: 'Verlopen — uitvoering onbekend', test: s => isActionableOverdue(s) },
+    bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' },
     onderzoek: { title: 'In onderzoek (te controleren)', test: s => onderzoekSet.has(s.order) },
     inplannen: { title: 'Klaar voor inplannen', test: s => planSet.has(s.order) },
     geblokkeerd: { title: 'Geblokkeerd (Rezap / Naar Aanleg)', test: s => isOvBlocked(s) },
@@ -684,6 +699,7 @@ function renderStatTiles(current, mutations) {
   const filters = statTileFilters();
   const overdueKnown = current.filter(filters.known.test).length;
   const overdueUnknown = current.filter(filters.unknown.test).length;
+  const bijnaVerlopenCount = current.filter(filters.bijnaVerlopen.test).length;
   const onderzoekCount = current.filter(filters.onderzoek.test).length;
   const inplannenCount = current.filter(filters.inplannen.test).length;
   const geblokkeerdCount = current.filter(filters.geblokkeerd.test).length;
@@ -693,6 +709,8 @@ function renderStatTiles(current, mutations) {
       note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
     { label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
       note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
+    { label: 'Bijna verlopen', value: bijnaVerlopenCount, deltaClass: bijnaVerlopenCount > 0 ? 'bad' : 'good',
+      note: bijnaVerlopenCount > 0 ? 'nog 1-2 dagen — nu nog te sturen' : 'geen', filterKey: 'bijnaVerlopen' },
     { label: 'Verlopen — uitvoering bekend', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
       note: overdueKnown > 0 ? 'al wel ingepland' : 'geen', filterKey: 'known' },
     { label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
@@ -755,10 +773,11 @@ function renderStatDetail(current, mutations) {
   // reden direct hier instellen/aanpassen — dat scheelt zoeken in de volledige
   // lijst voor precies de storingen waar dit relevant is.
   const showBlock = (filterKey === 'unknown' || filterKey === 'geblokkeerd') && !isStaticExport;
+  const firstSeenMap = firstSeenWeekMap();
   const body = list.length === 0
     ? '<p class="empty-note">Geen storingen in deze lijst.</p>'
     : `<div class="table-scroll"><table><thead><tr>
-        <th>Order</th><th>Regio</th><th>Adres</th><th class="num">Dagen</th><th>Type</th><th>Uitvoering</th>${showBlock ? '<th>Blokkade</th>' : ''}
+        <th>Order</th><th>Regio</th><th>Adres</th><th class="num">Dagen</th><th>Open sinds</th><th>Type</th><th>Uitvoering</th>${showBlock ? '<th>Blokkade</th>' : ''}
       </tr></thead><tbody>${list.map(s => {
         const block = ovBlockStatusOf(s.order);
         const blockCell = `
@@ -773,6 +792,7 @@ function renderStatDetail(current, mutations) {
         <td>${esc(regioGroupLabel(regioGroupOf(s)))}</td>
         <td>${esc(s.city)} — ${esc(s.street)}, ${esc(s.postcode)}</td>
         <td class="num">${renderDaysPill(s)}</td>
+        <td>${firstSeenMap[s.order] ? esc(firstSeenMap[s.order]) : '—'}</td>
         <td>${esc(s.type)}</td>
         <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
         ${showBlock ? `<td class="ov-block-cell">${blockCell}</td>` : ''}
@@ -1005,11 +1025,24 @@ const COLUMNS = [
   { key: 'asset', label: 'Asset' },
   { key: 'wvNaam', label: "WV'er" },
   { key: 'daysLeft', label: 'Dagen', num: true },
+  { key: 'firstSeenWeek', label: 'Open sinds' },
   { key: 'executionDate', label: 'Uitvoering' },
   { key: 'flags', label: 'Aanvragen' },
   { key: 'type', label: 'Type' },
   { key: 'blockReasonLabel', label: 'Blokkade' },
 ];
+
+// Zoekt per ordernummer de vroegste opgeslagen week waarin die storing al
+// voorkwam, zodat je in één oogopslag ziet hoe lang iets al meeloopt — los
+// van de dagen-teller, die alleen het (mogelijk verlengde) target toont.
+// Eén keer over alle weken heen opgebouwd i.p.v. per rij, voor snelheid.
+function firstSeenWeekMap() {
+  const map = {};
+  state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).forEach(sn => {
+    sn.storingen.forEach(s => { if (!(s.order in map)) map[s.order] = sn.week; });
+  });
+  return map;
+}
 
 function sortRows(rows) {
   const { key, dir } = state.sortState;
@@ -1026,14 +1059,18 @@ function sortRows(rows) {
 function renderTableAll(current) {
   const container = document.getElementById('table-all');
   if (current.length === 0) { container.innerHTML = '<p class="empty-note">Geen storingen.</p>'; return; }
+  current = searchFiltered(current, state.searchQuery);
+  if (current.length === 0) { container.innerHTML = '<p class="empty-note">Geen storingen gevonden voor deze zoekopdracht.</p>'; return; }
+  const firstSeenMap = firstSeenWeekMap();
   const annotated = current.map(s => Object.assign({}, s, {
     regioGroup: regioGroupOf(s),
     blockReasonLabel: OV_BLOCK_REASON_LABELS[ovBlockStatusOf(s.order).reason] || '',
+    firstSeenWeek: firstSeenMap[s.order] || '',
   }));
   const rows = sortRows(annotated);
   const toOrderSet = latestRelevantToOrderSet();
   const planOrderSet = latestRelevantPlanOrderSet();
-  const head = COLUMNS.map(c => {
+  const head = (isStaticExport ? '' : '<th class="checkbox-col"><input type="checkbox" id="ov-select-all" title="Alles selecteren"></th>') + COLUMNS.map(c => {
     const active = state.sortState.key === c.key ? (state.sortState.dir === 1 ? ' ↑' : ' ↓') : '';
     return `<th data-key="${c.key}" class="${c.num ? 'num' : ''}">${esc(c.label)}${active}</th>`;
   }).join('');
@@ -1053,7 +1090,9 @@ function renderTableAll(current) {
         <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
       </select>
       ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}`;
+    const checkboxTd = isStaticExport ? '' : `<td class="checkbox-col"><input type="checkbox" class="ov-row-select" data-order="${esc(s.order)}"${state.ovBulkSelected.has(s.order) ? ' checked' : ''}></td>`;
     return `<tr${isActionableOverdue(s) ? ' class="row-alert"' : ''}>
+      ${checkboxTd}
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
@@ -1062,6 +1101,7 @@ function renderTableAll(current) {
       <td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>
       <td>${s.wvNaam ? esc(s.wvNaam) : '—'}</td>
       <td class="num">${renderDaysPill(s)}</td>
+      <td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>
       <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
       <td>${flagsHtml}</td>
       <td>${esc(s.type)}</td>
@@ -1092,6 +1132,42 @@ function renderTableAll(current) {
       if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
     });
   });
+
+  // Bulkselectie: meerdere lang openstaande storingen in één keer dezelfde
+  // blokkade-reden geven, zonder ze één voor één te hoeven aanklikken.
+  if (!isStaticExport) {
+    const visibleOrders = rows.map(s => s.order);
+    const selectAll = document.getElementById('ov-select-all');
+    if (selectAll) {
+      selectAll.checked = visibleOrders.length > 0 && visibleOrders.every(o => state.ovBulkSelected.has(o));
+      selectAll.addEventListener('change', () => {
+        if (selectAll.checked) visibleOrders.forEach(o => state.ovBulkSelected.add(o));
+        else visibleOrders.forEach(o => state.ovBulkSelected.delete(o));
+        container.querySelectorAll('.ov-row-select').forEach(cb => { cb.checked = state.ovBulkSelected.has(cb.dataset.order); });
+        renderOvBulkBar();
+      });
+    }
+    container.querySelectorAll('.ov-row-select').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const order = cb.dataset.order;
+        if (cb.checked) state.ovBulkSelected.add(order); else state.ovBulkSelected.delete(order);
+        if (selectAll) selectAll.checked = visibleOrders.length > 0 && visibleOrders.every(o => state.ovBulkSelected.has(o));
+        renderOvBulkBar();
+      });
+    });
+    renderOvBulkBar();
+  }
+}
+
+// Toont/verbergt de bulkactie-balk boven de OV NUS-tabel en houdt de teller
+// bij — los van de tabel zelf gerenderd, zodat 'm niet steeds herbouwd wordt.
+function renderOvBulkBar() {
+  const bar = document.getElementById('ov-bulk-bar');
+  if (!bar) return;
+  const n = state.ovBulkSelected.size;
+  if (n === 0) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  document.getElementById('ov-bulk-count').textContent = `${n} storing${n === 1 ? '' : 'en'} geselecteerd`;
 }
 
 /* ---------- Rendering: weeks list ---------- */
@@ -1324,8 +1400,10 @@ function sortToRows(rows) {
 
 function renderToTableAll(classified) {
   const container = document.getElementById('to-table-all');
-  const relevant = classified.filter(c => c.status !== 'genegeerd');
+  let relevant = classified.filter(c => c.status !== 'genegeerd');
   if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen relevante storingen.</p>'; return; }
+  relevant = relevant.filter(c => matchesSearch(c.storing, state.toSearchQuery));
+  if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen storingen gevonden voor deze zoekopdracht.</p>'; return; }
   const annotated = relevant.map(c => {
     const wv = wvStatusOf(c.storing.order);
     return Object.assign({}, c.storing, {
@@ -1534,8 +1612,10 @@ function sortPlanRows(rows) {
 
 function renderPlanTableAll(classified) {
   const container = document.getElementById('plan-table-all');
-  const relevant = classified.filter(c => c.status !== 'genegeerd');
+  let relevant = classified.filter(c => c.status !== 'genegeerd');
   if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen relevante storingen.</p>'; return; }
+  relevant = relevant.filter(c => matchesSearch(c.storing, state.planSearchQuery));
+  if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen storingen gevonden voor deze zoekopdracht.</p>'; return; }
   const annotated = relevant.map(c => Object.assign({}, c.storing, {
     regioGroup: regioGroupOf(c.storing),
     namesLabel: (c.storing.names || []).join(' → ') || '—',
@@ -1786,6 +1866,34 @@ function wireEvents() {
     if (latest) renderTableAll(filterByActive(typeFiltered(latest.storingen)));
   });
 
+  document.getElementById('table-search').addEventListener('input', e => {
+    state.searchQuery = e.target.value;
+    const latest = state.snapshots[state.snapshots.length - 1];
+    if (latest) renderTableAll(filterByActive(typeFiltered(latest.storingen)));
+  });
+
+  document.getElementById('ov-bulk-apply-btn').addEventListener('click', async () => {
+    if (state.ovBulkSelected.size === 0) return;
+    const reason = document.getElementById('ov-bulk-reason').value;
+    state.ovBulkSelected.forEach(order => {
+      const current = state.ovBlockStatus[order] || {};
+      state.ovBlockStatus[order] = { reason, note: current.note || '' };
+    });
+    await saveOvBlockStatusMap(state.ovBlockStatus);
+    state.ovBulkSelected.clear();
+    renderDashboardFromState();
+    if (state.toSnapshots.length > 0) renderToDashboardFromState();
+    if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
+  });
+
+  document.getElementById('ov-bulk-clear-btn').addEventListener('click', () => {
+    state.ovBulkSelected.clear();
+    document.querySelectorAll('.ov-row-select').forEach(cb => { cb.checked = false; });
+    const selectAll = document.getElementById('ov-select-all');
+    if (selectAll) selectAll.checked = false;
+    renderOvBulkBar();
+  });
+
   document.getElementById('add-type-btn').addEventListener('click', async () => {
     const input = document.getElementById('new-type-input');
     const val = input.value.trim();
@@ -1870,6 +1978,15 @@ function wireEvents() {
     }
   });
 
+  document.getElementById('to-table-search').addEventListener('input', e => {
+    state.toSearchQuery = e.target.value;
+    const latest = state.toSnapshots[state.toSnapshots.length - 1];
+    if (latest) {
+      const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoekenFull(s)));
+      renderToTableAll(filterToByActive(classified));
+    }
+  });
+
   document.getElementById('plan-process-btn').addEventListener('click', async () => {
     const textarea = document.getElementById('plan-paste-input');
     const raw = textarea.value;
@@ -1927,6 +2044,15 @@ function wireEvents() {
     if (!th) return;
     if (state.planSortState.key === th.dataset.key) state.planSortState.dir *= -1;
     else { state.planSortState.key = th.dataset.key; state.planSortState.dir = 1; }
+    const latest = state.planSnapshots[state.planSnapshots.length - 1];
+    if (latest) {
+      const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyKlaarVoorInplannenFull(s)));
+      renderPlanTableAll(filterPlanByActive(classified));
+    }
+  });
+
+  document.getElementById('plan-table-search').addEventListener('input', e => {
+    state.planSearchQuery = e.target.value;
     const latest = state.planSnapshots[state.planSnapshots.length - 1];
     if (latest) {
       const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyKlaarVoorInplannenFull(s)));

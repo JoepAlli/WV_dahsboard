@@ -132,7 +132,19 @@
         </section>
 
         <section class="card">
-          <h2>Volledige lijst — open storingen</h2>
+          <div class="card-header">
+            <h2>Volledige lijst — open storingen</h2>
+            <input type="search" id="table-search" class="table-search" placeholder="Zoek op order of adres…">
+          </div>
+          <div id="ov-bulk-bar" class="bulk-bar hidden">
+            <span id="ov-bulk-count" class="muted small"></span>
+            <select id="ov-bulk-reason">
+              <option value="rezap">Rezap aanwezig</option>
+              <option value="aanleg">Naar Aanleg</option>
+            </select>
+            <button id="ov-bulk-apply-btn" class="btn-primary">Toepassen op selectie</button>
+            <button id="ov-bulk-clear-btn" class="btn-link">Selectie wissen</button>
+          </div>
           <div id="table-all" class="table-scroll"></div>
         </section>
 
@@ -162,7 +174,10 @@
         </details>
 
         <section class="card">
-          <h2>Volledige lijst — relevante te onderzoeken storingen</h2>
+          <div class="card-header">
+            <h2>Volledige lijst — relevante te onderzoeken storingen</h2>
+            <input type="search" id="to-table-search" class="table-search" placeholder="Zoek op order of adres…">
+          </div>
           <div id="to-table-all" class="table-scroll"></div>
         </section>
 
@@ -192,7 +207,10 @@
         </details>
 
         <section class="card">
-          <h2>Volledige lijst — klaar voor inplannen</h2>
+          <div class="card-header">
+            <h2>Volledige lijst — klaar voor inplannen</h2>
+            <input type="search" id="plan-table-search" class="table-search" placeholder="Zoek op order of adres…">
+          </div>
           <div id="plan-table-all" class="table-scroll"></div>
         </section>
 
