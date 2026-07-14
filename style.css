@@ -124,8 +124,10 @@ summary:focus-visible, [tabindex]:focus-visible {
    geen data-beheer — alleen filteren/sorteren/klikken door bestaande data. */
 .static-export #input-card,
 .static-export #to-input-card,
+.static-export #plan-input-card,
 .static-export #ov-weeks-card,
-.static-export #to-weeks-card { display: none; }
+.static-export #to-weeks-card,
+.static-export #plan-weeks-card { display: none; }
 
 .tab-nav {
   position: relative;
@@ -152,8 +154,29 @@ summary:focus-visible, [tabindex]:focus-visible {
 }
 .tab-btn:hover { background: rgba(255,255,255,0.14); color: #fff; }
 .tab-btn.active { background: #fff; color: var(--series-1); box-shadow: 0 2px 10px rgba(0,0,0,0.18); }
-.tab-btn[data-tab="to"].active { color: var(--series-2); }
+.tab-btn[data-tab="data"].active { color: var(--series-2); }
 .tab-btn[data-tab="settings"].active { color: var(--text-secondary); }
+
+/* Submenu binnen Data: OV NUSsen / Te onderzoeken / Klaar voor inplannen. */
+.subtab-nav {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.subtab-btn {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 8px 16px;
+  border-radius: 999px;
+  transition: background-color var(--ease), color var(--ease), border-color var(--ease);
+}
+.subtab-btn:hover { background: var(--gridline); }
+.subtab-btn.active { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+.subtab-btn[data-subtab="to"].active { background: var(--series-2); border-color: var(--series-2); }
+.subtab-btn[data-subtab="plan"].active { background: var(--series-3); border-color: var(--series-3); color: #3a2c00; }
 
 .hero-wave {
   position: relative;
@@ -192,7 +215,7 @@ main {
   flex-wrap: wrap;
 }
 
-textarea#paste-input {
+textarea#paste-input, textarea#to-paste-input, textarea#plan-paste-input {
   width: 100%;
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;
@@ -204,7 +227,7 @@ textarea#paste-input {
   resize: vertical;
   transition: border-color var(--ease);
 }
-textarea#paste-input:focus { border-color: var(--series-1); }
+textarea#paste-input:focus, textarea#to-paste-input:focus, textarea#plan-paste-input:focus { border-color: var(--series-1); }
 
 .input-row {
   display: flex;
@@ -572,8 +595,8 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   background: rgba(255,255,255,0.2);
   border-radius: var(--radius-md);
 }
-.panel-banner-ov { background: linear-gradient(135deg, var(--series-1) 0%, color-mix(in srgb, var(--series-1) 55%, var(--series-2)) 140%); }
-.panel-banner-to { background: linear-gradient(135deg, var(--series-2) 0%, color-mix(in srgb, var(--series-2) 55%, var(--series-1)) 140%); }
+.panel-banner-invoer { background: linear-gradient(135deg, var(--series-1) 0%, color-mix(in srgb, var(--series-1) 55%, var(--series-3)) 140%); }
+.panel-banner-data { background: linear-gradient(135deg, var(--series-2) 0%, color-mix(in srgb, var(--series-2) 55%, var(--series-1)) 140%); }
 .panel-banner-settings { background: linear-gradient(135deg, #57564f 0%, #2c2b28 140%); }
 
 /* "Opgeslagen weken" / "Genegeerd deze week" staan standaard ingeklapt
