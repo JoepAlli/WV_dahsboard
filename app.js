@@ -433,6 +433,27 @@ function classifyTeOnderzoeken(s) {
   return { status: 'genegeerd', reden: 'geen naam vermeld' };
 }
 
+// Cross-referentie tussen de twee bakken. Beide zijn losse pastes uit dezelfde
+// Instandhoudingsapp, dus hetzelfde ordernummer kan in allebei voorkomen —
+// gelijktijdig (als de bakken elkaar overlappende filters zijn) of na elkaar
+// (als een storing naar de meetdienst gaat en weer terugkomt). We doen geen
+// aanname over welke van de twee het is, en signaleren alleen dat het
+// ordernummer ook in de andere bak's laatste week staat.
+function latestOvOrderSet() {
+  if (state.snapshots.length === 0) return new Set();
+  const latest = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).pop();
+  return new Set(typeFiltered(latest.storingen).map(s => s.order));
+}
+function latestRelevantToOrderSet() {
+  if (state.toSnapshots.length === 0) return new Set();
+  const latest = state.toSnapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).pop();
+  return new Set(latest.storingen.filter(s => classifyTeOnderzoeken(s).status !== 'genegeerd').map(s => s.order));
+}
+function crossBucketBadge(order, orderSet, label, seriesVar) {
+  if (!orderSet || !orderSet.has(order)) return '';
+  return `<span class="cross-bucket-badge" style="--cb-color:var(${seriesVar})" title="${esc(label)}">⇄ ${esc(label)}</span>`;
+}
+
 /* ---------- Derived helpers ---------- */
 
 function regioOf(s) { return s.city || 'Onbekend'; }
@@ -778,9 +799,9 @@ function renderTrendChart(snapshots) {
 
 /* ---------- Rendering: mutation tables ---------- */
 
-function miniTable(list) {
+function miniTable(list, toOrderSet) {
   if (list.length === 0) return '<p class="empty-note">Geen mutaties.</p>';
-  const rows = list.map(s => `<tr><td>${esc(s.order)}</td><td>${esc(regioOf(s))} — ${esc(s.street)}</td><td>${esc(s.type)}</td></tr>`).join('');
+  const rows = list.map(s => `<tr><td>${esc(s.order)} ${crossBucketBadge(s.order, toOrderSet, 'ook in te onderzoeken-bak', '--series-2')}</td><td>${esc(regioOf(s))} — ${esc(s.street)}</td><td>${esc(s.type)}</td></tr>`).join('');
   return `<table><thead><tr><th>Order</th><th>Adres</th><th>Type</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
@@ -792,8 +813,9 @@ function renderMutationTables(mutations) {
     document.getElementById('table-out').innerHTML = '<p class="empty-note">Nog geen vorige week om mee te vergelijken.</p>';
     return;
   }
-  document.getElementById('table-in').innerHTML = miniTable(mutations.nieuw);
-  document.getElementById('table-out').innerHTML = miniTable(mutations.uitgegaan);
+  const toOrderSet = latestRelevantToOrderSet();
+  document.getElementById('table-in').innerHTML = miniTable(mutations.nieuw, toOrderSet);
+  document.getElementById('table-out').innerHTML = miniTable(mutations.uitgegaan, toOrderSet);
 }
 
 /* ---------- Rendering: full table ---------- */
@@ -829,6 +851,7 @@ function renderTableAll(current) {
   if (current.length === 0) { container.innerHTML = '<p class="empty-note">Geen storingen.</p>'; return; }
   const annotated = current.map(s => Object.assign({}, s, { regioGroup: regioGroupOf(s) }));
   const rows = sortRows(annotated);
+  const toOrderSet = latestRelevantToOrderSet();
   const head = COLUMNS.map(c => {
     const active = state.sortState.key === c.key ? (state.sortState.dir === 1 ? ' ↑' : ' ↓') : '';
     return `<th data-key="${c.key}" class="${c.num ? 'num' : ''}">${esc(c.label)}${active}</th>`;
@@ -842,7 +865,7 @@ function renderTableAll(current) {
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
       <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-      <td>${esc(s.order)}</td>
+      <td>${esc(s.order)} ${crossBucketBadge(s.order, toOrderSet, 'ook in te onderzoeken-bak', '--series-2')}</td>
       <td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>
       <td>${s.wvNaam ? esc(s.wvNaam) : '—'}</td>
       <td class="num">${renderDaysPill(s)}</td>
@@ -873,6 +896,7 @@ function renderWeeksList() {
       state.snapshots = snaps;
       if (snaps.length === 0) document.getElementById('dashboard').classList.add('hidden');
       else renderDashboardFromState();
+      if (state.toSnapshots.length > 0) renderToDashboardFromState(); // cross-bak badges bijwerken
       renderWeeksList();
     });
   });
@@ -1090,6 +1114,7 @@ function renderToTableAll(classified) {
     });
   });
   const rows = sortToRows(annotated);
+  const ovOrderSet = latestOvOrderSet();
   const head = TO_COLUMNS.map(col => {
     const active = state.toSortState.key === col.key ? (state.toSortState.dir === 1 ? ' ↑' : ' ↓') : '';
     return `<th data-key="${col.key}" class="${col.num ? 'num' : ''}">${esc(col.label)}${active}</th>`;
@@ -1112,7 +1137,7 @@ function renderToTableAll(classified) {
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
       <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-      <td>${esc(s.order)}</td>
+      <td>${esc(s.order)} ${crossBucketBadge(s.order, ovOrderSet, 'ook in OV NUSsen-bak', '--series-1')}</td>
       <td>${esc(s.toStatusLabel)}</td>
       <td>${esc(s.namesLabel)}</td>
       <td class="num">${renderDaysPill(s)}</td>
@@ -1160,6 +1185,7 @@ function renderToWeeksList() {
       state.toSnapshots = snaps;
       if (snaps.length === 0) document.getElementById('to-dashboard').classList.add('hidden');
       else renderToDashboardFromState();
+      if (state.snapshots.length > 0) renderDashboardFromState(); // cross-bak badges bijwerken
       renderToWeeksList();
     });
   });
@@ -1326,6 +1352,7 @@ function wireEvents() {
     state.snapshots = snaps;
 
     renderDashboardFromState();
+    if (state.toSnapshots.length > 0) renderToDashboardFromState(); // cross-bak badges bijwerken
     showParseWarning(errors, storingen.length);
     statusEl.textContent = `${storingen.length} storingen verwerkt voor week ${week}` + (errors.length ? `, ${errors.length} regels niet herkend` : '');
     textarea.value = '';
@@ -1336,6 +1363,7 @@ function wireEvents() {
     await clearSnapshots();
     state.snapshots = [];
     document.getElementById('dashboard').classList.add('hidden');
+    if (state.toSnapshots.length > 0) renderToDashboardFromState(); // cross-bak badges bijwerken
   });
 
   document.querySelectorAll('.toggle-table').forEach(btn => {
@@ -1401,6 +1429,7 @@ function wireEvents() {
     state.toSnapshots = snaps;
 
     renderToDashboardFromState();
+    if (state.snapshots.length > 0) renderDashboardFromState(); // cross-bak badges bijwerken
     showToParseWarning(errors, storingen.length);
     statusEl.textContent = `${storingen.length} storingen verwerkt voor week ${week}` + (errors.length ? `, ${errors.length} regels niet herkend` : '');
     textarea.value = '';
@@ -1411,6 +1440,7 @@ function wireEvents() {
     await clearToSnapshots();
     state.toSnapshots = [];
     document.getElementById('to-dashboard').classList.add('hidden');
+    if (state.snapshots.length > 0) renderDashboardFromState(); // cross-bak badges bijwerken
   });
 
   document.getElementById('add-meetdienst-btn').addEventListener('click', async () => {

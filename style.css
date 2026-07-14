@@ -335,6 +335,20 @@ button {
   margin-left: 4px;
 }
 
+/* Signaleert dat een ordernummer ook (of nog) in de andere bak voorkomt —
+   kleur volgt het accent van de bak waar het ordernummer óók in staat. */
+.cross-bucket-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--cb-color) 15%, transparent);
+  color: var(--cb-color);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
 .mutations-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
