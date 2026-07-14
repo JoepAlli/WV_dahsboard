@@ -623,6 +623,7 @@ const state = {
   toActiveFilter: 'Totaal',
   wvStatus: {},
   statDetailFilter: null,
+  statDetailOrders: null,
   planSnapshots: [],
   planNamen: [],
   planSortState: { key: 'daysLeft', dir: 1 },
@@ -714,7 +715,17 @@ function renderStatTiles(current, mutations) {
   }).join('');
 
   const activate = (key) => {
-    state.statDetailFilter = state.statDetailFilter === key ? null : key;
+    if (state.statDetailFilter === key) {
+      state.statDetailFilter = null;
+      state.statDetailOrders = null;
+    } else {
+      state.statDetailFilter = key;
+      // Bevriest welke orders erin zitten op het moment van openen — anders
+      // verdwijnt een rij meteen uit beeld zodra je 'm hier bewerkt (bv. een
+      // blokkade-reden instellen bij "Verlopen — uitvoering onbekend" haalt
+      // 'm per definitie uit die lijst).
+      state.statDetailOrders = current.filter(statTileFilters()[key].test).map(s => s.order);
+    }
     renderStatTiles(current, mutations);
   };
   el.querySelectorAll('[data-stat-filter]').forEach(tile => {
@@ -736,23 +747,37 @@ function renderStatDetail(current, mutations) {
   if (!filterKey) { container.classList.add('hidden'); container.innerHTML = ''; return; }
 
   const filter = statTileFilters()[filterKey];
-  const list = current.filter(filter.test);
+  const orderSet = new Set(state.statDetailOrders || []);
+  const list = current.filter(s => orderSet.has(s.order));
   container.classList.remove('hidden');
 
-  const showReden = filterKey === 'geblokkeerd';
+  // Bij "Verlopen — uitvoering onbekend" en "Geblokkeerd" kun je de blokkade-
+  // reden direct hier instellen/aanpassen — dat scheelt zoeken in de volledige
+  // lijst voor precies de storingen waar dit relevant is.
+  const showBlock = (filterKey === 'unknown' || filterKey === 'geblokkeerd') && !isStaticExport;
   const body = list.length === 0
     ? '<p class="empty-note">Geen storingen in deze lijst.</p>'
     : `<div class="table-scroll"><table><thead><tr>
-        <th>Order</th><th>Regio</th><th>Adres</th><th class="num">Dagen</th><th>Type</th><th>Uitvoering</th>${showReden ? '<th>Reden</th>' : ''}
-      </tr></thead><tbody>${list.map(s => `<tr>
+        <th>Order</th><th>Regio</th><th>Adres</th><th class="num">Dagen</th><th>Type</th><th>Uitvoering</th>${showBlock ? '<th>Blokkade</th>' : ''}
+      </tr></thead><tbody>${list.map(s => {
+        const block = ovBlockStatusOf(s.order);
+        const blockCell = `
+          <select class="ov-block-select" data-order="${esc(s.order)}">
+            <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
+            <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Rezap aanwezig</option>
+            <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
+          </select>
+          ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}`;
+        return `<tr>
         <td>${esc(s.order)}</td>
         <td>${esc(regioGroupLabel(regioGroupOf(s)))}</td>
         <td>${esc(s.city)} — ${esc(s.street)}, ${esc(s.postcode)}</td>
         <td class="num">${renderDaysPill(s)}</td>
         <td>${esc(s.type)}</td>
         <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
-        ${showReden ? `<td>${esc(OV_BLOCK_REASON_LABELS[ovBlockStatusOf(s.order).reason] || '')}${ovBlockStatusOf(s.order).note ? `<div class="muted small">${esc(ovBlockStatusOf(s.order).note)}</div>` : ''}</td>` : ''}
-      </tr>`).join('')}</tbody></table></div>`;
+        ${showBlock ? `<td class="ov-block-cell">${blockCell}</td>` : ''}
+      </tr>`;
+      }).join('')}</tbody></table></div>`;
 
   container.innerHTML = `
     <div class="card-header">
@@ -760,8 +785,35 @@ function renderStatDetail(current, mutations) {
       <button class="btn-link" id="close-overdue-detail">Sluiten ✕</button>
     </div>
     ${body}`;
+
+  if (showBlock) {
+    const refresh = async () => {
+      await saveOvBlockStatusMap(state.ovBlockStatus);
+      renderDashboardFromState();
+      if (state.toSnapshots.length > 0) renderToDashboardFromState();
+      if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
+    };
+    container.querySelectorAll('.ov-block-select').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const order = sel.dataset.order;
+        const current = state.ovBlockStatus[order] || {};
+        state.ovBlockStatus[order] = { reason: sel.value, note: current.note || '' };
+        refresh();
+      });
+    });
+    container.querySelectorAll('.ov-block-note').forEach(inp => {
+      inp.addEventListener('change', () => {
+        const order = inp.dataset.order;
+        const current = state.ovBlockStatus[order] || {};
+        state.ovBlockStatus[order] = { reason: current.reason, note: inp.value };
+        refresh();
+      });
+    });
+  }
+
   document.getElementById('close-overdue-detail').addEventListener('click', () => {
     state.statDetailFilter = null;
+    state.statDetailOrders = null;
     renderStatTiles(current, mutations);
   });
 }
