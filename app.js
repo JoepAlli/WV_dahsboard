@@ -332,6 +332,21 @@ async function saveWvStatusMap(map) {
   catch (e) { console.error(e); }
 }
 
+// Handmatige blokkade-reden voor OV NUSsen-storingen die open moeten blijven
+// maar waar wij niets mee kunnen (bv. "Rezap aanwezig" of "Naar Aanleg").
+// Ook op ordernummer bijgehouden, zodat je een lang openstaande storing niet
+// elke week opnieuw hoeft te beoordelen — eenmaal gezet blijft de reden staan
+// en verdwijnt de "actie nodig"-markering voor die storing.
+const OV_BLOCK_STATUS_KEY = 'nusdash_ov_block_status_v1';
+async function loadOvBlockStatusMap() {
+  try { return (await idbGet(OV_BLOCK_STATUS_KEY)) || {}; }
+  catch (e) { console.error(e); return {}; }
+}
+async function saveOvBlockStatusMap(map) {
+  try { await idbSet(OV_BLOCK_STATUS_KEY, map); }
+  catch (e) { console.error(e); }
+}
+
 async function getStorageEstimate() {
   if (navigator.storage && navigator.storage.estimate) {
     try { return await navigator.storage.estimate(); }
@@ -354,6 +369,7 @@ async function exportBackup() {
     wvStatus: await loadWvStatusMap(),
     klaarVoorInplannenSnapshots: await loadPlanSnapshots(),
     klaarzetterNamen: await loadNameList(PLAN_NAMES_KEY, DEFAULT_PLAN_NAMEN),
+    ovBlockStatus: await loadOvBlockStatusMap(),
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -391,6 +407,7 @@ function buildStandaloneExport() {
     wvStatus: state.wvStatus,
     klaarVoorInplannenSnapshots: state.planSnapshots,
     klaarzetterNamen: state.planNamen,
+    ovBlockStatus: state.ovBlockStatus,
     exportedAt: new Date().toISOString(),
   };
   const dataScript = escapeForInlineTag('window.__DASHBOARD_DATA__ = ' + JSON.stringify(data) + ';', 'script');
@@ -430,6 +447,7 @@ async function importBackup(file) {
   if (backup.wvStatus && typeof backup.wvStatus === 'object') await saveWvStatusMap(backup.wvStatus);
   if (Array.isArray(backup.klaarVoorInplannenSnapshots)) await savePlanSnapshots(backup.klaarVoorInplannenSnapshots);
   if (Array.isArray(backup.klaarzetterNamen)) await saveNameList(PLAN_NAMES_KEY, backup.klaarzetterNamen);
+  if (backup.ovBlockStatus && typeof backup.ovBlockStatus === 'object') await saveOvBlockStatusMap(backup.ovBlockStatus);
 }
 
 // Classificatie voor de "te onderzoeken storingen"-bak:
@@ -562,7 +580,7 @@ const STATUS_ORDER = ['good', 'warning', 'serious', 'critical'];
 function renderDaysPill(s) {
   const status = statusOf(s);
   const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : (s.daysLeft === 0 ? 'verloopt vandaag' : `nog ${s.daysLeft} dgn`);
-  const unplanned = isUnplannedOverdue(s);
+  const unplanned = isActionableOverdue(s);
   const icon = unplanned ? '⛔' : STATUS_ICONS[status];
   const cls = `status-pill ${status}${unplanned ? ' status-pill-unplanned' : ''}`;
   const title = unplanned ? 'Verlopen én nog geen uitvoeringsdatum — actie nodig' : '';
@@ -609,6 +627,7 @@ const state = {
   planNamen: [],
   planSortState: { key: 'daysLeft', dir: 1 },
   planActiveFilter: 'Totaal',
+  ovBlockStatus: {},
 };
 
 /* ---------- Tooltip ---------- */
@@ -633,6 +652,16 @@ function hideTooltip() { tooltipEl.classList.add('hidden'); }
 // gewoon (te laat, maar onderweg).
 function isUnplannedOverdue(s) { return !!s.overdue && !s.executionDate; }
 
+// Sommige storingen moeten openblijven maar daar kunnen wij niets meer aan
+// doen (bv. wachten op Rezap, of overgedragen aan Aanleg). Eenmaal zo
+// gemarkeerd hoeft die storing niet meer als "actie nodig" op te vallen —
+// dat is precies waarom dit bestaat: niet elke week opnieuw dezelfde lang
+// openstaande storingen langslopen.
+const OV_BLOCK_REASON_LABELS = { rezap: 'Rezap aanwezig', aanleg: 'Naar Aanleg' };
+function ovBlockStatusOf(order) { return state.ovBlockStatus[order] || {}; }
+function isOvBlocked(s) { return !!ovBlockStatusOf(s.order).reason; }
+function isActionableOverdue(s) { return isUnplannedOverdue(s) && !isOvBlocked(s); }
+
 // Elke klikbare OV NUS-tegel heeft een filterKey met een titel en een test-
 // functie die bepaalt welke storingen erachter zitten — gebruikt door zowel
 // de tegel zelf als door renderStatDetail() voor de uitklap-lijst.
@@ -641,9 +670,10 @@ function statTileFilters() {
   const planSet = latestRelevantPlanOrderSet();
   return {
     known: { title: 'Verlopen — uitvoering bekend', test: s => s.overdue && !!s.executionDate },
-    unknown: { title: 'Verlopen — uitvoering onbekend', test: s => isUnplannedOverdue(s) },
+    unknown: { title: 'Verlopen — uitvoering onbekend', test: s => isActionableOverdue(s) },
     onderzoek: { title: 'In onderzoek (te controleren)', test: s => onderzoekSet.has(s.order) },
     inplannen: { title: 'Klaar voor inplannen', test: s => planSet.has(s.order) },
+    geblokkeerd: { title: 'Geblokkeerd (Rezap / Naar Aanleg)', test: s => isOvBlocked(s) },
   };
 }
 
@@ -655,6 +685,7 @@ function renderStatTiles(current, mutations) {
   const overdueUnknown = current.filter(filters.unknown.test).length;
   const onderzoekCount = current.filter(filters.onderzoek.test).length;
   const inplannenCount = current.filter(filters.inplannen.test).length;
+  const geblokkeerdCount = current.filter(filters.geblokkeerd.test).length;
   const tiles = [
     { label: 'Totaal open', value: total },
     { label: 'Nieuw binnengekomen', value: mutations.hasPrevious ? mutations.nieuw.length : '—',
@@ -667,6 +698,7 @@ function renderStatTiles(current, mutations) {
       note: overdueUnknown > 0 ? 'nog niets ingepland — actie nodig' : 'geen', alert: overdueUnknown > 0, filterKey: 'unknown' },
     { label: 'In onderzoek', value: onderzoekCount, note: 'te controleren door meetdienst', filterKey: 'onderzoek' },
     { label: 'Klaar voor inplannen', value: inplannenCount, note: 'kan ingepland worden', filterKey: 'inplannen' },
+    { label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Rezap / Naar Aanleg', filterKey: 'geblokkeerd' },
   ];
   el.innerHTML = tiles.map(t => {
     const clickable = t.filterKey ? ' stat-tile-clickable' : '';
@@ -707,10 +739,11 @@ function renderStatDetail(current, mutations) {
   const list = current.filter(filter.test);
   container.classList.remove('hidden');
 
+  const showReden = filterKey === 'geblokkeerd';
   const body = list.length === 0
     ? '<p class="empty-note">Geen storingen in deze lijst.</p>'
     : `<div class="table-scroll"><table><thead><tr>
-        <th>Order</th><th>Regio</th><th>Adres</th><th class="num">Dagen</th><th>Type</th><th>Uitvoering</th>
+        <th>Order</th><th>Regio</th><th>Adres</th><th class="num">Dagen</th><th>Type</th><th>Uitvoering</th>${showReden ? '<th>Reden</th>' : ''}
       </tr></thead><tbody>${list.map(s => `<tr>
         <td>${esc(s.order)}</td>
         <td>${esc(regioGroupLabel(regioGroupOf(s)))}</td>
@@ -718,6 +751,7 @@ function renderStatDetail(current, mutations) {
         <td class="num">${renderDaysPill(s)}</td>
         <td>${esc(s.type)}</td>
         <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
+        ${showReden ? `<td>${esc(OV_BLOCK_REASON_LABELS[ovBlockStatusOf(s.order).reason] || '')}${ovBlockStatusOf(s.order).note ? `<div class="muted small">${esc(ovBlockStatusOf(s.order).note)}</div>` : ''}</td>` : ''}
       </tr>`).join('')}</tbody></table></div>`;
 
   container.innerHTML = `
@@ -922,6 +956,7 @@ const COLUMNS = [
   { key: 'executionDate', label: 'Uitvoering' },
   { key: 'flags', label: 'Aanvragen' },
   { key: 'type', label: 'Type' },
+  { key: 'blockReasonLabel', label: 'Blokkade' },
 ];
 
 function sortRows(rows) {
@@ -939,7 +974,10 @@ function sortRows(rows) {
 function renderTableAll(current) {
   const container = document.getElementById('table-all');
   if (current.length === 0) { container.innerHTML = '<p class="empty-note">Geen storingen.</p>'; return; }
-  const annotated = current.map(s => Object.assign({}, s, { regioGroup: regioGroupOf(s) }));
+  const annotated = current.map(s => Object.assign({}, s, {
+    regioGroup: regioGroupOf(s),
+    blockReasonLabel: OV_BLOCK_REASON_LABELS[ovBlockStatusOf(s.order).reason] || '',
+  }));
   const rows = sortRows(annotated);
   const toOrderSet = latestRelevantToOrderSet();
   const planOrderSet = latestRelevantPlanOrderSet();
@@ -951,7 +989,19 @@ function renderTableAll(current) {
     const flagsHtml = s.flags.length
       ? s.flags.map(f => `<span class="badge" title="${esc(FLAG_LABELS[f])}">${esc(f)}</span>`).join(' ')
       : '—';
-    return `<tr${isUnplannedOverdue(s) ? ' class="row-alert"' : ''}>
+    const block = ovBlockStatusOf(s.order);
+    const blockCell = isStaticExport
+      ? (block.reason
+          ? `<span class="status-pill">${esc(OV_BLOCK_REASON_LABELS[block.reason])}</span>${block.note ? `<div class="muted small">${esc(block.note)}</div>` : ''}`
+          : '<span class="muted small">— Geen —</span>')
+      : `
+      <select class="ov-block-select" data-order="${esc(s.order)}">
+        <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
+        <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Rezap aanwezig</option>
+        <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
+      </select>
+      ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}`;
+    return `<tr${isActionableOverdue(s) ? ' class="row-alert"' : ''}>
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
@@ -963,9 +1013,33 @@ function renderTableAll(current) {
       <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
       <td>${flagsHtml}</td>
       <td>${esc(s.type)}</td>
+      <td class="ov-block-cell">${blockCell}</td>
     </tr>`;
   }).join('');
   container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+
+  container.querySelectorAll('.ov-block-select').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const order = sel.dataset.order;
+      const current = state.ovBlockStatus[order] || {};
+      state.ovBlockStatus[order] = { reason: sel.value, note: current.note || '' };
+      await saveOvBlockStatusMap(state.ovBlockStatus);
+      renderDashboardFromState();
+      if (state.toSnapshots.length > 0) renderToDashboardFromState();
+      if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
+    });
+  });
+  container.querySelectorAll('.ov-block-note').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      const order = inp.dataset.order;
+      const current = state.ovBlockStatus[order] || {};
+      state.ovBlockStatus[order] = { reason: current.reason, note: inp.value };
+      await saveOvBlockStatusMap(state.ovBlockStatus);
+      renderDashboardFromState();
+      if (state.toSnapshots.length > 0) renderToDashboardFromState();
+      if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
+    });
+  });
 }
 
 /* ---------- Rendering: weeks list ---------- */
@@ -1228,7 +1302,7 @@ function renderToTableAll(classified) {
         <option value="wachtend" ${wv.status === 'wachtend' ? 'selected' : ''}>Wachtend op iets</option>
       </select>
       ${wv.status === 'wachtend' ? `<input type="text" class="wv-status-note" data-order="${esc(s.order)}" placeholder="Waarop wacht je?" value="${esc(wv.note || '')}">` : ''}`;
-    return `<tr${isUnplannedOverdue(s) ? ' class="row-alert"' : ''}>
+    return `<tr${isActionableOverdue(s) ? ' class="row-alert"' : ''}>
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
@@ -1419,7 +1493,7 @@ function renderPlanTableAll(classified) {
     const active = state.planSortState.key === col.key ? (state.planSortState.dir === 1 ? ' ↑' : ' ↓') : '';
     return `<th data-key="${col.key}" class="${col.num ? 'num' : ''}">${esc(col.label)}${active}</th>`;
   }).join('');
-  const body = rows.map(s => `<tr${isUnplannedOverdue(s) ? ' class="row-alert"' : ''}>
+  const body = rows.map(s => `<tr${isActionableOverdue(s) ? ' class="row-alert"' : ''}>
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
@@ -1535,6 +1609,7 @@ async function reloadAllStateAndRender() {
   state.wvStatus = await loadWvStatusMap();
   state.planSnapshots = await loadPlanSnapshots();
   state.planNamen = await loadNameList(PLAN_NAMES_KEY, DEFAULT_PLAN_NAMEN);
+  state.ovBlockStatus = await loadOvBlockStatusMap();
   if (state.snapshots.length > 0) renderDashboardFromState();
   else { document.getElementById('dashboard').classList.add('hidden'); renderTypeWhitelist(); renderTypeUnknownReview(); }
   if (state.toSnapshots.length > 0) renderToDashboardFromState();
@@ -1872,6 +1947,7 @@ function applyStaticExportData() {
   state.wvStatus = STATIC_DATA.wvStatus || {};
   state.planSnapshots = STATIC_DATA.klaarVoorInplannenSnapshots || [];
   state.planNamen = STATIC_DATA.klaarzetterNamen || [];
+  state.ovBlockStatus = STATIC_DATA.ovBlockStatus || {};
 
   if (state.snapshots.length > 0) renderDashboardFromState();
   else document.getElementById('dashboard').classList.add('hidden');

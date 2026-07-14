@@ -441,7 +441,8 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .status-pill.critical { color: var(--status-critical); background: color-mix(in srgb, var(--status-critical) 15%, transparent); }
 .status-pill-unplanned { box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-critical) 50%, transparent); }
 
-.wv-status-cell {
+.wv-status-cell,
+.ov-block-cell {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -452,7 +453,9 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   border-radius: var(--radius-sm);
 }
 .wv-status-cell select,
-.wv-status-cell input[type="text"] {
+.wv-status-cell input[type="text"],
+.ov-block-cell select,
+.ov-block-cell input[type="text"] {
   font-family: inherit;
   font-size: 0.8rem;
   padding: 6px 8px;
