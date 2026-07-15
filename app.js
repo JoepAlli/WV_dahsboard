@@ -650,6 +650,12 @@ const state = {
   toSearchQuery: '',
   planSearchQuery: '',
   ovBulkSelected: new Set(),
+  // Bevriest welke orders + categorie in "Aandacht deze week" staan, zodat
+  // een rij niet meteen verdwijnt zodra je 'm daar blokkeert (zelfde reden als
+  // state.statDetailOrders hierboven). Wordt op null gezet bij echte
+  // datawijzigingen (nieuwe week verwerkt/verwijderd, back-up hersteld) zodat
+  // de lijst dan opnieuw wordt opgebouwd.
+  attentionOrders: null,
 };
 
 /* ---------- Tooltip ---------- */
@@ -735,29 +741,29 @@ function renderStatTiles(current, mutations) {
   const inplannenCount = current.filter(filters.inplannen.test).length;
   const geblokkeerdCount = current.filter(filters.geblokkeerd.test).length;
   const tiles = [
-    { label: 'Totaal open', value: total },
-    { label: 'Nieuw binnengekomen', value: mutations.hasPrevious ? mutations.nieuw.length : '—',
+    { key: 'totaal', label: 'Totaal open', value: total },
+    { key: 'nieuw', label: 'Nieuw binnengekomen', value: mutations.hasPrevious ? mutations.nieuw.length : '—',
       note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
-    { label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
+    { key: 'afgesloten', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
       note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
-    { label: 'Bijna verlopen', value: bijnaVerlopenCount, deltaClass: bijnaVerlopenCount > 0 ? 'bad' : 'good',
-      note: bijnaVerlopenCount > 0 ? 'nog 1-2 dagen — nu nog te sturen' : 'geen', filterKey: 'bijnaVerlopen' },
-    { label: 'Verlopen — uitvoering gepland', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
+    { key: 'bijnaVerlopen', label: 'Bijna verlopen', value: bijnaVerlopenCount, deltaClass: bijnaVerlopenCount > 0 ? 'bad' : 'good',
+      note: bijnaVerlopenCount > 0 ? 'nog 1-2 dagen — zie Aandacht deze week' : 'geen' },
+    { key: 'known', label: 'Verlopen — uitvoering gepland', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
       note: overdueKnown > 0 ? 'gepland, nog te gebeuren' : 'geen', filterKey: 'known' },
-    { label: 'Uitvoeringsdatum verstreken', value: expiredDateCount, deltaClass: expiredDateCount > 0 ? 'bad' : 'good',
-      note: expiredDateCount > 0 ? 'geplande datum is zelf ook al voorbij' : 'geen', alert: expiredDateCount > 0, filterKey: 'verlopenDatum' },
-    { label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
-      note: overdueUnknown > 0 ? 'nog niets ingepland — actie nodig' : 'geen', alert: overdueUnknown > 0, filterKey: 'unknown' },
-    { label: 'In onderzoek', value: onderzoekCount, note: 'te controleren door meetdienst', filterKey: 'onderzoek' },
-    { label: 'Klaar voor inplannen', value: inplannenCount, note: 'kan ingepland worden', filterKey: 'inplannen' },
-    { label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Rezap / Naar Aanleg', filterKey: 'geblokkeerd' },
+    { key: 'verlopenDatum', label: 'Uitvoeringsdatum verstreken', value: expiredDateCount, deltaClass: expiredDateCount > 0 ? 'bad' : 'good',
+      note: expiredDateCount > 0 ? 'geplande datum is zelf ook al voorbij — zie Aandacht deze week' : 'geen', alert: expiredDateCount > 0 },
+    { key: 'unknown', label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
+      note: overdueUnknown > 0 ? 'nog niets ingepland — zie Aandacht deze week' : 'geen', alert: overdueUnknown > 0 },
+    { key: 'onderzoek', label: 'In onderzoek', value: onderzoekCount, note: 'te controleren door meetdienst', filterKey: 'onderzoek' },
+    { key: 'inplannen', label: 'Klaar voor inplannen', value: inplannenCount, note: 'kan ingepland worden', filterKey: 'inplannen' },
+    { key: 'geblokkeerd', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Rezap / Naar Aanleg', filterKey: 'geblokkeerd' },
   ];
   el.innerHTML = tiles.map(t => {
     const clickable = t.filterKey ? ' stat-tile-clickable' : '';
     const selected = t.filterKey && state.statDetailFilter === t.filterKey ? ' stat-tile-selected' : '';
-    const attrs = t.filterKey ? ` data-stat-filter="${t.filterKey}" tabindex="0" role="button" aria-expanded="${state.statDetailFilter === t.filterKey}"` : '';
+    const clickAttrs = t.filterKey ? ` data-stat-filter="${t.filterKey}" tabindex="0" role="button" aria-expanded="${state.statDetailFilter === t.filterKey}"` : '';
     return `
-    <div class="stat-tile${t.alert ? ' stat-tile-alert' : ''}${clickable}${selected}"${attrs}>
+    <div class="stat-tile${t.alert ? ' stat-tile-alert' : ''}${clickable}${selected}" data-stat-key="${t.key}"${clickAttrs}>
       <div class="label">${esc(t.label)}</div>
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta ${t.deltaClass || ''}">${esc(t.note)}</div>` : ''}
@@ -802,10 +808,11 @@ function renderStatDetail(current, mutations) {
   const list = current.filter(s => orderSet.has(s.order));
   container.classList.remove('hidden');
 
-  // Bij "Verlopen — uitvoering onbekend" en "Geblokkeerd" kun je de blokkade-
-  // reden direct hier instellen/aanpassen — dat scheelt zoeken in de volledige
-  // lijst voor precies de storingen waar dit relevant is.
-  const showBlock = (filterKey === 'unknown' || filterKey === 'verlopenDatum' || filterKey === 'geblokkeerd') && !isStaticExport;
+  // Bij "Geblokkeerd" kun je de blokkade-reden direct hier aanpassen. "Verlopen
+  // — uitvoering onbekend" en "Uitvoeringsdatum verstreken" hebben geen eigen
+  // uitklaplijst meer (die zaten dubbelop met "Aandacht deze week" hieronder,
+  // dat dezelfde storingen mét bewerkbare blokkade-reden al toont).
+  const showBlock = filterKey === 'geblokkeerd' && !isStaticExport;
   const firstSeenMap = firstSeenWeekMap();
   const body = list.length === 0
     ? '<p class="empty-note">Geen storingen in deze lijst.</p>'
@@ -871,31 +878,48 @@ function renderStatDetail(current, mutations) {
   });
 }
 
+// statusClass hergebruikt de bestaande status-pill-kleuren (geen nieuwe
+// kleuren) zodat de ernst van elke categorie in één oogopslag te zien is:
+// rood (critical) is het dringendst, geel (warning) het minst.
 const ATTENTION_CATEGORIES = [
-  { key: 'unknown', label: 'Geen uitvoeringsdatum', prio: 0 },
-  { key: 'verlopenDatum', label: 'Uitvoeringsdatum verstreken', prio: 1 },
-  { key: 'bijnaVerlopen', label: 'Bijna verlopen', prio: 2 },
+  { key: 'unknown', label: 'Geen uitvoeringsdatum', prio: 0, statusClass: 'critical' },
+  { key: 'verlopenDatum', label: 'Uitvoeringsdatum verstreken', prio: 1, statusClass: 'serious' },
+  { key: 'bijnaVerlopen', label: 'Bijna verlopen', prio: 2, statusClass: 'warning' },
 ];
 
-// Voegt de drie losse "actie nodig"-tegels (Bijna verlopen, Uitvoeringsdatum
-// verstreken, Verlopen zonder plan) samen tot één geprioriteerde lijst, zodat
-// je niet elke tegel apart hoeft langs te klikken om te weten waar je deze
-// week naar moet kijken.
+// Voegt de drie losse "actie nodig"-categorieën (Bijna verlopen, Uitvoerings-
+// datum verstreken, Verlopen zonder plan) samen tot één geprioriteerde lijst
+// met bewerkbare blokkade-reden — dit is de plek om te zien én te bewerken
+// wat er deze week om actie vraagt; de bijbehorende tegels hierboven zijn nu
+// puur tellers, zonder eigen (dubbele) uitklaplijst.
 function renderAttentionList(current) {
   const container = document.getElementById('attention-list');
   const countEl = document.getElementById('attention-count');
   const filters = statTileFilters();
   const firstSeenMap = firstSeenWeekMap();
 
-  const items = [];
-  current.forEach(s => {
-    for (const cat of ATTENTION_CATEGORIES) {
-      if (filters[cat.key].test(s)) { items.push({ s, cat }); break; }
-    }
-  });
+  // De teller telt altijd exact mee wat op dit moment actie vraagt (daalt
+  // meteen zodra je iets blokkeert), maar welke rijen getoond worden ligt
+  // vast (zie state.attentionOrders hierboven) zodat een rij niet middenin
+  // het bewerken van de blokkade-reden ineens verdwijnt.
+  const liveCount = current.filter(s => ATTENTION_CATEGORIES.some(cat => filters[cat.key].test(s))).length;
+  countEl.textContent = liveCount ? String(liveCount) : '';
+
+  if (!state.attentionOrders) {
+    const fresh = [];
+    current.forEach(s => {
+      for (const cat of ATTENTION_CATEGORIES) {
+        if (filters[cat.key].test(s)) { fresh.push({ order: s.order, catKey: cat.key }); break; }
+      }
+    });
+    state.attentionOrders = fresh;
+  }
+  const orderMap = new Map(current.map(s => [s.order, s]));
+  const items = state.attentionOrders
+    .map(({ order, catKey }) => ({ s: orderMap.get(order), cat: ATTENTION_CATEGORIES.find(c => c.key === catKey) }))
+    .filter(it => it.s);
   items.sort((a, b) => a.cat.prio - b.cat.prio || a.s.daysLeft - b.s.daysLeft);
 
-  countEl.textContent = items.length ? String(items.length) : '';
   if (items.length === 0) {
     container.innerHTML = '<p class="empty-note">Niets dat om actie vraagt deze week — goed bezig!</p>';
     return;
@@ -914,7 +938,7 @@ function renderAttentionList(current) {
           ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
         </td>`;
       return `<tr>
-        <td><span class="badge">${esc(cat.label)}</span></td>
+        <td><span class="status-pill ${cat.statusClass}">${esc(cat.label)}</span></td>
         <td>${esc(s.order)}</td>
         <td>${esc(regioGroupLabel(regioGroupOf(s)))}</td>
         <td>${esc(s.city)} — ${esc(s.street)}, ${esc(s.postcode)}</td>
@@ -1352,6 +1376,7 @@ function renderWeeksList() {
       const snaps = (await loadSnapshots()).filter(s => s.week !== btn.dataset.week);
       await saveSnapshots(snaps);
       state.snapshots = snaps;
+      state.attentionOrders = null;
       if (snaps.length === 0) document.getElementById('dashboard').classList.add('hidden');
       else renderDashboardFromState();
       if (state.toSnapshots.length > 0) renderToDashboardFromState(); // cross-bak badges bijwerken
@@ -1960,6 +1985,7 @@ function showParseWarning(errors, okCount) {
 }
 
 async function reloadAllStateAndRender() {
+  state.attentionOrders = null;
   state.snapshots = await loadSnapshots();
   state.typeWhitelist = await loadTypeWhitelist();
   state.toSnapshots = await loadToSnapshots();
@@ -2077,6 +2103,7 @@ function wireEvents() {
       return;
     }
     state.snapshots = snaps;
+    state.attentionOrders = null;
 
     renderDashboardFromState();
     if (state.toSnapshots.length > 0) renderToDashboardFromState(); // cross-bak badges bijwerken
@@ -2089,6 +2116,7 @@ function wireEvents() {
     if (!confirm('Alle opgeslagen weken verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
     await clearSnapshots();
     state.snapshots = [];
+    state.attentionOrders = null;
     document.getElementById('dashboard').classList.add('hidden');
     if (state.toSnapshots.length > 0) renderToDashboardFromState(); // cross-bak badges bijwerken
   });
