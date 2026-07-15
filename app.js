@@ -274,6 +274,17 @@ async function saveTypeWhitelist(list) {
   catch (e) { console.error(e); }
 }
 
+const BIJNA_VERLOPEN_THRESHOLD_KEY = 'nusdash_bijna_verlopen_threshold_v1';
+const DEFAULT_BIJNA_VERLOPEN_THRESHOLD = 2;
+async function loadBijnaVerlopenThreshold() {
+  try { const v = await idbGet(BIJNA_VERLOPEN_THRESHOLD_KEY); return Number.isFinite(v) && v > 0 ? v : DEFAULT_BIJNA_VERLOPEN_THRESHOLD; }
+  catch (e) { console.error(e); return DEFAULT_BIJNA_VERLOPEN_THRESHOLD; }
+}
+async function saveBijnaVerlopenThreshold(n) {
+  try { await idbSet(BIJNA_VERLOPEN_THRESHOLD_KEY, n); }
+  catch (e) { console.error(e); }
+}
+
 const TO_STORAGE_KEY = 'nusdash_snapshots_teonderzoeken_v1';
 const MEETDIENST_LIST_KEY = 'nusdash_meetdienst_namen_v1';
 const HANDOFF_LIST_KEY = 'nusdash_handoff_namen_v1';
@@ -370,6 +381,7 @@ async function exportBackup() {
     klaarVoorInplannenSnapshots: await loadPlanSnapshots(),
     klaarzetterNamen: await loadNameList(PLAN_NAMES_KEY, DEFAULT_PLAN_NAMEN),
     ovBlockStatus: await loadOvBlockStatusMap(),
+    bijnaVerlopenThreshold: await loadBijnaVerlopenThreshold(),
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -408,6 +420,7 @@ function buildStandaloneExport() {
     klaarVoorInplannenSnapshots: state.planSnapshots,
     klaarzetterNamen: state.planNamen,
     ovBlockStatus: state.ovBlockStatus,
+    bijnaVerlopenThreshold: state.bijnaVerlopenThreshold,
     exportedAt: new Date().toISOString(),
   };
   const dataScript = escapeForInlineTag('window.__DASHBOARD_DATA__ = ' + JSON.stringify(data) + ';', 'script');
@@ -448,6 +461,7 @@ async function importBackup(file) {
   if (Array.isArray(backup.klaarVoorInplannenSnapshots)) await savePlanSnapshots(backup.klaarVoorInplannenSnapshots);
   if (Array.isArray(backup.klaarzetterNamen)) await saveNameList(PLAN_NAMES_KEY, backup.klaarzetterNamen);
   if (backup.ovBlockStatus && typeof backup.ovBlockStatus === 'object') await saveOvBlockStatusMap(backup.ovBlockStatus);
+  if (Number.isFinite(backup.bijnaVerlopenThreshold) && backup.bijnaVerlopenThreshold > 0) await saveBijnaVerlopenThreshold(backup.bijnaVerlopenThreshold);
 }
 
 // Classificatie voor de "te onderzoeken storingen"-bak:
@@ -575,10 +589,14 @@ function searchFiltered(list, query) { return list.filter(s => matchesSearch(s, 
 function isTypeIncluded(s) { return state.typeWhitelist.includes(s.type); }
 function typeFiltered(list) { return list.filter(isTypeIncluded); }
 
+// De grens voor "Bijna verlopen" (serious) is instelbaar (zie Instellingen);
+// "Aandacht" (warning) begint waar die grens ophoudt en loopt door tot 3
+// dagen later, zodat die band evenredig meeschuift met de drempel.
 function statusOf(s) {
+  const t = state.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD;
   if (s.overdue) return 'critical';
-  if (s.daysLeft <= 2) return 'serious';
-  if (s.daysLeft <= 5) return 'warning';
+  if (s.daysLeft <= t) return 'serious';
+  if (s.daysLeft <= t + 3) return 'warning';
   return 'good';
 }
 const STATUS_LABELS = { good: 'Op tijd', warning: 'Aandacht', serious: 'Bijna verlopen', critical: 'Verlopen' };
@@ -656,6 +674,7 @@ const state = {
   // datawijzigingen (nieuwe week verwerkt/verwijderd, back-up hersteld) zodat
   // de lijst dan opnieuw wordt opgebouwd.
   attentionOrders: null,
+  bijnaVerlopenThreshold: DEFAULT_BIJNA_VERLOPEN_THRESHOLD,
 };
 
 /* ---------- Tooltip ---------- */
@@ -778,7 +797,7 @@ function renderStatTiles(current, mutations) {
     { key: 'afgesloten', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
       note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
     { key: 'bijnaVerlopen', label: 'Bijna verlopen', value: bijnaVerlopenCount, deltaClass: bijnaVerlopenCount > 0 ? 'bad' : 'good',
-      note: bijnaVerlopenCount > 0 ? 'nog 1-2 dagen — zie Aandacht deze week' : 'geen' },
+      note: bijnaVerlopenCount > 0 ? `nog 1-${state.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD} dagen — zie Aandacht deze week` : 'geen' },
     { key: 'known', label: 'Verlopen — uitvoering gepland', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
       note: overdueKnown > 0 ? 'gepland, nog te gebeuren' : 'geen', filterKey: 'known' },
     { key: 'verlopenDatum', label: 'Uitvoeringsdatum verstreken', value: expiredDateCount, deltaClass: expiredDateCount > 0 ? 'bad' : 'good',
@@ -1259,13 +1278,14 @@ const COLUMNS = [
 // voorkwam, zodat je in één oogopslag ziet hoe lang iets al meeloopt — los
 // van de dagen-teller, die alleen het (mogelijk verlengde) target toont.
 // Eén keer over alle weken heen opgebouwd i.p.v. per rij, voor snelheid.
-function firstSeenWeekMap() {
+function firstSeenWeekMapFor(snapshots) {
   const map = {};
-  state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).forEach(sn => {
+  snapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).forEach(sn => {
     sn.storingen.forEach(s => { if (!(s.order in map)) map[s.order] = sn.week; });
   });
   return map;
 }
+function firstSeenWeekMap() { return firstSeenWeekMapFor(state.snapshots); }
 
 function sortRows(rows) {
   const { key, dir } = state.sortState;
@@ -1601,6 +1621,7 @@ const TO_COLUMNS = [
   { key: 'toStatusLabel', label: 'Status' },
   { key: 'namesLabel', label: 'Naam' },
   { key: 'daysLeft', label: 'Dagen', num: true },
+  { key: 'firstSeenWeek', label: 'Open sinds' },
   { key: 'executionDate', label: 'Uitvoering' },
   { key: 'type', label: 'Type' },
   { key: 'wvStatusSort', label: 'WV-status' },
@@ -1625,6 +1646,7 @@ function renderToTableAll(classified) {
   if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen relevante storingen.</p>'; return; }
   relevant = relevant.filter(c => matchesSearch(c.storing, state.toSearchQuery));
   if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen storingen gevonden voor deze zoekopdracht.</p>'; return; }
+  const firstSeenMap = firstSeenWeekMapFor(state.toSnapshots);
   const annotated = relevant.map(c => {
     const wv = wvStatusOf(c.storing.order);
     return Object.assign({}, c.storing, {
@@ -1633,6 +1655,7 @@ function renderToTableAll(classified) {
       toStatusLabel: c.status === 'meetdienst' ? 'Bij meetdienst' : "Open voor WV'ers",
       namesLabel: (c.storing.names || []).join(' → ') || '—',
       wvStatusSort: c.status === 'werkvoorbereiders' ? (WV_STATUS_LABELS[wv.status] || '') : '',
+      firstSeenWeek: firstSeenMap[c.storing.order] || '',
     });
   });
   const rows = sortToRows(annotated);
@@ -1662,6 +1685,7 @@ function renderToTableAll(classified) {
       <td>${esc(s.toStatusLabel)}</td>
       <td>${esc(s.namesLabel)}</td>
       <td class="num">${renderDaysPill(s)}</td>
+      <td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>
       <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
       <td>${esc(s.type)}</td>
       <td class="wv-status-cell">${wvCell}</td>
@@ -1816,6 +1840,7 @@ const PLAN_COLUMNS = [
   { key: 'order', label: 'Order' },
   { key: 'namesLabel', label: 'Naam' },
   { key: 'daysLeft', label: 'Dagen', num: true },
+  { key: 'firstSeenWeek', label: 'Open sinds' },
   { key: 'executionDate', label: 'Uitvoering' },
   { key: 'type', label: 'Type' },
 ];
@@ -1837,9 +1862,11 @@ function renderPlanTableAll(classified) {
   if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen relevante storingen.</p>'; return; }
   relevant = relevant.filter(c => matchesSearch(c.storing, state.planSearchQuery));
   if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen storingen gevonden voor deze zoekopdracht.</p>'; return; }
+  const firstSeenMap = firstSeenWeekMapFor(state.planSnapshots);
   const annotated = relevant.map(c => Object.assign({}, c.storing, {
     regioGroup: regioGroupOf(c.storing),
     namesLabel: (c.storing.names || []).join(' → ') || '—',
+    firstSeenWeek: firstSeenMap[c.storing.order] || '',
   }));
   const rows = sortPlanRows(annotated);
   const head = PLAN_COLUMNS.map(col => {
@@ -1854,6 +1881,7 @@ function renderPlanTableAll(classified) {
       <td>${esc(s.order)}</td>
       <td>${esc(s.namesLabel)}</td>
       <td class="num">${renderDaysPill(s)}</td>
+      <td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>
       <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
       <td>${esc(s.type)}</td>
     </tr>`).join('');
@@ -2026,6 +2054,7 @@ async function reloadAllStateAndRender() {
   state.planSnapshots = await loadPlanSnapshots();
   state.planNamen = await loadNameList(PLAN_NAMES_KEY, DEFAULT_PLAN_NAMEN);
   state.ovBlockStatus = await loadOvBlockStatusMap();
+  state.bijnaVerlopenThreshold = await loadBijnaVerlopenThreshold();
   if (state.snapshots.length > 0) renderDashboardFromState();
   else { document.getElementById('dashboard').classList.add('hidden'); renderTypeWhitelist(); renderTypeUnknownReview(); }
   if (state.toSnapshots.length > 0) renderToDashboardFromState();
@@ -2102,6 +2131,7 @@ function wireEvents() {
     try {
       await importBackup(file);
       await reloadAllStateAndRender();
+      document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
       statusEl.textContent = 'Back-up hersteld.';
     } catch (e) {
       statusEl.textContent = 'Importeren mislukt: ' + e.message;
@@ -2214,6 +2244,23 @@ function wireEvents() {
     await saveTypeWhitelist(state.typeWhitelist);
     input.value = '';
     renderDashboardFromState();
+  });
+
+  document.getElementById('bijna-verlopen-threshold-input').addEventListener('change', async e => {
+    const statusEl = document.getElementById('bijna-verlopen-threshold-status');
+    const n = Math.round(Number(e.target.value));
+    if (!Number.isFinite(n) || n < 1 || n > 14) {
+      e.target.value = state.bijnaVerlopenThreshold;
+      statusEl.textContent = 'Kies een waarde tussen 1 en 14.';
+      return;
+    }
+    e.target.value = n;
+    state.bijnaVerlopenThreshold = n;
+    await saveBijnaVerlopenThreshold(n);
+    statusEl.textContent = 'Opgeslagen.';
+    if (state.snapshots.length > 0) renderDashboardFromState();
+    if (state.toSnapshots.length > 0) renderToDashboardFromState();
+    if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
   });
 
   document.getElementById('to-process-btn').addEventListener('click', async () => {
@@ -2446,6 +2493,7 @@ function applyStaticExportData() {
   state.planSnapshots = STATIC_DATA.klaarVoorInplannenSnapshots || [];
   state.planNamen = STATIC_DATA.klaarzetterNamen || [];
   state.ovBlockStatus = STATIC_DATA.ovBlockStatus || {};
+  state.bijnaVerlopenThreshold = STATIC_DATA.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD;
 
   if (state.snapshots.length > 0) renderDashboardFromState();
   else document.getElementById('dashboard').classList.add('hidden');
@@ -2469,6 +2517,7 @@ async function init() {
   wireEvents();
   if (isStaticExport) applyStaticExportData();
   else await reloadAllStateAndRender();
+  document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
   setupTabNav();
   setupSubtabNav();
 }
