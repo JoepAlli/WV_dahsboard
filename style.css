@@ -508,6 +508,14 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   background: var(--surface-1);
   color: var(--text-primary);
 }
+.ov-block-since {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.ov-block-since-stale {
+  color: #9a6b00;
+  font-weight: 600;
+}
 
 .legend {
   display: flex;

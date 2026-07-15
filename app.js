@@ -704,8 +704,39 @@ function isExpiredExecutionDate(s) {
 // dat is precies waarom dit bestaat: niet elke week opnieuw dezelfde lang
 // openstaande storingen langslopen.
 const OV_BLOCK_REASON_LABELS = { rezap: 'Rezap aanwezig', aanleg: 'Naar Aanleg' };
+// Storingen die 4+ weken onafgebroken geblokkeerd staan zijn het waard om
+// nog eens te checken — een Rezap-tekort van 2 maanden geleden is misschien
+// allang opgelost.
+const OV_BLOCK_STALE_DAYS = 28;
 function ovBlockStatusOf(order) { return state.ovBlockStatus[order] || {}; }
 function isOvBlocked(s) { return !!ovBlockStatusOf(s.order).reason; }
+function ovBlockDaysSince(order) {
+  const since = ovBlockStatusOf(order).since;
+  return since ? Math.round((Date.now() - new Date(since).getTime()) / 86400000) : null;
+}
+function isOvBlockStale(order) {
+  const days = ovBlockDaysSince(order);
+  return days !== null && days >= OV_BLOCK_STALE_DAYS;
+}
+// Zet de blokkade-reden en stempelt "since" alleen bij de overgang van
+// niet-geblokkeerd naar geblokkeerd, zodat dit de duur van de HUIDIGE
+// blokkade blijft — niet gereset door bv. een reden-wissel (rezap -> aanleg)
+// of een toelichting bijwerken.
+function setOvBlockReason(order, reason) {
+  const cur = state.ovBlockStatus[order] || {};
+  const since = reason ? (cur.reason ? cur.since : new Date().toISOString()) : undefined;
+  state.ovBlockStatus[order] = { reason, note: cur.note || '', since };
+}
+function setOvBlockNote(order, note) {
+  const cur = state.ovBlockStatus[order] || {};
+  state.ovBlockStatus[order] = { reason: cur.reason, note, since: cur.since };
+}
+function blockSinceHtml(order) {
+  const days = ovBlockDaysSince(order);
+  if (days === null) return '';
+  const stale = isOvBlockStale(order);
+  return `<div class="ov-block-since${stale ? ' ov-block-since-stale' : ''}">sinds ${days} dag${days === 1 ? '' : 'en'}${stale ? ' — nog actueel?' : ''}</div>`;
+}
 function isActionableOverdue(s) { return isUnplannedOverdue(s) && !isOvBlocked(s); }
 function isActionableExpiredDate(s) { return isExpiredExecutionDate(s) && !isOvBlocked(s); }
 // Beide varianten van "verlopen én iets moet gebeuren" samen — gebruikt voor
@@ -826,7 +857,8 @@ function renderStatDetail(current, mutations) {
             <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Rezap aanwezig</option>
             <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
           </select>
-          ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}`;
+          ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
+          ${blockSinceHtml(s.order)}`;
         return `<tr>
         <td>${esc(s.order)}</td>
         <td>${esc(regioGroupLabel(regioGroupOf(s)))}</td>
@@ -855,17 +887,13 @@ function renderStatDetail(current, mutations) {
     };
     container.querySelectorAll('.ov-block-select').forEach(sel => {
       sel.addEventListener('change', () => {
-        const order = sel.dataset.order;
-        const current = state.ovBlockStatus[order] || {};
-        state.ovBlockStatus[order] = { reason: sel.value, note: current.note || '' };
+        setOvBlockReason(sel.dataset.order, sel.value);
         refresh();
       });
     });
     container.querySelectorAll('.ov-block-note').forEach(inp => {
       inp.addEventListener('change', () => {
-        const order = inp.dataset.order;
-        const current = state.ovBlockStatus[order] || {};
-        state.ovBlockStatus[order] = { reason: current.reason, note: inp.value };
+        setOvBlockNote(inp.dataset.order, inp.value);
         refresh();
       });
     });
@@ -892,7 +920,14 @@ const ATTENTION_CATEGORIES = [
 // met bewerkbare blokkade-reden — dit is de plek om te zien én te bewerken
 // wat er deze week om actie vraagt; de bijbehorende tegels hierboven zijn nu
 // puur tellers, zonder eigen (dubbele) uitklaplijst.
-function renderAttentionList(current) {
+//
+// current: de lijst na de actieve regiotab-filter (bepaalt wélke rijen hier
+// zichtbaar zijn — wissel je van regiotab, dan wisselt deze lijst gewoon mee).
+// allVisible: de volledige, regio-ongefilterde lijst — hierop wordt de
+// bevroren snapshot (state.attentionOrders) gebouwd/ververst, zodat storingen
+// uit ándere regio's dan de net-actieve tab niet uit de bevriezing vallen
+// (anders zou terugswitchen naar "Totaal" ze kwijt kunnen zijn).
+function renderAttentionList(current, allVisible) {
   const container = document.getElementById('attention-list');
   const countEl = document.getElementById('attention-count');
   const filters = statTileFilters();
@@ -907,13 +942,15 @@ function renderAttentionList(current) {
 
   if (!state.attentionOrders) {
     const fresh = [];
-    current.forEach(s => {
+    allVisible.forEach(s => {
       for (const cat of ATTENTION_CATEGORIES) {
         if (filters[cat.key].test(s)) { fresh.push({ order: s.order, catKey: cat.key }); break; }
       }
     });
     state.attentionOrders = fresh;
   }
+  // orderMap komt uit `current` (regio-gefilterd): een bevroren order die niet
+  // in de actieve regiotab valt, wordt hier vanzelf weggefilterd.
   const orderMap = new Map(current.map(s => [s.order, s]));
   const items = state.attentionOrders
     .map(({ order, catKey }) => ({ s: orderMap.get(order), cat: ATTENTION_CATEGORIES.find(c => c.key === catKey) }))
@@ -936,6 +973,7 @@ function renderAttentionList(current) {
             <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
           </select>
           ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
+          ${blockSinceHtml(s.order)}
         </td>`;
       return `<tr>
         <td><span class="status-pill ${cat.statusClass}">${esc(cat.label)}</span></td>
@@ -960,17 +998,13 @@ function renderAttentionList(current) {
     };
     container.querySelectorAll('.ov-block-select').forEach(sel => {
       sel.addEventListener('change', () => {
-        const order = sel.dataset.order;
-        const cur = state.ovBlockStatus[order] || {};
-        state.ovBlockStatus[order] = { reason: sel.value, note: cur.note || '' };
+        setOvBlockReason(sel.dataset.order, sel.value);
         refresh();
       });
     });
     container.querySelectorAll('.ov-block-note').forEach(inp => {
       inp.addEventListener('change', () => {
-        const order = inp.dataset.order;
-        const cur = state.ovBlockStatus[order] || {};
-        state.ovBlockStatus[order] = { reason: cur.reason, note: inp.value };
+        setOvBlockNote(inp.dataset.order, inp.value);
         refresh();
       });
     });
@@ -1270,7 +1304,7 @@ function renderTableAll(current) {
     const block = ovBlockStatusOf(s.order);
     const blockCell = isStaticExport
       ? (block.reason
-          ? `<span class="status-pill">${esc(OV_BLOCK_REASON_LABELS[block.reason])}</span>${block.note ? `<div class="muted small">${esc(block.note)}</div>` : ''}`
+          ? `<span class="status-pill">${esc(OV_BLOCK_REASON_LABELS[block.reason])}</span>${block.note ? `<div class="muted small">${esc(block.note)}</div>` : ''}${blockSinceHtml(s.order)}`
           : '<span class="muted small">— Geen —</span>')
       : `
       <select class="ov-block-select" data-order="${esc(s.order)}">
@@ -1278,7 +1312,8 @@ function renderTableAll(current) {
         <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Rezap aanwezig</option>
         <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
       </select>
-      ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}`;
+      ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
+      ${blockSinceHtml(s.order)}`;
     const checkboxTd = isStaticExport ? '' : `<td class="checkbox-col"><input type="checkbox" class="ov-row-select" data-order="${esc(s.order)}"${state.ovBulkSelected.has(s.order) ? ' checked' : ''}></td>`;
     return `<tr${needsFollowUp(s) ? ' class="row-alert"' : ''}>
       ${checkboxTd}
@@ -1301,9 +1336,7 @@ function renderTableAll(current) {
 
   container.querySelectorAll('.ov-block-select').forEach(sel => {
     sel.addEventListener('change', async () => {
-      const order = sel.dataset.order;
-      const current = state.ovBlockStatus[order] || {};
-      state.ovBlockStatus[order] = { reason: sel.value, note: current.note || '' };
+      setOvBlockReason(sel.dataset.order, sel.value);
       await saveOvBlockStatusMap(state.ovBlockStatus);
       renderDashboardFromState();
       if (state.toSnapshots.length > 0) renderToDashboardFromState();
@@ -1312,9 +1345,7 @@ function renderTableAll(current) {
   });
   container.querySelectorAll('.ov-block-note').forEach(inp => {
     inp.addEventListener('change', async () => {
-      const order = inp.dataset.order;
-      const current = state.ovBlockStatus[order] || {};
-      state.ovBlockStatus[order] = { reason: current.reason, note: inp.value };
+      setOvBlockNote(inp.dataset.order, inp.value);
       await saveOvBlockStatusMap(state.ovBlockStatus);
       renderDashboardFromState();
       if (state.toSnapshots.length > 0) renderToDashboardFromState();
@@ -1904,7 +1935,7 @@ function renderDashboardFromState() {
 
   document.getElementById('dashboard').classList.remove('hidden');
   renderStatTiles(latestFiltered, mutations);
-  renderAttentionList(latestFiltered);
+  renderAttentionList(latestFiltered, latestVisible);
   renderDoorlooptijdCard();
   renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
   renderTrendChart(snaps); // idem, filtert zelf op state.activeFilter
@@ -2094,6 +2125,10 @@ function wireEvents() {
 
     const snaps = await loadSnapshots();
     const idx = snaps.findIndex(s => s.week === week);
+    if (idx >= 0 && !confirm(`Week ${week} bestaat al (${snaps[idx].storingen.length} storingen). Vervangen door deze ${storingen.length} storingen?`)) {
+      statusEl.textContent = 'Verwerken geannuleerd.';
+      return;
+    }
     const snapshot = { week, savedAt: new Date().toISOString(), storingen };
     if (idx >= 0) snaps[idx] = snapshot; else snaps.push(snapshot);
     try {
@@ -2155,10 +2190,7 @@ function wireEvents() {
   document.getElementById('ov-bulk-apply-btn').addEventListener('click', async () => {
     if (state.ovBulkSelected.size === 0) return;
     const reason = document.getElementById('ov-bulk-reason').value;
-    state.ovBulkSelected.forEach(order => {
-      const current = state.ovBlockStatus[order] || {};
-      state.ovBlockStatus[order] = { reason, note: current.note || '' };
-    });
+    state.ovBulkSelected.forEach(order => setOvBlockReason(order, reason));
     await saveOvBlockStatusMap(state.ovBlockStatus);
     state.ovBulkSelected.clear();
     renderDashboardFromState();
@@ -2201,6 +2233,10 @@ function wireEvents() {
 
     const snaps = await loadToSnapshots();
     const idx = snaps.findIndex(s => s.week === week);
+    if (idx >= 0 && !confirm(`Week ${week} bestaat al (${snaps[idx].storingen.length} storingen). Vervangen door deze ${storingen.length} storingen?`)) {
+      statusEl.textContent = 'Verwerken geannuleerd.';
+      return;
+    }
     const snapshot = { week, savedAt: new Date().toISOString(), storingen };
     if (idx >= 0) snaps[idx] = snapshot; else snaps.push(snapshot);
     try {
@@ -2284,6 +2320,10 @@ function wireEvents() {
 
     const snaps = await loadPlanSnapshots();
     const idx = snaps.findIndex(s => s.week === week);
+    if (idx >= 0 && !confirm(`Week ${week} bestaat al (${snaps[idx].storingen.length} storingen). Vervangen door deze ${storingen.length} storingen?`)) {
+      statusEl.textContent = 'Verwerken geannuleerd.';
+      return;
+    }
     const snapshot = { week, savedAt: new Date().toISOString(), storingen };
     if (idx >= 0) snaps[idx] = snapshot; else snaps.push(snapshot);
     try {
