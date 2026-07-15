@@ -91,6 +91,12 @@
     </nav>
 
     <section class="subtab-panel" id="subsection-ov" data-subtab-panel="ov">
+      <section class="card empty-state-card hidden" id="dashboard-empty">
+        <p class="empty-state-icon">💡</p>
+        <h3>Nog geen data voor OV NUSsen</h3>
+        <p class="muted small">Plak de eerstvolgende export op de Invoer-pagina om dit dashboard te vullen.</p>
+        <button class="btn-primary" data-goto-invoer="paste-input">Naar Invoer →</button>
+      </section>
       <section id="dashboard" class="hidden">
 
         <div id="type-unknown" class="warning-box hidden"></div>
@@ -179,6 +185,12 @@
     </section>
 
     <section class="subtab-panel hidden" id="subsection-to" data-subtab-panel="to">
+      <section class="card empty-state-card hidden" id="to-dashboard-empty">
+        <p class="empty-state-icon">🔍</p>
+        <h3>Nog geen data voor Te onderzoeken</h3>
+        <p class="muted small">Plak de eerstvolgende export op de Invoer-pagina om dit dashboard te vullen.</p>
+        <button class="btn-primary" data-goto-invoer="to-paste-input">Naar Invoer →</button>
+      </section>
       <section id="to-dashboard" class="hidden">
 
         <div class="filter-tabs" id="to-filter-tabs"></div>
@@ -212,6 +224,12 @@
     </section>
 
     <section class="subtab-panel hidden" id="subsection-plan" data-subtab-panel="plan">
+      <section class="card empty-state-card hidden" id="plan-dashboard-empty">
+        <p class="empty-state-icon">📅</p>
+        <h3>Nog geen data voor Klaar voor inplannen</h3>
+        <p class="muted small">Plak de eerstvolgende export op de Invoer-pagina om dit dashboard te vullen.</p>
+        <button class="btn-primary" data-goto-invoer="plan-paste-input">Naar Invoer →</button>
+      </section>
       <section id="plan-dashboard" class="hidden">
 
         <div class="filter-tabs" id="plan-filter-tabs"></div>

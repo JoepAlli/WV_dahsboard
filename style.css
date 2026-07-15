@@ -127,7 +127,10 @@ summary:focus-visible, [tabindex]:focus-visible {
 .static-export #plan-input-card,
 .static-export #ov-weeks-card,
 .static-export #to-weeks-card,
-.static-export #plan-weeks-card { display: none; }
+.static-export #plan-weeks-card,
+.static-export #dashboard-empty,
+.static-export #to-dashboard-empty,
+.static-export #plan-dashboard-empty { display: none; }
 
 .tab-nav {
   position: relative;
@@ -446,6 +449,14 @@ table tbody tr.row-alert { background: color-mix(in srgb, var(--status-critical)
 table tbody tr.row-alert:hover { background: color-mix(in srgb, var(--status-critical) 12%, transparent); }
 table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .empty-note { color: var(--text-muted); font-size: 0.85rem; padding: 10px 0; }
+
+.empty-state-card {
+  text-align: center;
+  padding: 48px 24px;
+}
+.empty-state-icon { font-size: 2.4rem; margin: 0 0 6px; }
+.empty-state-card h3 { margin: 0 0 6px; font-size: 1.1rem; }
+.empty-state-card p.muted { max-width: 420px; margin: 0 auto 18px; }
 
 /* Grote lijsten (500+ storingen) krijgen hun eigen scrollgebied in plaats van
    de hele pagina te verlengen; de kolomkoppen blijven zichtbaar tijdens het

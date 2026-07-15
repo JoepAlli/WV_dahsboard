@@ -1428,7 +1428,7 @@ function renderWeeksList() {
       await saveSnapshots(snaps);
       state.snapshots = snaps;
       state.attentionOrders = null;
-      if (snaps.length === 0) document.getElementById('dashboard').classList.add('hidden');
+      if (snaps.length === 0) setDashboardEmpty('dashboard', 'dashboard-empty', true);
       else renderDashboardFromState();
       if (state.toSnapshots.length > 0) renderToDashboardFromState(); // cross-bak badges bijwerken
       renderWeeksList();
@@ -1728,7 +1728,7 @@ function renderToWeeksList() {
       const snaps = (await loadToSnapshots()).filter(s => s.week !== btn.dataset.toWeek);
       await saveToSnapshots(snaps);
       state.toSnapshots = snaps;
-      if (snaps.length === 0) document.getElementById('to-dashboard').classList.add('hidden');
+      if (snaps.length === 0) setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true);
       else renderToDashboardFromState();
       if (state.snapshots.length > 0) renderDashboardFromState(); // cross-bak badges bijwerken
       renderToWeeksList();
@@ -1751,7 +1751,7 @@ function renderToDashboardFromState() {
   state.toSnapshots = snaps;
   renderMeetdienstList();
   renderHandoffList();
-  if (snaps.length === 0) { document.getElementById('to-dashboard').classList.add('hidden'); return; }
+  if (snaps.length === 0) { setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true); return; }
   const latest = snaps[snaps.length - 1];
   const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoekenFull(s)));
   const relevantAll = classified.filter(c => c.status !== 'genegeerd');
@@ -1759,7 +1759,7 @@ function renderToDashboardFromState() {
   renderToFilterTabs(relevantAll);
   const classifiedFiltered = filterToByActive(classified);
 
-  document.getElementById('to-dashboard').classList.remove('hidden');
+  setDashboardEmpty('to-dashboard', 'to-dashboard-empty', false);
   renderToStatTiles(classifiedFiltered);
   renderToIgnored(classifiedFiltered);
   renderToTableAll(classifiedFiltered);
@@ -1903,7 +1903,7 @@ function renderPlanWeeksList() {
       const snaps = (await loadPlanSnapshots()).filter(s => s.week !== btn.dataset.planWeek);
       await savePlanSnapshots(snaps);
       state.planSnapshots = snaps;
-      if (snaps.length === 0) document.getElementById('plan-dashboard').classList.add('hidden');
+      if (snaps.length === 0) setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', true);
       else renderPlanDashboardFromState();
       if (state.snapshots.length > 0) renderDashboardFromState(); // klikbare OV-tegels bijwerken
       renderPlanWeeksList();
@@ -1925,7 +1925,7 @@ function renderPlanDashboardFromState() {
   const snaps = state.planSnapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
   state.planSnapshots = snaps;
   renderKlaarzetterList();
-  if (snaps.length === 0) { document.getElementById('plan-dashboard').classList.add('hidden'); return; }
+  if (snaps.length === 0) { setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', true); return; }
   const latest = snaps[snaps.length - 1];
   const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyKlaarVoorInplannenFull(s)));
   const relevantAll = classified.filter(c => c.status !== 'genegeerd');
@@ -1933,7 +1933,7 @@ function renderPlanDashboardFromState() {
   renderPlanFilterTabs(relevantAll);
   const classifiedFiltered = filterPlanByActive(classified);
 
-  document.getElementById('plan-dashboard').classList.remove('hidden');
+  setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', false);
   renderPlanStatTiles(classifiedFiltered);
   renderPlanIgnored(classifiedFiltered);
   renderPlanTableAll(classifiedFiltered);
@@ -1943,10 +1943,19 @@ function renderPlanDashboardFromState() {
 
 /* ---------- Orchestration ---------- */
 
+// Toont een vriendelijke "nog geen data"-kaart met knop naar Invoer i.p.v.
+// een compleet leeg tabblad, voor wie voor het eerst op Data terechtkomt
+// (of alle weken heeft verwijderd) vóórdat er iets geplakt is.
+function setDashboardEmpty(dashboardId, emptyId, empty) {
+  document.getElementById(dashboardId).classList.toggle('hidden', empty);
+  const emptyEl = document.getElementById(emptyId);
+  if (emptyEl) emptyEl.classList.toggle('hidden', !empty || isStaticExport);
+}
+
 function renderDashboardFromState() {
   const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
   state.snapshots = snaps;
-  if (snaps.length === 0) { document.getElementById('dashboard').classList.add('hidden'); return; }
+  if (snaps.length === 0) { setDashboardEmpty('dashboard', 'dashboard-empty', true); return; }
   const latest = snaps[snaps.length - 1];
   const previous = snaps.length > 1 ? snaps[snaps.length - 2] : null;
 
@@ -1961,7 +1970,7 @@ function renderDashboardFromState() {
   const previousFiltered = previousVisible ? { storingen: filterByActive(previousVisible) } : null;
   const mutations = computeMutations(latestFiltered, previousFiltered);
 
-  document.getElementById('dashboard').classList.remove('hidden');
+  setDashboardEmpty('dashboard', 'dashboard-empty', false);
   renderStatTiles(latestFiltered, mutations);
   renderAttentionList(latestFiltered, latestVisible);
   renderDoorlooptijdCard();
@@ -2056,14 +2065,22 @@ async function reloadAllStateAndRender() {
   state.ovBlockStatus = await loadOvBlockStatusMap();
   state.bijnaVerlopenThreshold = await loadBijnaVerlopenThreshold();
   if (state.snapshots.length > 0) renderDashboardFromState();
-  else { document.getElementById('dashboard').classList.add('hidden'); renderTypeWhitelist(); renderTypeUnknownReview(); }
+  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderTypeUnknownReview(); }
   if (state.toSnapshots.length > 0) renderToDashboardFromState();
-  else { document.getElementById('to-dashboard').classList.add('hidden'); renderMeetdienstList(); renderHandoffList(); }
+  else { setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true); renderMeetdienstList(); renderHandoffList(); }
   if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
-  else { document.getElementById('plan-dashboard').classList.add('hidden'); renderKlaarzetterList(); }
+  else { setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', true); renderKlaarzetterList(); }
 }
 
 function wireEvents() {
+  document.querySelectorAll('[data-goto-invoer]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      switchTab('invoer');
+      const textarea = document.getElementById(btn.dataset.gotoInvoer);
+      if (textarea) { textarea.scrollIntoView({ block: 'center' }); textarea.focus(); }
+    });
+  });
+
   document.getElementById('export-backup-btn').addEventListener('click', async () => {
     const statusEl = document.getElementById('backup-status');
     try {
@@ -2182,7 +2199,7 @@ function wireEvents() {
     await clearSnapshots();
     state.snapshots = [];
     state.attentionOrders = null;
-    document.getElementById('dashboard').classList.add('hidden');
+    setDashboardEmpty('dashboard', 'dashboard-empty', true);
     if (state.toSnapshots.length > 0) renderToDashboardFromState(); // cross-bak badges bijwerken
   });
 
@@ -2305,7 +2322,7 @@ function wireEvents() {
     if (!confirm('Alle opgeslagen weken (te onderzoeken storingen) verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
     await clearToSnapshots();
     state.toSnapshots = [];
-    document.getElementById('to-dashboard').classList.add('hidden');
+    setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true);
     if (state.snapshots.length > 0) renderDashboardFromState(); // cross-bak badges bijwerken
   });
 
@@ -2392,7 +2409,7 @@ function wireEvents() {
     if (!confirm('Alle opgeslagen weken (klaar voor inplannen) verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
     await clearPlanSnapshots();
     state.planSnapshots = [];
-    document.getElementById('plan-dashboard').classList.add('hidden');
+    setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', true);
     if (state.snapshots.length > 0) renderDashboardFromState(); // klikbare OV-tegels bijwerken
   });
 
@@ -2496,11 +2513,11 @@ function applyStaticExportData() {
   state.bijnaVerlopenThreshold = STATIC_DATA.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD;
 
   if (state.snapshots.length > 0) renderDashboardFromState();
-  else document.getElementById('dashboard').classList.add('hidden');
+  else setDashboardEmpty('dashboard', 'dashboard-empty', true);
   if (state.toSnapshots.length > 0) renderToDashboardFromState();
-  else document.getElementById('to-dashboard').classList.add('hidden');
+  else setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true);
   if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
-  else document.getElementById('plan-dashboard').classList.add('hidden');
+  else setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', true);
 
   // Instellingen en Invoer hebben niets te doen in een bekijk-alleen export:
   // geen back-up, geen type-filter, geen naamlijsten, en niets om te plakken.
