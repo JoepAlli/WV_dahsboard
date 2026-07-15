@@ -475,6 +475,10 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .status-pill.serious { color: var(--status-serious); background: color-mix(in srgb, var(--status-serious) 18%, transparent); }
 .status-pill.critical { color: var(--status-critical); background: color-mix(in srgb, var(--status-critical) 15%, transparent); }
 .status-pill-unplanned { box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-critical) 50%, transparent); }
+/* Verlopen mét een uitvoeringsdatum, maar die datum is zelf ook al voorbij —
+   ander mankement dan "geen datum", dus een andere ringkleur (serious i.p.v.
+   critical) om de twee met een oogopslag uit elkaar te houden. */
+.status-pill-expired-date { box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-serious) 55%, transparent); }
 
 .wv-status-cell,
 .ov-block-cell {

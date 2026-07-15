@@ -586,14 +586,21 @@ const STATUS_ICONS = { good: '✓', warning: '!', serious: '⚠', critical: '✕
 const STATUS_ORDER = ['good', 'warning', 'serious', 'critical'];
 
 // Tabelweergave van de dagen-status-pill, met een apart icoon + accent voor
-// verlopen storingen zónder uitvoeringsdatum — dáár kunnen we nog op sturen.
+// verlopen storingen waar iets moet gebeuren: geen uitvoeringsdatum, óf een
+// uitvoeringsdatum die zelf ook al verstreken is.
 function renderDaysPill(s) {
   const status = statusOf(s);
   const daysText = s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : (s.daysLeft === 0 ? 'verloopt vandaag' : `nog ${s.daysLeft} dgn`);
   const unplanned = isActionableOverdue(s);
-  const icon = unplanned ? '⛔' : STATUS_ICONS[status];
-  const cls = `status-pill ${status}${unplanned ? ' status-pill-unplanned' : ''}`;
-  const title = unplanned ? 'Verlopen én nog geen uitvoeringsdatum — actie nodig' : '';
+  const expiredPlan = !unplanned && isActionableExpiredDate(s);
+  let icon = STATUS_ICONS[status];
+  let cls = `status-pill ${status}`;
+  let title = '';
+  if (unplanned) {
+    icon = '⛔'; cls += ' status-pill-unplanned'; title = 'Verlopen én nog geen uitvoeringsdatum — actie nodig';
+  } else if (expiredPlan) {
+    icon = '⏰'; cls += ' status-pill-expired-date'; title = 'De geplande uitvoeringsdatum is zelf ook al verstreken — controleer de planning';
+  }
   return `<span class="${cls}"${title ? ` title="${esc(title)}"` : ''}>${icon} ${esc(daysText)}</span>`;
 }
 
@@ -664,8 +671,18 @@ function hideTooltip() { tooltipEl.classList.add('hidden'); }
 // Een storing is "onbeheerd verlopen" als het target al gemist is én er nog
 // geen uitvoeringsdatum gepland staat — dáár kunnen we nog op sturen door 'm
 // alsnog in te plannen. Verlopen storingen die al wél een datum hebben, lopen
-// gewoon (te laat, maar onderweg).
+// gewoon (te laat, maar onderweg) — tenzij die datum zélf ook al voorbij is,
+// zie isExpiredExecutionDate hieronder.
 function isUnplannedOverdue(s) { return !!s.overdue && !s.executionDate; }
+
+// Verlopen mét een geplande uitvoeringsdatum, maar die datum ligt zelf ook al
+// in het verleden: de storing staat dus nog open terwijl de geplande
+// uitvoering al had moeten zijn gebeurd. Dit oogt in de tabel "geregeld"
+// (er staat een datum) maar is dat dus niet — precies het inzicht dat nodig
+// is om hierop te kunnen sturen.
+function isExpiredExecutionDate(s) {
+  return !!s.overdue && !!s.executionDate && new Date(s.executionDate).getTime() < Date.now();
+}
 
 // Sommige storingen moeten openblijven maar daar kunnen wij niets meer aan
 // doen (bv. wachten op Rezap, of overgedragen aan Aanleg). Eenmaal zo
@@ -676,6 +693,10 @@ const OV_BLOCK_REASON_LABELS = { rezap: 'Rezap aanwezig', aanleg: 'Naar Aanleg' 
 function ovBlockStatusOf(order) { return state.ovBlockStatus[order] || {}; }
 function isOvBlocked(s) { return !!ovBlockStatusOf(s.order).reason; }
 function isActionableOverdue(s) { return isUnplannedOverdue(s) && !isOvBlocked(s); }
+function isActionableExpiredDate(s) { return isExpiredExecutionDate(s) && !isOvBlocked(s); }
+// Beide varianten van "verlopen én iets moet gebeuren" samen — gebruikt voor
+// de rij-markering in de tabellen, die niet onderscheidt wélke reden het is.
+function needsFollowUp(s) { return isActionableOverdue(s) || isActionableExpiredDate(s); }
 
 // Elke klikbare OV NUS-tegel heeft een filterKey met een titel en een test-
 // functie die bepaalt welke storingen erachter zitten — gebruikt door zowel
@@ -684,7 +705,8 @@ function statTileFilters() {
   const onderzoekSet = latestRelevantToOrderSet();
   const planSet = latestRelevantPlanOrderSet();
   return {
-    known: { title: 'Verlopen — uitvoering bekend', test: s => s.overdue && !!s.executionDate },
+    known: { title: 'Verlopen — uitvoering gepland', test: s => s.overdue && !!s.executionDate && !isExpiredExecutionDate(s) },
+    verlopenDatum: { title: 'Uitvoeringsdatum verstreken', test: s => isActionableExpiredDate(s) },
     unknown: { title: 'Verlopen — uitvoering onbekend', test: s => isActionableOverdue(s) },
     bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' },
     onderzoek: { title: 'In onderzoek (te controleren)', test: s => onderzoekSet.has(s.order) },
@@ -698,6 +720,7 @@ function renderStatTiles(current, mutations) {
   const total = current.length;
   const filters = statTileFilters();
   const overdueKnown = current.filter(filters.known.test).length;
+  const expiredDateCount = current.filter(filters.verlopenDatum.test).length;
   const overdueUnknown = current.filter(filters.unknown.test).length;
   const bijnaVerlopenCount = current.filter(filters.bijnaVerlopen.test).length;
   const onderzoekCount = current.filter(filters.onderzoek.test).length;
@@ -711,8 +734,10 @@ function renderStatTiles(current, mutations) {
       note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
     { label: 'Bijna verlopen', value: bijnaVerlopenCount, deltaClass: bijnaVerlopenCount > 0 ? 'bad' : 'good',
       note: bijnaVerlopenCount > 0 ? 'nog 1-2 dagen — nu nog te sturen' : 'geen', filterKey: 'bijnaVerlopen' },
-    { label: 'Verlopen — uitvoering bekend', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
-      note: overdueKnown > 0 ? 'al wel ingepland' : 'geen', filterKey: 'known' },
+    { label: 'Verlopen — uitvoering gepland', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
+      note: overdueKnown > 0 ? 'gepland, nog te gebeuren' : 'geen', filterKey: 'known' },
+    { label: 'Uitvoeringsdatum verstreken', value: expiredDateCount, deltaClass: expiredDateCount > 0 ? 'bad' : 'good',
+      note: expiredDateCount > 0 ? 'geplande datum is zelf ook al voorbij' : 'geen', alert: expiredDateCount > 0, filterKey: 'verlopenDatum' },
     { label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
       note: overdueUnknown > 0 ? 'nog niets ingepland — actie nodig' : 'geen', alert: overdueUnknown > 0, filterKey: 'unknown' },
     { label: 'In onderzoek', value: onderzoekCount, note: 'te controleren door meetdienst', filterKey: 'onderzoek' },
@@ -772,7 +797,7 @@ function renderStatDetail(current, mutations) {
   // Bij "Verlopen — uitvoering onbekend" en "Geblokkeerd" kun je de blokkade-
   // reden direct hier instellen/aanpassen — dat scheelt zoeken in de volledige
   // lijst voor precies de storingen waar dit relevant is.
-  const showBlock = (filterKey === 'unknown' || filterKey === 'geblokkeerd') && !isStaticExport;
+  const showBlock = (filterKey === 'unknown' || filterKey === 'verlopenDatum' || filterKey === 'geblokkeerd') && !isStaticExport;
   const firstSeenMap = firstSeenWeekMap();
   const body = list.length === 0
     ? '<p class="empty-note">Geen storingen in deze lijst.</p>'
@@ -1091,7 +1116,7 @@ function renderTableAll(current) {
       </select>
       ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}`;
     const checkboxTd = isStaticExport ? '' : `<td class="checkbox-col"><input type="checkbox" class="ov-row-select" data-order="${esc(s.order)}"${state.ovBulkSelected.has(s.order) ? ' checked' : ''}></td>`;
-    return `<tr${isActionableOverdue(s) ? ' class="row-alert"' : ''}>
+    return `<tr${needsFollowUp(s) ? ' class="row-alert"' : ''}>
       ${checkboxTd}
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
@@ -1432,7 +1457,7 @@ function renderToTableAll(classified) {
         <option value="wachtend" ${wv.status === 'wachtend' ? 'selected' : ''}>Wachtend op iets</option>
       </select>
       ${wv.status === 'wachtend' ? `<input type="text" class="wv-status-note" data-order="${esc(s.order)}" placeholder="Waarop wacht je?" value="${esc(wv.note || '')}">` : ''}`;
-    return `<tr${isActionableOverdue(s) ? ' class="row-alert"' : ''}>
+    return `<tr${needsFollowUp(s) ? ' class="row-alert"' : ''}>
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
@@ -1625,7 +1650,7 @@ function renderPlanTableAll(classified) {
     const active = state.planSortState.key === col.key ? (state.planSortState.dir === 1 ? ' ↑' : ' ↓') : '';
     return `<th data-key="${col.key}" class="${col.num ? 'num' : ''}">${esc(col.label)}${active}</th>`;
   }).join('');
-  const body = rows.map(s => `<tr${isActionableOverdue(s) ? ' class="row-alert"' : ''}>
+  const body = rows.map(s => `<tr${needsFollowUp(s) ? ' class="row-alert"' : ''}>
       <td>${esc(regioGroupLabel(s.regioGroup))}</td>
       <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
       <td>${esc(s.city)}</td>
