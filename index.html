@@ -95,11 +95,29 @@
 
         <div id="type-unknown" class="warning-box hidden"></div>
 
-        <div class="filter-tabs" id="filter-tabs"></div>
+        <div class="ov-toolbar">
+          <div class="filter-tabs" id="filter-tabs"></div>
+          <button id="copy-summary-btn" class="btn-link">📋 Kopieer weekoverzicht</button>
+        </div>
 
         <section class="stat-row" id="stat-tiles"></section>
 
         <section class="card hidden" id="overdue-detail"></section>
+
+        <section class="card" id="attention-card">
+          <div class="card-header">
+            <h2>⚡ Aandacht deze week <span id="attention-count" class="badge"></span></h2>
+          </div>
+          <p class="muted small">Alle openstaande storingen die om actie vragen — bijna verlopen, verlopen zonder plan, of met een verstreken uitvoeringsdatum — op één plek, gesorteerd op urgentie.</p>
+          <div id="attention-list" class="table-scroll"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <h2>Doorlooptijd</h2>
+          </div>
+          <div id="doorlooptijd-card-body"></div>
+        </section>
 
         <section class="card">
           <div class="card-header">
@@ -247,6 +265,15 @@
         <span id="backup-status" class="muted small"></span>
       </div>
       <div id="storage-usage" class="muted small"></div>
+    </section>
+
+    <section class="card" id="cleanup-card">
+      <h2>Opschonen</h2>
+      <p class="muted small">Verwijdert WV-status en blokkade-redenen (Rezap/Naar Aanleg) van orders die niet meer voorkomen in de meest recente week van geen van de 3 bakken. Weekgegevens zelf blijven altijd bewaard.</p>
+      <div class="input-row">
+        <button id="cleanup-btn" class="btn-link">Oude statusdata opschonen…</button>
+        <span id="cleanup-status" class="muted small"></span>
+      </div>
     </section>
 
     <section class="card" id="static-export-card">

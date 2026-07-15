@@ -353,6 +353,11 @@ button {
 .stat-tile .delta.good { color: var(--status-good); }
 .stat-tile .delta.bad { color: var(--status-critical); }
 
+#doorlooptijd-card-body .value { font-size: 2.1rem; font-weight: 800; letter-spacing: -0.02em; }
+#doorlooptijd-card-body .delta { font-size: 0.85rem; margin-top: 6px; font-weight: 600; }
+#doorlooptijd-card-body .delta.good { color: var(--status-good); }
+#doorlooptijd-card-body .delta.bad { color: var(--status-critical); }
+
 /* Verlopen storingen zónder uitvoeringsdatum: hier kunnen we nog op sturen,
    dus die tegel/rij/pill moet duidelijk opvallen t.o.v. de rest. */
 .stat-tile-alert {
@@ -533,6 +538,13 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   box-shadow: var(--shadow-card-hover);
 }
 
+.ov-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 .filter-tabs {
   display: flex;
   gap: 8px;

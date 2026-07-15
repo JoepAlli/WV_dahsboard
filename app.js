@@ -708,7 +708,7 @@ function statTileFilters() {
     known: { title: 'Verlopen — uitvoering gepland', test: s => s.overdue && !!s.executionDate && !isExpiredExecutionDate(s) },
     verlopenDatum: { title: 'Uitvoeringsdatum verstreken', test: s => isActionableExpiredDate(s) },
     unknown: { title: 'Verlopen — uitvoering onbekend', test: s => isActionableOverdue(s) },
-    bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' },
+    bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' && !isOvBlocked(s) },
     onderzoek: { title: 'In onderzoek (te controleren)', test: s => onderzoekSet.has(s.order) },
     inplannen: { title: 'Klaar voor inplannen', test: s => planSet.has(s.order) },
     geblokkeerd: { title: 'Geblokkeerd (Rezap / Naar Aanleg)', test: s => isOvBlocked(s) },
@@ -861,6 +861,138 @@ function renderStatDetail(current, mutations) {
     state.statDetailOrders = null;
     renderStatTiles(current, mutations);
   });
+}
+
+const ATTENTION_CATEGORIES = [
+  { key: 'unknown', label: 'Geen uitvoeringsdatum', prio: 0 },
+  { key: 'verlopenDatum', label: 'Uitvoeringsdatum verstreken', prio: 1 },
+  { key: 'bijnaVerlopen', label: 'Bijna verlopen', prio: 2 },
+];
+
+// Voegt de drie losse "actie nodig"-tegels (Bijna verlopen, Uitvoeringsdatum
+// verstreken, Verlopen zonder plan) samen tot één geprioriteerde lijst, zodat
+// je niet elke tegel apart hoeft langs te klikken om te weten waar je deze
+// week naar moet kijken.
+function renderAttentionList(current) {
+  const container = document.getElementById('attention-list');
+  const countEl = document.getElementById('attention-count');
+  const filters = statTileFilters();
+  const firstSeenMap = firstSeenWeekMap();
+
+  const items = [];
+  current.forEach(s => {
+    for (const cat of ATTENTION_CATEGORIES) {
+      if (filters[cat.key].test(s)) { items.push({ s, cat }); break; }
+    }
+  });
+  items.sort((a, b) => a.cat.prio - b.cat.prio || a.s.daysLeft - b.s.daysLeft);
+
+  countEl.textContent = items.length ? String(items.length) : '';
+  if (items.length === 0) {
+    container.innerHTML = '<p class="empty-note">Niets dat om actie vraagt deze week — goed bezig!</p>';
+    return;
+  }
+
+  container.innerHTML = `<table><thead><tr>
+      <th>Categorie</th><th>Order</th><th>Regio</th><th>Adres</th><th class="num">Dagen</th><th>Open sinds</th><th>Type</th><th>Uitvoering</th>${isStaticExport ? '' : '<th>Blokkade</th>'}
+    </tr></thead><tbody>${items.map(({ s, cat }) => {
+      const block = ovBlockStatusOf(s.order);
+      const blockCell = isStaticExport ? '' : `<td class="ov-block-cell">
+          <select class="ov-block-select" data-order="${esc(s.order)}">
+            <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
+            <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Rezap aanwezig</option>
+            <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
+          </select>
+          ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
+        </td>`;
+      return `<tr>
+        <td><span class="badge">${esc(cat.label)}</span></td>
+        <td>${esc(s.order)}</td>
+        <td>${esc(regioGroupLabel(regioGroupOf(s)))}</td>
+        <td>${esc(s.city)} — ${esc(s.street)}, ${esc(s.postcode)}</td>
+        <td class="num">${renderDaysPill(s)}</td>
+        <td>${firstSeenMap[s.order] ? esc(firstSeenMap[s.order]) : '—'}</td>
+        <td>${esc(s.type)}</td>
+        <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
+        ${blockCell}
+      </tr>`;
+    }).join('')}</tbody></table>`;
+
+  if (!isStaticExport) {
+    const refresh = () => {
+      saveOvBlockStatusMap(state.ovBlockStatus).then(() => {
+        renderDashboardFromState();
+        if (state.toSnapshots.length > 0) renderToDashboardFromState();
+        if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
+      });
+    };
+    container.querySelectorAll('.ov-block-select').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const order = sel.dataset.order;
+        const cur = state.ovBlockStatus[order] || {};
+        state.ovBlockStatus[order] = { reason: sel.value, note: cur.note || '' };
+        refresh();
+      });
+    });
+    container.querySelectorAll('.ov-block-note').forEach(inp => {
+      inp.addEventListener('change', () => {
+        const order = inp.dataset.order;
+        const cur = state.ovBlockStatus[order] || {};
+        state.ovBlockStatus[order] = { reason: cur.reason, note: inp.value };
+        refresh();
+      });
+    });
+  }
+}
+
+// Gemiddelde doorlooptijd: voor elke storing die tussen twee opeenvolgende
+// opgeslagen weken uit de (gefilterde) OV NUS-lijst verdween, de tijd tussen
+// de eerst-geziene week en de week van verdwijnen. Geeft een beeld van of de
+// achterstand structureel groeit of krimpt, los van de wekelijkse
+// momentopname.
+function resolvedDurations() {
+  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  const visibleOf = (list) => filterByActive(typeFiltered(list));
+  const firstSeen = {};
+  const results = [];
+  snaps.forEach((sn, i) => {
+    const curOrders = new Set(visibleOf(sn.storingen).map(s => s.order));
+    if (i > 0) {
+      const prevOrders = visibleOf(snaps[i - 1].storingen).map(s => s.order);
+      prevOrders.forEach(order => {
+        if (!curOrders.has(order) && firstSeen[order]) {
+          const days = Math.round((new Date(sn.week) - new Date(firstSeen[order])) / 86400000);
+          results.push({ week: sn.week, order, days });
+        }
+      });
+    }
+    visibleOf(sn.storingen).forEach(s => { if (!(s.order in firstSeen)) firstSeen[s.order] = sn.week; });
+  });
+  return results;
+}
+
+function renderDoorlooptijdCard() {
+  const el = document.getElementById('doorlooptijd-card-body');
+  if (!el) return;
+  const durations = resolvedDurations();
+  if (durations.length === 0) {
+    el.innerHTML = '<p class="empty-note">Nog geen storingen uit de lijst verdwenen sinds we zijn gaan meten — kom hier later op terug.</p>';
+    return;
+  }
+  const avg = durations.reduce((sum, d) => sum + d.days, 0) / durations.length;
+  let trendHtml = '';
+  if (durations.length >= 4) {
+    const half = Math.floor(durations.length / 2);
+    const avgOf = (list) => list.reduce((s, d) => s + d.days, 0) / list.length;
+    const diff = avgOf(durations.slice(half)) - avgOf(durations.slice(0, half));
+    if (Math.abs(diff) >= 0.5) {
+      trendHtml = `<div class="delta ${diff < 0 ? 'good' : 'bad'}">${diff < 0 ? '↓' : '↑'} ${Math.abs(diff).toFixed(1)} dagen ${diff < 0 ? 'sneller' : 'langzamer'} dan de oudere helft van de metingen</div>`;
+    }
+  }
+  el.innerHTML = `
+    <div class="value">${avg.toFixed(1)} dagen</div>
+    <div class="muted small">Gemiddelde doorlooptijd van ${durations.length} storing${durations.length === 1 ? '' : 'en'} die sinds het begin van de metingen uit de lijst zijn verdwenen (van eerst gezien tot niet meer aanwezig).</div>
+    ${trendHtml}`;
 }
 
 /* ---------- Rendering: regio chart ---------- */
@@ -1739,12 +1871,74 @@ function renderDashboardFromState() {
 
   document.getElementById('dashboard').classList.remove('hidden');
   renderStatTiles(latestFiltered, mutations);
+  renderAttentionList(latestFiltered);
+  renderDoorlooptijdCard();
   renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
   renderTrendChart(snaps); // idem, filtert zelf op state.activeFilter
   renderMutationTables(mutations);
   renderTableAll(latestFiltered);
   renderWeeksList();
   updateStorageUsage();
+}
+
+// Platte-tekst weekoverzicht (voor het "Kopieer weekoverzicht"-knopje) — kijkt
+// altijd naar alle regio's, ongeacht welke regio-filtertab net toevallig
+// actief staat, zodat het gedeelde overzicht altijd het complete plaatje is.
+function buildWeekSummaryText() {
+  if (state.snapshots.length === 0) return 'Nog geen gegevens verwerkt.';
+  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  const latest = snaps[snaps.length - 1];
+  const previous = snaps.length > 1 ? snaps[snaps.length - 2] : null;
+  const latestVisible = typeFiltered(latest.storingen);
+  const previousVisible = previous ? typeFiltered(previous.storingen) : null;
+  const mutations = computeMutations(latestVisible, previousVisible ? { storingen: previousVisible } : null);
+  const filters = statTileFilters();
+  const count = key => latestVisible.filter(filters[key].test).length;
+
+  const lines = [
+    `NUS-weekoverzicht — ${fmtDate(latest.week)}`,
+    '',
+    `Totaal open: ${latestVisible.length}`,
+  ];
+  if (mutations.hasPrevious) {
+    lines.push(`Nieuw binnengekomen: ${mutations.nieuw.length}`);
+    lines.push(`Afgesloten / uitgegaan: ${mutations.uitgegaan.length}`);
+  }
+  lines.push(
+    `Bijna verlopen: ${count('bijnaVerlopen')}`,
+    `Verlopen — uitvoering gepland: ${count('known')}`,
+    `Uitvoeringsdatum verstreken: ${count('verlopenDatum')}`,
+    `Verlopen — uitvoering onbekend: ${count('unknown')}`,
+    `In onderzoek: ${count('onderzoek')}`,
+    `Klaar voor inplannen: ${count('inplannen')}`,
+    `Geblokkeerd (Rezap / Naar Aanleg): ${count('geblokkeerd')}`,
+  );
+  return lines.join('\n');
+}
+
+// Verwijdert WV-status- en blokkade-reden-aantekeningen van orders die in
+// geen van de 3 bakken meer voorkomen in de meest recente week — voorkomt dat
+// deze mapjes onbeperkt blijven groeien met aantekeningen bij storingen die
+// allang zijn afgesloten. De weekgegevens zelf blijven altijd bewaard.
+function cleanupOldStatusData() {
+  const latestOf = (snapshots) => {
+    if (snapshots.length === 0) return [];
+    return snapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).pop().storingen;
+  };
+  const liveOrders = new Set([
+    ...latestOf(state.snapshots).map(s => s.order),
+    ...latestOf(state.toSnapshots).map(s => s.order),
+    ...latestOf(state.planSnapshots).map(s => s.order),
+  ]);
+
+  let removed = 0;
+  Object.keys(state.wvStatus).forEach(order => {
+    if (!liveOrders.has(order)) { delete state.wvStatus[order]; removed++; }
+  });
+  Object.keys(state.ovBlockStatus).forEach(order => {
+    if (!liveOrders.has(order)) { delete state.ovBlockStatus[order]; removed++; }
+  });
+  return removed;
 }
 
 function showParseWarning(errors, okCount) {
@@ -1807,6 +2001,31 @@ function wireEvents() {
     } catch (e) {
       statusEl.textContent = 'Exporteren mislukt: ' + e.message;
     }
+  });
+
+  document.getElementById('cleanup-btn').addEventListener('click', async () => {
+    const statusEl = document.getElementById('cleanup-status');
+    if (!confirm('WV-status en blokkade-redenen opschonen voor orders die niet meer in de actuele lijsten voorkomen? Weekgegevens blijven bewaard.')) return;
+    const removed = cleanupOldStatusData();
+    if (removed === 0) { statusEl.textContent = 'Niets om op te schonen.'; return; }
+    await saveWvStatusMap(state.wvStatus);
+    await saveOvBlockStatusMap(state.ovBlockStatus);
+    statusEl.textContent = `${removed} verouderde aantekening${removed === 1 ? '' : 'en'} verwijderd.`;
+    renderDashboardFromState();
+    if (state.toSnapshots.length > 0) renderToDashboardFromState();
+    if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
+  });
+
+  document.getElementById('copy-summary-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('copy-summary-btn');
+    const original = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(buildWeekSummaryText());
+      btn.textContent = '✅ Gekopieerd!';
+    } catch (e) {
+      btn.textContent = '⚠️ Kopiëren mislukt';
+    }
+    setTimeout(() => { btn.textContent = original; }, 2000);
   });
 
   document.getElementById('import-backup-input').addEventListener('change', async (e) => {
