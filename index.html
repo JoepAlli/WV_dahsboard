@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NUS Dashboard — Weekoverzicht</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -120,14 +121,14 @@
 
         <section class="card">
           <div class="card-header">
-            <h2>Doorlooptijd</h2>
+            <h2>⏱️ Doorlooptijd</h2>
           </div>
           <div id="doorlooptijd-card-body"></div>
         </section>
 
         <section class="card">
           <div class="card-header">
-            <h2>Open storingen per regio</h2>
+            <h2>🗺️ Open storingen per regio</h2>
             <button class="btn-link toggle-table" data-target="regio-chart">Toon als tabel</button>
           </div>
           <div id="regio-chart"></div>
@@ -135,14 +136,14 @@
 
         <section class="card">
           <div class="card-header">
-            <h2>Trend over tijd</h2>
+            <h2>📈 Trend over tijd</h2>
             <button class="btn-link toggle-table" data-target="trend-chart">Toon als tabel</button>
           </div>
           <div id="trend-chart"></div>
         </section>
 
         <section class="card">
-          <h2>Mutaties deze week</h2>
+          <h2>🔄 Mutaties deze week</h2>
           <div class="mutations-grid">
             <div>
               <h3>Nieuw binnengekomen <span id="count-in" class="badge"></span></h3>
@@ -157,7 +158,7 @@
 
         <section class="card">
           <div class="card-header">
-            <h2>Volledige lijst — open storingen</h2>
+            <h2>📋 Volledige lijst — open storingen</h2>
             <input type="search" id="table-search" class="table-search" placeholder="Zoek op order of adres…">
           </div>
           <div id="ov-bulk-bar" class="bulk-bar hidden">
@@ -173,7 +174,7 @@
         </section>
 
         <details class="card details-card" id="ov-weeks-card">
-          <summary>Opgeslagen weken</summary>
+          <summary>🗓️ Opgeslagen weken</summary>
           <div class="card-header details-body-header">
             <span></span>
             <button class="btn-link danger" id="clear-all-btn">Wis alle opgeslagen data</button>
@@ -198,21 +199,21 @@
         <section class="stat-row" id="to-stat-tiles"></section>
 
         <details class="card details-card">
-          <summary>Genegeerd deze week <span id="to-ignored-count" class="badge"></span></summary>
+          <summary>🙈 Genegeerd deze week <span id="to-ignored-count" class="badge"></span></summary>
           <p class="muted small">Storingen die niet voor onze werkvoorbereiders zijn (andere monteur, geen overdracht naar ons, of niet gevonden in de OV NUS-lijst).</p>
           <div id="to-ignored"></div>
         </details>
 
         <section class="card">
           <div class="card-header">
-            <h2>Volledige lijst — relevante te onderzoeken storingen</h2>
+            <h2>📋 Volledige lijst — relevante te onderzoeken storingen</h2>
             <input type="search" id="to-table-search" class="table-search" placeholder="Zoek op order of adres…">
           </div>
           <div id="to-table-all" class="table-scroll"></div>
         </section>
 
         <details class="card details-card" id="to-weeks-card">
-          <summary>Opgeslagen weken</summary>
+          <summary>🗓️ Opgeslagen weken</summary>
           <div class="card-header details-body-header">
             <span></span>
             <button class="btn-link danger" id="to-clear-all-btn">Wis alle opgeslagen data</button>
@@ -237,21 +238,21 @@
         <section class="stat-row" id="plan-stat-tiles"></section>
 
         <details class="card details-card">
-          <summary>Genegeerd deze week <span id="plan-ignored-count" class="badge"></span></summary>
+          <summary>🙈 Genegeerd deze week <span id="plan-ignored-count" class="badge"></span></summary>
           <p class="muted small">Storingen die geen klaarzetter als 1e naam hebben, of niet gevonden zijn in de OV NUS-lijst.</p>
           <div id="plan-ignored"></div>
         </details>
 
         <section class="card">
           <div class="card-header">
-            <h2>Volledige lijst — klaar voor inplannen</h2>
+            <h2>📋 Volledige lijst — klaar voor inplannen</h2>
             <input type="search" id="plan-table-search" class="table-search" placeholder="Zoek op order of adres…">
           </div>
           <div id="plan-table-all" class="table-scroll"></div>
         </section>
 
         <details class="card details-card" id="plan-weeks-card">
-          <summary>Opgeslagen weken</summary>
+          <summary>🗓️ Opgeslagen weken</summary>
           <div class="card-header details-body-header">
             <span></span>
             <button class="btn-link danger" id="plan-clear-all-btn">Wis alle opgeslagen data</button>
@@ -274,7 +275,7 @@
     </div>
 
     <section class="card" id="backup-card">
-      <h2>Back-up</h2>
+      <h2>💾 Back-up</h2>
       <p class="muted small">Download een back-upbestand met alle opgeslagen weken en instellingen (alle bakken), of herstel een eerder gedownload back-upbestand.</p>
       <div class="input-row">
         <button id="export-backup-btn" class="btn-primary">Exporteer back-up</button>
@@ -286,7 +287,7 @@
     </section>
 
     <section class="card" id="cleanup-card">
-      <h2>Opschonen</h2>
+      <h2>🧹 Opschonen</h2>
       <p class="muted small">Verwijdert WV-status en blokkade-redenen (Rezap/Naar Aanleg) van orders die niet meer voorkomen in de meest recente week van geen van de 3 bakken. Weekgegevens zelf blijven altijd bewaard.</p>
       <div class="input-row">
         <button id="cleanup-btn" class="btn-link">Oude statusdata opschonen…</button>
@@ -295,7 +296,7 @@
     </section>
 
     <section class="card" id="static-export-card">
-      <h2>Delen met je team</h2>
+      <h2>🤝 Delen met je team</h2>
       <p class="muted small">Genereert één zelfstandig dashboard-bestand met de actuele week erin gebakken. Zet dit in een gedeelde werkmap — teamleden dubbelklikken het gewoon open en kunnen filteren, sorteren en de lijsten bekijken, zonder dat ze iets van deze applicatie hoeven te snappen. Bewerken (WV-status, nieuwe week verwerken) kan alleen in jouw eigen dashboard.</p>
       <div class="input-row">
         <button id="export-static-btn" class="btn-primary">Exporteer interactief dashboard</button>
@@ -304,7 +305,7 @@
     </section>
 
     <section class="card" id="bijna-verlopen-card">
-      <h2>Drempel "Bijna verlopen" — OV NUSsen</h2>
+      <h2>⏳ Drempel "Bijna verlopen" — OV NUSsen</h2>
       <p class="muted small">Storingen met nog dit aantal dagen (of minder) over tot de streefdatum tellen mee als "Bijna verlopen" — geldt voor de tegel, "Aandacht deze week" en de kleur in de tabel.</p>
       <div class="input-row">
         <label for="bijna-verlopen-threshold-input" class="small">Nog</label>
@@ -315,7 +316,7 @@
     </section>
 
     <section class="card" id="type-filter-card">
-      <h2>Type-filter — OV NUSsen</h2>
+      <h2>🏷️ Type-filter — OV NUSsen</h2>
       <p class="muted small">Alleen storingen met een type hieronder tellen mee in het OV NUSsen-dashboard.</p>
       <div id="type-whitelist"></div>
       <div class="input-row">
@@ -325,7 +326,7 @@
     </section>
 
     <section class="card" id="to-names-card">
-      <h2>Naamlijsten — te onderzoeken storingen</h2>
+      <h2>👥 Naamlijsten — te onderzoeken storingen</h2>
       <p class="muted small">Bij 1 naam telt een storing alleen mee als het een meetdienst-collega is. Bij 2 namen telt hij alleen mee als de 2e naam een overdracht-naam is (dan is 'm overgedragen aan de werkvoorbereiders).</p>
       <div>
         <strong class="small">Meetdienst-collega's</strong>
@@ -346,7 +347,7 @@
     </section>
 
     <section class="card" id="plan-names-card">
-      <h2>Naamlijst — klaar voor inplannen</h2>
+      <h2>👥 Naamlijst — klaar voor inplannen</h2>
       <p class="muted small">Er staan hier altijd 2 namen. Een storing telt alleen mee als de 1e naam (wie 'm heeft klaargezet) hieronder staat.</p>
       <div>
         <strong class="small">Klaarzetters</strong>

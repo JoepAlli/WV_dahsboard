@@ -346,10 +346,12 @@ button {
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 3px;
-  background: var(--series-1);
-  opacity: 0.75;
+  background: linear-gradient(90deg, var(--series-1), color-mix(in srgb, var(--series-1) 45%, var(--series-2)));
+  opacity: 0.8;
 }
-#section-to .stat-tile::before { background: var(--series-2); }
+#subsection-to .stat-tile::before { background: linear-gradient(90deg, var(--series-2), color-mix(in srgb, var(--series-2) 45%, var(--series-1))); }
+#subsection-plan .stat-tile::before { background: linear-gradient(90deg, var(--series-3), color-mix(in srgb, var(--series-3) 45%, var(--series-2))); }
+.stat-tile-icon { font-size: 1.15rem; line-height: 1; margin-bottom: 8px; opacity: 0.9; }
 .stat-tile .label { font-size: 0.76rem; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
 .stat-tile .value { font-size: 2.1rem; font-weight: 800; margin-top: 4px; letter-spacing: -0.02em; }
 .stat-tile .delta { font-size: 0.8rem; margin-top: 4px; }
@@ -457,6 +459,21 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .empty-state-icon { font-size: 2.4rem; margin: 0 0 6px; }
 .empty-state-card h3 { margin: 0 0 6px; font-size: 1.1rem; }
 .empty-state-card p.muted { max-width: 420px; margin: 0 auto 18px; }
+
+.all-clear {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 0;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--status-good) 10%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--status-good) 30%, var(--border));
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.all-clear-icon { font-size: 1.3rem; }
 
 /* Grote lijsten (500+ storingen) krijgen hun eigen scrollgebied in plaats van
    de hele pagina te verlengen; de kolomkoppen blijven zichtbaar tijdens het
@@ -586,8 +603,10 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   box-shadow: 0 1px 2px rgba(11,11,11,0.12);
 }
 .filter-tab.active:hover { background: var(--series-1); }
-#section-to .filter-tab.active { background: var(--series-2); border-color: var(--series-2); }
-#section-to .btn-primary { background: var(--series-2); }
+#subsection-to .filter-tab.active { background: var(--series-2); border-color: var(--series-2); }
+#subsection-to .btn-primary { background: var(--series-2); }
+#subsection-plan .filter-tab.active { background: var(--series-3); border-color: var(--series-3); color: #3a2c00; }
+#subsection-plan .btn-primary { background: var(--series-3); color: #3a2c00; }
 
 .type-chip {
   display: inline-flex;

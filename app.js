@@ -791,22 +791,22 @@ function renderStatTiles(current, mutations) {
   const inplannenCount = current.filter(filters.inplannen.test).length;
   const geblokkeerdCount = current.filter(filters.geblokkeerd.test).length;
   const tiles = [
-    { key: 'totaal', label: 'Totaal open', value: total },
-    { key: 'nieuw', label: 'Nieuw binnengekomen', value: mutations.hasPrevious ? mutations.nieuw.length : '—',
+    { key: 'totaal', icon: '📋', label: 'Totaal open', value: total },
+    { key: 'nieuw', icon: '🆕', label: 'Nieuw binnengekomen', value: mutations.hasPrevious ? mutations.nieuw.length : '—',
       note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
-    { key: 'afgesloten', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
+    { key: 'afgesloten', icon: '✅', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
       note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
-    { key: 'bijnaVerlopen', label: 'Bijna verlopen', value: bijnaVerlopenCount, deltaClass: bijnaVerlopenCount > 0 ? 'bad' : 'good',
+    { key: 'bijnaVerlopen', icon: '⏳', label: 'Bijna verlopen', value: bijnaVerlopenCount, deltaClass: bijnaVerlopenCount > 0 ? 'bad' : 'good',
       note: bijnaVerlopenCount > 0 ? `nog 1-${state.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD} dagen — zie Aandacht deze week` : 'geen' },
-    { key: 'known', label: 'Verlopen — uitvoering gepland', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
+    { key: 'known', icon: '📅', label: 'Verlopen — uitvoering gepland', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
       note: overdueKnown > 0 ? 'gepland, nog te gebeuren' : 'geen', filterKey: 'known' },
-    { key: 'verlopenDatum', label: 'Uitvoeringsdatum verstreken', value: expiredDateCount, deltaClass: expiredDateCount > 0 ? 'bad' : 'good',
+    { key: 'verlopenDatum', icon: '⏰', label: 'Uitvoeringsdatum verstreken', value: expiredDateCount, deltaClass: expiredDateCount > 0 ? 'bad' : 'good',
       note: expiredDateCount > 0 ? 'geplande datum is zelf ook al voorbij — zie Aandacht deze week' : 'geen', alert: expiredDateCount > 0 },
-    { key: 'unknown', label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
+    { key: 'unknown', icon: '⛔', label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
       note: overdueUnknown > 0 ? 'nog niets ingepland — zie Aandacht deze week' : 'geen', alert: overdueUnknown > 0 },
-    { key: 'onderzoek', label: 'In onderzoek', value: onderzoekCount, note: 'te controleren door meetdienst', filterKey: 'onderzoek' },
-    { key: 'inplannen', label: 'Klaar voor inplannen', value: inplannenCount, note: 'kan ingepland worden', filterKey: 'inplannen' },
-    { key: 'geblokkeerd', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Rezap / Naar Aanleg', filterKey: 'geblokkeerd' },
+    { key: 'onderzoek', icon: '🔍', label: 'In onderzoek', value: onderzoekCount, note: 'te controleren door meetdienst', filterKey: 'onderzoek' },
+    { key: 'inplannen', icon: '🗓️', label: 'Klaar voor inplannen', value: inplannenCount, note: 'kan ingepland worden', filterKey: 'inplannen' },
+    { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Rezap / Naar Aanleg', filterKey: 'geblokkeerd' },
   ];
   el.innerHTML = tiles.map(t => {
     const clickable = t.filterKey ? ' stat-tile-clickable' : '';
@@ -814,6 +814,7 @@ function renderStatTiles(current, mutations) {
     const clickAttrs = t.filterKey ? ` data-stat-filter="${t.filterKey}" tabindex="0" role="button" aria-expanded="${state.statDetailFilter === t.filterKey}"` : '';
     return `
     <div class="stat-tile${t.alert ? ' stat-tile-alert' : ''}${clickable}${selected}" data-stat-key="${t.key}"${clickAttrs}>
+      <div class="stat-tile-icon" aria-hidden="true">${t.icon}</div>
       <div class="label">${esc(t.label)}</div>
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta ${t.deltaClass || ''}">${esc(t.note)}</div>` : ''}
@@ -977,7 +978,7 @@ function renderAttentionList(current, allVisible) {
   items.sort((a, b) => a.cat.prio - b.cat.prio || a.s.daysLeft - b.s.daysLeft);
 
   if (items.length === 0) {
-    container.innerHTML = '<p class="empty-note">Niets dat om actie vraagt deze week — goed bezig!</p>';
+    container.innerHTML = '<p class="all-clear"><span class="all-clear-icon" aria-hidden="true">🎉</span>Niets dat om actie vraagt deze week — goed bezig!</p>';
     return;
   }
 
@@ -1579,14 +1580,15 @@ function renderToStatTiles(classified) {
   const wachtendCount = relevant.filter(c => wvStatusOf(c.storing.order).status === 'wachtend').length;
   const onbepaaldCount = relevant.length - oppakkenCount - wachtendCount;
   const tiles = [
-    { label: 'Totaal relevant', value: meetdienstCount + wvItems.length },
-    { label: 'Bij meetdienst', value: meetdienstCount, note: 'nog niets aan te doen' },
-    { label: 'Open voor werkvoorbereiders', value: wvItems.length, note: 'moet ingepland worden' },
-    { label: 'Moet opgepakt worden', value: oppakkenCount },
-    { label: 'Wachtend op iets', value: wachtendCount, note: onbepaaldCount > 0 ? `${onbepaaldCount} nog niet bepaald` : undefined },
+    { icon: '📋', label: 'Totaal relevant', value: meetdienstCount + wvItems.length },
+    { icon: '🔬', label: 'Bij meetdienst', value: meetdienstCount, note: 'nog niets aan te doen' },
+    { icon: '🧑‍💼', label: 'Open voor werkvoorbereiders', value: wvItems.length, note: 'moet ingepland worden' },
+    { icon: '▶️', label: 'Moet opgepakt worden', value: oppakkenCount },
+    { icon: '⏸️', label: 'Wachtend op iets', value: wachtendCount, note: onbepaaldCount > 0 ? `${onbepaaldCount} nog niet bepaald` : undefined },
   ];
   el.innerHTML = tiles.map(t => `
     <div class="stat-tile">
+      <div class="stat-tile-icon" aria-hidden="true">${t.icon}</div>
       <div class="label">${esc(t.label)}</div>
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta muted">${esc(t.note)}</div>` : ''}
@@ -1803,10 +1805,11 @@ function renderPlanStatTiles(classified) {
   const el = document.getElementById('plan-stat-tiles');
   const relevant = classified.filter(c => c.status !== 'genegeerd');
   const tiles = [
-    { label: 'Klaar voor inplannen', value: relevant.length, note: 'kan worden ingepland' },
+    { icon: '🗓️', label: 'Klaar voor inplannen', value: relevant.length, note: 'kan worden ingepland' },
   ];
   el.innerHTML = tiles.map(t => `
     <div class="stat-tile">
+      <div class="stat-tile-icon" aria-hidden="true">${t.icon}</div>
       <div class="label">${esc(t.label)}</div>
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta muted">${esc(t.note)}</div>` : ''}
