@@ -680,8 +680,16 @@ function isUnplannedOverdue(s) { return !!s.overdue && !s.executionDate; }
 // uitvoering al had moeten zijn gebeurd. Dit oogt in de tabel "geregeld"
 // (er staat een datum) maar is dat dus niet — precies het inzicht dat nodig
 // is om hierop te kunnen sturen.
+// Vergelijkt op kalenderdag (niet exacte tijd): een uitvoering die vandaag
+// gepland staat telt nog niet als verstreken, ook al is het geplande tijdstip
+// vandaag al gepasseerd — de dag is immers nog niet om.
 function isExpiredExecutionDate(s) {
-  return !!s.overdue && !!s.executionDate && new Date(s.executionDate).getTime() < Date.now();
+  if (!s.overdue || !s.executionDate) return false;
+  const execDay = new Date(s.executionDate);
+  execDay.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return execDay.getTime() < today.getTime();
 }
 
 // Sommige storingen moeten openblijven maar daar kunnen wij niets meer aan
