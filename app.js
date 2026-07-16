@@ -243,23 +243,33 @@ async function migrateLegacyKey(key) {
 /* ---------- Optioneel: gedeelde status via SharePoint ---------- */
 //
 // Blokkade-reden (OV NUSsen) en WV-status (Te onderzoeken) kunnen — als je
-// dit expliciet instelt in Instellingen — via een SharePoint-lijst gedeeld
-// worden i.p.v. alleen lokaal in IndexedDB te leven, zodat collega's die
-// hetzelfde dashboard vanaf dezelfde SharePoint-site openen elkaars
-// wijzigingen zien. Staat dit uit (standaard), dan verandert er niets aan
-// het bestaande, volledig lokale gedrag.
+// dit expliciet instelt in Instellingen — via één gedeeld JSON-bestand in de
+// standaard documentbibliotheek van een SharePoint-site gedeeld worden i.p.v.
+// alleen lokaal in IndexedDB te leven, zodat collega's die hetzelfde
+// dashboard vanaf dezelfde SharePoint-site openen elkaars wijzigingen zien.
+// Staat dit uit (standaard), dan verandert er niets aan het bestaande,
+// volledig lokale gedrag.
+//
+// Bewust géén SharePoint-lijsten (die moet je zelf met de juiste kolommen
+// aanmaken — te veel gedoe) maar één bestand in een bibliotheek die elke
+// site al standaard heeft. Om te voorkomen dat twee mensen die vlak na
+// elkaar iets aanpassen elkaars wijziging overschrijven, wordt bij elke
+// opslag eerst de laatste versie opnieuw opgehaald en samengevoegd, met
+// SharePoint's ETag-mechanisme als extra vangnet (een duidelijke melding +
+// automatische herhaalpoging bij een echt gelijktijdig conflict).
 //
 // Vereist dat de pagina zelf vanaf de SharePoint-site wordt geopend (niet als
 // lokaal bestand), zodat de browser de bestaande SharePoint-sessie/cookie kan
 // hergebruiken voor authenticatie — er wordt hier bewust geen apart
 // inlogscherm of app-registratie gebouwd.
 const SHAREPOINT_CONFIG_KEY = 'nusdash_sharepoint_config_v1';
-const OV_BLOCK_LIST_NAME = 'NUSBlokkadeStatus';
-const WV_STATUS_LIST_NAME = 'NUSWvStatus';
+const DEFAULT_SHAREPOINT_LIBRARY = 'Shared Documents';
+const SHAREPOINT_STATUS_FILE_NAME = 'nusdash-gedeelde-status.json';
 
 async function loadSharePointConfig() {
-  try { return (await idbGet(SHAREPOINT_CONFIG_KEY)) || { siteUrl: '', enabled: false }; }
-  catch (e) { console.error(e); return { siteUrl: '', enabled: false }; }
+  const fallback = { siteUrl: '', enabled: false, libraryName: '' };
+  try { return Object.assign({}, fallback, (await idbGet(SHAREPOINT_CONFIG_KEY)) || {}); }
+  catch (e) { console.error(e); return fallback; }
 }
 async function saveSharePointConfig(cfg) {
   try { await idbSet(SHAREPOINT_CONFIG_KEY, cfg); }
@@ -268,6 +278,9 @@ async function saveSharePointConfig(cfg) {
 
 function sharePointActive() {
   return !!(state.sharePointConfig && state.sharePointConfig.enabled && state.sharePointConfig.siteUrl);
+}
+function sharePointLibraryName() {
+  return (state.sharePointConfig && state.sharePointConfig.libraryName) || DEFAULT_SHAREPOINT_LIBRARY;
 }
 // Geeft een duidelijke melding i.p.v. een cryptische netwerkfout ("Failed to
 // fetch") wanneer gedeelde status wél aanstaat maar de pagina nog steeds als
@@ -282,12 +295,17 @@ function spAssertHostedProperly() {
 function spApiUrl(siteUrl, path) {
   return siteUrl.replace(/\/$/, '') + '/_api/' + path;
 }
-function spEscapeODataString(s) {
-  return String(s).replace(/'/g, "''");
+// Server-relatief pad naar het gedeelde bestand, bv. "/sites/NUSTeam/Shared
+// Documents/nusdash-gedeelde-status.json" — afgeleid van de site-URL zelf,
+// zodat je alleen de site-URL hoeft in te vullen en niets hoeft te kopiëren
+// vanuit de bibliotheek.
+function spStatusFileServerRelativeUrl(siteUrl) {
+  const sitePath = new URL(siteUrl).pathname.replace(/\/$/, '');
+  return `${sitePath}/${sharePointLibraryName()}/${SHAREPOINT_STATUS_FILE_NAME}`;
 }
 
 // Vraagt een "form digest" op — SharePoint eist dit anti-CSRF-token bij elke
-// schrijfactie (aanmaken/bijwerken/verwijderen) via de REST API.
+// schrijfactie via de REST API.
 async function spGetDigest(siteUrl) {
   const res = await fetch(spApiUrl(siteUrl, 'contextinfo'), {
     method: 'POST',
@@ -299,99 +317,95 @@ async function spGetDigest(siteUrl) {
   return data.d.GetContextWebInformation.FormDigestValue;
 }
 
-// De interne entiteitsnaam die SharePoint voor nieuwe items verwacht
-// (bijv. "SP.Data.NUSBlokkadeStatusListItem") volgt niet 1-op-1 uit de
-// lijstnaam — opvragen i.p.v. gokken voorkomt een veelvoorkomende faalbron.
-async function spGetListEntityType(siteUrl, listName) {
-  const res = await fetch(spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')?$select=ListItemEntityTypeFullName`), {
+// Haalt de inhoud van het gedeelde statusbestand op. exists:false betekent
+// "bestaat nog niet" (nog niets opgeslagen) — geen fout, gewoon leeg beginnen.
+async function spGetFileContent(siteUrl) {
+  const fileUrl = spStatusFileServerRelativeUrl(siteUrl);
+  const res = await fetch(spApiUrl(siteUrl, `web/GetFileByServerRelativeUrl('${encodeURIComponent(fileUrl)}')/$value`), {
     credentials: 'same-origin',
-    headers: { Accept: 'application/json;odata=verbose' },
   });
-  if (!res.ok) throw new Error(`SharePoint-lijst "${listName}" niet gevonden (status ${res.status}) — bestaat de lijst en heb je er toegang toe?`);
-  const data = await res.json();
-  return data.d.ListItemEntityTypeFullName;
+  if (res.status === 404) return { exists: false, data: { ovBlockStatus: {}, wvStatus: {} }, etag: null };
+  if (!res.ok) throw new Error(`ophalen van gedeeld statusbestand mislukt (status ${res.status}) — bestaat de bibliotheek "${sharePointLibraryName()}" op deze site?`);
+  const etag = res.headers.get('ETag');
+  const text = await res.text();
+  let data;
+  try { data = text ? JSON.parse(text) : {}; }
+  catch (e) { throw new Error('het gedeelde statusbestand bevat geen geldige data (kapotte JSON)'); }
+  if (!data.ovBlockStatus) data.ovBlockStatus = {};
+  if (!data.wvStatus) data.wvStatus = {};
+  return { exists: true, data, etag };
 }
 
-async function spGetItemByOrder(siteUrl, listName, order) {
-  const url = spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')/items?$filter=Title eq '${spEscapeODataString(order)}'&$top=1`);
-  const res = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json;odata=verbose' } });
-  if (!res.ok) throw new Error(`ophalen uit SharePoint-lijst "${listName}" mislukt (status ${res.status})`);
-  const data = await res.json();
-  return data.d.results[0] || null;
-}
-
-async function spGetAllItems(siteUrl, listName) {
-  let url = spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')/items?$top=5000`);
-  let results = [];
-  while (url) {
-    const res = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json;odata=verbose' } });
-    if (!res.ok) throw new Error(`ophalen van SharePoint-lijst "${listName}" mislukt (status ${res.status})`);
-    const data = await res.json();
-    results = results.concat(data.d.results);
-    url = data.d.__next || null;
-  }
-  return results;
-}
-
-// Zet één item (op ordernummer) — maakt 'm aan als 'ie nog niet bestaat,
-// werkt 'm anders bij. fields bevat alleen de kolommen naast Title.
-async function spUpsertItem(siteUrl, listName, order, fields) {
+// Schrijft de inhoud van het gedeelde statusbestand weg. Bij een bestaand
+// bestand met IF-MATCH op de eerder opgehaalde ETag, zodat een gelijktijdige
+// wijziging door iemand anders wordt gedetecteerd (SharePoint geeft dan 412
+// terug) i.p.v. stilzwijgend overschreven te worden.
+async function spPutFileContent(siteUrl, exists, etag, data) {
   const digest = await spGetDigest(siteUrl);
-  const existing = await spGetItemByOrder(siteUrl, listName, order);
-  if (existing) {
-    const res = await fetch(spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')/items(${existing.Id})`), {
+  const body = JSON.stringify(data);
+  if (!exists) {
+    const sitePath = new URL(siteUrl).pathname.replace(/\/$/, '');
+    const folderUrl = `${sitePath}/${sharePointLibraryName()}`;
+    const res = await fetch(spApiUrl(siteUrl, `web/GetFolderByServerRelativeUrl('${encodeURIComponent(folderUrl)}')/Files/add(url='${encodeURIComponent(SHAREPOINT_STATUS_FILE_NAME)}',overwrite=true)`), {
       method: 'POST',
       credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json;odata=verbose',
-        'Content-Type': 'application/json;odata=verbose',
-        'X-RequestDigest': digest,
-        'X-HTTP-Method': 'MERGE',
-        'IF-MATCH': '*',
-      },
-      body: JSON.stringify(fields),
+      headers: { Accept: 'application/json;odata=verbose', 'X-RequestDigest': digest },
+      body,
     });
-    if (!res.ok) throw new Error(`bijwerken in SharePoint-lijst "${listName}" mislukt (status ${res.status})`);
-  } else {
-    const entityType = await spGetListEntityType(siteUrl, listName);
-    const res = await fetch(spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')/items`), {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json;odata=verbose',
-        'Content-Type': 'application/json;odata=verbose',
-        'X-RequestDigest': digest,
-      },
-      body: JSON.stringify(Object.assign({ __metadata: { type: entityType }, Title: order }, fields)),
-    });
-    if (!res.ok) throw new Error(`aanmaken in SharePoint-lijst "${listName}" mislukt (status ${res.status})`);
+    if (!res.ok) throw new Error(`aanmaken van gedeeld statusbestand mislukt (status ${res.status}) — bestaat de bibliotheek "${sharePointLibraryName()}" op deze site?`);
+    return;
   }
-}
-
-async function spDeleteItemIfExists(siteUrl, listName, order) {
-  const existing = await spGetItemByOrder(siteUrl, listName, order);
-  if (!existing) return;
-  const digest = await spGetDigest(siteUrl);
-  const res = await fetch(spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')/items(${existing.Id})`), {
+  const fileUrl = spStatusFileServerRelativeUrl(siteUrl);
+  const res = await fetch(spApiUrl(siteUrl, `web/GetFileByServerRelativeUrl('${encodeURIComponent(fileUrl)}')/$value`), {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
-      Accept: 'application/json;odata=verbose',
       'X-RequestDigest': digest,
-      'X-HTTP-Method': 'DELETE',
-      'IF-MATCH': '*',
+      'X-HTTP-Method': 'PUT',
+      'IF-MATCH': etag,
     },
+    body,
   });
-  if (!res.ok) throw new Error(`verwijderen uit SharePoint-lijst "${listName}" mislukt (status ${res.status})`);
+  if (res.status === 412) throw new Error('CONFLICT');
+  if (!res.ok) throw new Error(`opslaan van gedeeld statusbestand mislukt (status ${res.status})`);
 }
 
-// Test-knop in Instellingen: probeert beide lijsten op te vragen zonder iets
-// te wijzigen, zodat je meteen ziet of site-URL/lijstnamen/rechten kloppen
-// vóórdat je hier daadwerkelijk op gaat vertrouwen.
-async function spTestConnection(siteUrl) {
+// Haalt de laatste versie op, past 'm aan via mutateFn, en schrijft 'm terug
+// — bij een gelijktijdig-conflict (412) wordt dit automatisch nog 2x
+// opnieuw geprobeerd (met een verse ophaal + hersamenvoeging), zodat een
+// toevallige botsing met een collega's wijziging vanzelf oplost i.p.v. stil
+// data te verliezen of meteen een foutmelding te tonen.
+async function spUpdateSharedFile(siteUrl, mutateFn) {
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = await spGetFileContent(siteUrl);
+    mutateFn(current.data);
+    try {
+      await spPutFileContent(siteUrl, current.exists, current.etag, current.data);
+      return current.data;
+    } catch (e) {
+      if (e.message !== 'CONFLICT') throw e;
+      lastErr = e;
+    }
+  }
+  throw new Error('iemand anders wijzigde het gedeelde statusbestand precies tegelijk — probeer het nog eens');
+}
+
+// Test-knop in Instellingen: probeert het gedeelde statusbestand te lezen
+// (of bevestigt dat de bibliotheek in elk geval bestaat als het bestand er
+// nog niet is) zonder iets te wijzigen.
+async function spTestConnection(siteUrl, libraryName) {
   spAssertHostedProperly();
-  await spGetListEntityType(siteUrl, OV_BLOCK_LIST_NAME);
-  await spGetListEntityType(siteUrl, WV_STATUS_LIST_NAME);
+  libraryName = libraryName || DEFAULT_SHAREPOINT_LIBRARY;
+  const sitePath = new URL(siteUrl).pathname.replace(/\/$/, '');
+  const folderUrl = `${sitePath}/${libraryName}`;
+  const res = await fetch(spApiUrl(siteUrl, `web/GetFolderByServerRelativeUrl('${encodeURIComponent(folderUrl)}')?$select=Exists`), {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json;odata=verbose' },
+  });
+  if (!res.ok) throw new Error(`bibliotheek "${libraryName}" niet gevonden op deze site (status ${res.status})`);
+  const data = await res.json();
+  if (!data.d.Exists) throw new Error(`bibliotheek "${libraryName}" bestaat niet op deze site`);
 }
 
 const STORAGE_KEY = 'nusdash_snapshots_v1';
@@ -492,10 +506,8 @@ async function loadWvStatusMap() {
   if (sharePointActive()) {
     try {
       spAssertHostedProperly();
-      const items = await spGetAllItems(state.sharePointConfig.siteUrl, WV_STATUS_LIST_NAME);
-      const map = {};
-      items.forEach(it => { map[it.Title] = { status: it.StatusVal || '', note: it.Note || '' }; });
-      return map;
+      const current = await spGetFileContent(state.sharePointConfig.siteUrl);
+      return current.data.wvStatus;
     } catch (e) {
       showErrorToast('Ophalen van gedeelde WV-status (SharePoint) is mislukt: ' + e.message);
       return {};
@@ -506,23 +518,23 @@ async function loadWvStatusMap() {
 }
 // orders: het ordernummer (of een array van ordernummers) dat net gewijzigd
 // is — alleen relevant wanneer SharePoint actief is, om gericht precies dat
-// item bij te werken i.p.v. de hele gedeelde lijst te herschrijven.
+// deel van het gedeelde bestand bij te werken i.p.v. het hele bestand met
+// mogelijk verouderde lokale data te overschrijven.
 async function saveWvStatusMap(map, orders) {
   if (sharePointActive()) {
-    const list = orders == null ? [] : (Array.isArray(orders) ? orders : [orders]);
-    for (const order of list) {
-      const entry = map[order];
-      try {
-        spAssertHostedProperly();
-        if (entry && entry.status) {
-          await spUpsertItem(state.sharePointConfig.siteUrl, WV_STATUS_LIST_NAME, order, { StatusVal: entry.status || '', Note: entry.note || '' });
-        } else {
-          await spDeleteItemIfExists(state.sharePointConfig.siteUrl, WV_STATUS_LIST_NAME, order);
-        }
-      } catch (e) {
-        showErrorToast('Opslaan van gedeelde WV-status (SharePoint) is mislukt: ' + e.message);
-        throw e;
-      }
+    try {
+      spAssertHostedProperly();
+      const list = orders == null ? [] : (Array.isArray(orders) ? orders : [orders]);
+      await spUpdateSharedFile(state.sharePointConfig.siteUrl, (data) => {
+        list.forEach(order => {
+          const entry = map[order];
+          if (entry && entry.status) data.wvStatus[order] = { status: entry.status, note: entry.note || '' };
+          else delete data.wvStatus[order];
+        });
+      });
+    } catch (e) {
+      showErrorToast('Opslaan van gedeelde WV-status (SharePoint) is mislukt: ' + e.message);
+      throw e;
     }
     return;
   }
@@ -540,10 +552,8 @@ async function loadOvBlockStatusMap() {
   if (sharePointActive()) {
     try {
       spAssertHostedProperly();
-      const items = await spGetAllItems(state.sharePointConfig.siteUrl, OV_BLOCK_LIST_NAME);
-      const map = {};
-      items.forEach(it => { map[it.Title] = { reason: it.Reason || '', note: it.Note || '', since: it.SinceISO || undefined }; });
-      return map;
+      const current = await spGetFileContent(state.sharePointConfig.siteUrl);
+      return current.data.ovBlockStatus;
     } catch (e) {
       showErrorToast('Ophalen van gedeelde blokkade-status (SharePoint) is mislukt: ' + e.message);
       return {};
@@ -555,20 +565,19 @@ async function loadOvBlockStatusMap() {
 // orders: zie saveWvStatusMap hierboven — zelfde patroon.
 async function saveOvBlockStatusMap(map, orders) {
   if (sharePointActive()) {
-    const list = orders == null ? [] : (Array.isArray(orders) ? orders : [orders]);
-    for (const order of list) {
-      const entry = map[order];
-      try {
-        spAssertHostedProperly();
-        if (entry && entry.reason) {
-          await spUpsertItem(state.sharePointConfig.siteUrl, OV_BLOCK_LIST_NAME, order, { Reason: entry.reason || '', Note: entry.note || '', SinceISO: entry.since || '' });
-        } else {
-          await spDeleteItemIfExists(state.sharePointConfig.siteUrl, OV_BLOCK_LIST_NAME, order);
-        }
-      } catch (e) {
-        showErrorToast('Opslaan van gedeelde blokkade-status (SharePoint) is mislukt: ' + e.message);
-        throw e;
-      }
+    try {
+      spAssertHostedProperly();
+      const list = orders == null ? [] : (Array.isArray(orders) ? orders : [orders]);
+      await spUpdateSharedFile(state.sharePointConfig.siteUrl, (data) => {
+        list.forEach(order => {
+          const entry = map[order];
+          if (entry && entry.reason) data.ovBlockStatus[order] = { reason: entry.reason, note: entry.note || '', since: entry.since || undefined };
+          else delete data.ovBlockStatus[order];
+        });
+      });
+    } catch (e) {
+      showErrorToast('Opslaan van gedeelde blokkade-status (SharePoint) is mislukt: ' + e.message);
+      throw e;
     }
     return;
   }
@@ -2418,6 +2427,7 @@ function wireEvents() {
       await reloadAllStateAndRender();
       document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
       document.getElementById('sharepoint-site-url').value = state.sharePointConfig.siteUrl;
+      document.getElementById('sharepoint-library-name').value = state.sharePointConfig.libraryName;
       document.getElementById('sharepoint-enabled-checkbox').checked = state.sharePointConfig.enabled;
       statusEl.textContent = 'Back-up hersteld.';
     } catch (e) {
@@ -2554,11 +2564,12 @@ function wireEvents() {
   document.getElementById('sharepoint-test-btn').addEventListener('click', async () => {
     const statusEl = document.getElementById('sharepoint-status');
     const siteUrl = document.getElementById('sharepoint-site-url').value.trim();
+    const libraryName = document.getElementById('sharepoint-library-name').value.trim();
     if (!siteUrl) { statusEl.textContent = 'Vul eerst een site-URL in.'; return; }
     statusEl.textContent = 'Bezig met testen…';
     try {
-      await spTestConnection(siteUrl);
-      statusEl.textContent = '✅ Verbinding gelukt — beide lijsten zijn gevonden.';
+      await spTestConnection(siteUrl, libraryName);
+      statusEl.textContent = `✅ Verbinding gelukt — bibliotheek "${libraryName || DEFAULT_SHAREPOINT_LIBRARY}" gevonden.`;
     } catch (e) {
       statusEl.textContent = '⚠️ Verbinding mislukt: ' + e.message;
     }
@@ -2567,10 +2578,11 @@ function wireEvents() {
   document.getElementById('sharepoint-save-btn').addEventListener('click', async () => {
     const statusEl = document.getElementById('sharepoint-status');
     const siteUrl = document.getElementById('sharepoint-site-url').value.trim();
+    const libraryName = document.getElementById('sharepoint-library-name').value.trim();
     const enabled = document.getElementById('sharepoint-enabled-checkbox').checked;
     if (enabled && !siteUrl) { statusEl.textContent = 'Vul een site-URL in om gedeelde status in te schakelen.'; return; }
     try {
-      const cfg = { siteUrl, enabled };
+      const cfg = { siteUrl, enabled, libraryName };
       await saveSharePointConfig(cfg);
       state.sharePointConfig = cfg;
       // Blokkade-reden en WV-status komen vanaf nu uit een andere bron
@@ -2843,6 +2855,7 @@ async function init() {
   else await reloadAllStateAndRender();
   document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
   document.getElementById('sharepoint-site-url').value = state.sharePointConfig.siteUrl;
+  document.getElementById('sharepoint-library-name').value = state.sharePointConfig.libraryName;
   document.getElementById('sharepoint-enabled-checkbox').checked = state.sharePointConfig.enabled;
   setupTabNav();
   setupSubtabNav();

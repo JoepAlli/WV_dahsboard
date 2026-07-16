@@ -307,10 +307,14 @@
 
     <section class="card" id="sharepoint-card">
       <h2>🔗 Gedeelde status via SharePoint</h2>
-      <p class="muted small">Optioneel: laat blokkade-reden (OV NUSsen) en WV-status (Te onderzoeken) delen met collega's via een SharePoint-lijst, in plaats van alleen lokaal op deze computer. Vereist twee lijsten op je SharePoint-site — <code>NUSBlokkadeStatus</code> (kolommen: Reason, Note, SinceISO) en <code>NUSWvStatus</code> (kolommen: StatusVal, Note) — en dat je het dashboard opent via de SharePoint-URL, niet als lokaal bestand. Weekgegevens (het plakken/verwerken) blijven altijd lokaal, ook met dit aan.</p>
+      <p class="muted small">Optioneel: laat blokkade-reden (OV NUSsen) en WV-status (Te onderzoeken) delen met collega's, in plaats van alleen lokaal op deze computer. Er hoeft niets aangemaakt te worden op de SharePoint-site — dit gebruikt gewoon de standaardbibliotheek "Gedeelde documenten" die elke site al heeft. Vul alleen de site-URL in en open het dashboard vanaf die site (niet als lokaal bestand). Weekgegevens (het plakken/verwerken) blijven altijd lokaal, ook met dit aan.</p>
       <div class="input-row">
         <label for="sharepoint-site-url" class="small">Site-URL</label>
         <input type="text" id="sharepoint-site-url" placeholder="https://jouwtenant.sharepoint.com/sites/JouwSite" style="flex:1;min-width:280px;">
+      </div>
+      <div class="input-row">
+        <label for="sharepoint-library-name" class="small">Bibliotheeknaam (optioneel)</label>
+        <input type="text" id="sharepoint-library-name" placeholder="Shared Documents" style="width:200px;">
       </div>
       <div class="input-row">
         <label for="sharepoint-enabled-checkbox" class="small">
