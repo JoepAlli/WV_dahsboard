@@ -200,6 +200,13 @@ main {
 }
 
 .muted { color: var(--text-secondary); font-weight: normal; }
+code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  background: var(--gridline);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
 .small { font-size: 0.85rem; }
 
 .card {

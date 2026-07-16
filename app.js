@@ -240,6 +240,160 @@ async function migrateLegacyKey(key) {
   } catch (e) { console.error('Migratie mislukt voor', key, e); }
 }
 
+/* ---------- Optioneel: gedeelde status via SharePoint ---------- */
+//
+// Blokkade-reden (OV NUSsen) en WV-status (Te onderzoeken) kunnen — als je
+// dit expliciet instelt in Instellingen — via een SharePoint-lijst gedeeld
+// worden i.p.v. alleen lokaal in IndexedDB te leven, zodat collega's die
+// hetzelfde dashboard vanaf dezelfde SharePoint-site openen elkaars
+// wijzigingen zien. Staat dit uit (standaard), dan verandert er niets aan
+// het bestaande, volledig lokale gedrag.
+//
+// Vereist dat de pagina zelf vanaf de SharePoint-site wordt geopend (niet als
+// lokaal bestand), zodat de browser de bestaande SharePoint-sessie/cookie kan
+// hergebruiken voor authenticatie — er wordt hier bewust geen apart
+// inlogscherm of app-registratie gebouwd.
+const SHAREPOINT_CONFIG_KEY = 'nusdash_sharepoint_config_v1';
+const OV_BLOCK_LIST_NAME = 'NUSBlokkadeStatus';
+const WV_STATUS_LIST_NAME = 'NUSWvStatus';
+
+async function loadSharePointConfig() {
+  try { return (await idbGet(SHAREPOINT_CONFIG_KEY)) || { siteUrl: '', enabled: false }; }
+  catch (e) { console.error(e); return { siteUrl: '', enabled: false }; }
+}
+async function saveSharePointConfig(cfg) {
+  try { await idbSet(SHAREPOINT_CONFIG_KEY, cfg); }
+  catch (e) { showErrorToast('Opslaan van de SharePoint-instelling is mislukt: ' + e.message); throw e; }
+}
+
+function sharePointActive() {
+  return !!(state.sharePointConfig && state.sharePointConfig.enabled && state.sharePointConfig.siteUrl);
+}
+// Geeft een duidelijke melding i.p.v. een cryptische netwerkfout ("Failed to
+// fetch") wanneer gedeelde status wél aanstaat maar de pagina nog steeds als
+// lokaal bestand is geopend — een fetch() naar een https-SharePoint-site
+// werkt dan sowieso niet vanaf een file://-oorsprong.
+function spAssertHostedProperly() {
+  if (location.protocol === 'file:') {
+    throw new Error('open het dashboard via de SharePoint-URL (niet als lokaal bestand) om gedeelde status te gebruiken');
+  }
+}
+
+function spApiUrl(siteUrl, path) {
+  return siteUrl.replace(/\/$/, '') + '/_api/' + path;
+}
+function spEscapeODataString(s) {
+  return String(s).replace(/'/g, "''");
+}
+
+// Vraagt een "form digest" op — SharePoint eist dit anti-CSRF-token bij elke
+// schrijfactie (aanmaken/bijwerken/verwijderen) via de REST API.
+async function spGetDigest(siteUrl) {
+  const res = await fetch(spApiUrl(siteUrl, 'contextinfo'), {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json;odata=verbose' },
+  });
+  if (!res.ok) throw new Error(`kon geen SharePoint-formulierdigest ophalen (status ${res.status})`);
+  const data = await res.json();
+  return data.d.GetContextWebInformation.FormDigestValue;
+}
+
+// De interne entiteitsnaam die SharePoint voor nieuwe items verwacht
+// (bijv. "SP.Data.NUSBlokkadeStatusListItem") volgt niet 1-op-1 uit de
+// lijstnaam — opvragen i.p.v. gokken voorkomt een veelvoorkomende faalbron.
+async function spGetListEntityType(siteUrl, listName) {
+  const res = await fetch(spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')?$select=ListItemEntityTypeFullName`), {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json;odata=verbose' },
+  });
+  if (!res.ok) throw new Error(`SharePoint-lijst "${listName}" niet gevonden (status ${res.status}) — bestaat de lijst en heb je er toegang toe?`);
+  const data = await res.json();
+  return data.d.ListItemEntityTypeFullName;
+}
+
+async function spGetItemByOrder(siteUrl, listName, order) {
+  const url = spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')/items?$filter=Title eq '${spEscapeODataString(order)}'&$top=1`);
+  const res = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json;odata=verbose' } });
+  if (!res.ok) throw new Error(`ophalen uit SharePoint-lijst "${listName}" mislukt (status ${res.status})`);
+  const data = await res.json();
+  return data.d.results[0] || null;
+}
+
+async function spGetAllItems(siteUrl, listName) {
+  let url = spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')/items?$top=5000`);
+  let results = [];
+  while (url) {
+    const res = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json;odata=verbose' } });
+    if (!res.ok) throw new Error(`ophalen van SharePoint-lijst "${listName}" mislukt (status ${res.status})`);
+    const data = await res.json();
+    results = results.concat(data.d.results);
+    url = data.d.__next || null;
+  }
+  return results;
+}
+
+// Zet één item (op ordernummer) — maakt 'm aan als 'ie nog niet bestaat,
+// werkt 'm anders bij. fields bevat alleen de kolommen naast Title.
+async function spUpsertItem(siteUrl, listName, order, fields) {
+  const digest = await spGetDigest(siteUrl);
+  const existing = await spGetItemByOrder(siteUrl, listName, order);
+  if (existing) {
+    const res = await fetch(spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')/items(${existing.Id})`), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json;odata=verbose',
+        'Content-Type': 'application/json;odata=verbose',
+        'X-RequestDigest': digest,
+        'X-HTTP-Method': 'MERGE',
+        'IF-MATCH': '*',
+      },
+      body: JSON.stringify(fields),
+    });
+    if (!res.ok) throw new Error(`bijwerken in SharePoint-lijst "${listName}" mislukt (status ${res.status})`);
+  } else {
+    const entityType = await spGetListEntityType(siteUrl, listName);
+    const res = await fetch(spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')/items`), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json;odata=verbose',
+        'Content-Type': 'application/json;odata=verbose',
+        'X-RequestDigest': digest,
+      },
+      body: JSON.stringify(Object.assign({ __metadata: { type: entityType }, Title: order }, fields)),
+    });
+    if (!res.ok) throw new Error(`aanmaken in SharePoint-lijst "${listName}" mislukt (status ${res.status})`);
+  }
+}
+
+async function spDeleteItemIfExists(siteUrl, listName, order) {
+  const existing = await spGetItemByOrder(siteUrl, listName, order);
+  if (!existing) return;
+  const digest = await spGetDigest(siteUrl);
+  const res = await fetch(spApiUrl(siteUrl, `web/lists/getbytitle('${encodeURIComponent(listName)}')/items(${existing.Id})`), {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json;odata=verbose',
+      'X-RequestDigest': digest,
+      'X-HTTP-Method': 'DELETE',
+      'IF-MATCH': '*',
+    },
+  });
+  if (!res.ok) throw new Error(`verwijderen uit SharePoint-lijst "${listName}" mislukt (status ${res.status})`);
+}
+
+// Test-knop in Instellingen: probeert beide lijsten op te vragen zonder iets
+// te wijzigen, zodat je meteen ziet of site-URL/lijstnamen/rechten kloppen
+// vóórdat je hier daadwerkelijk op gaat vertrouwen.
+async function spTestConnection(siteUrl) {
+  spAssertHostedProperly();
+  await spGetListEntityType(siteUrl, OV_BLOCK_LIST_NAME);
+  await spGetListEntityType(siteUrl, WV_STATUS_LIST_NAME);
+}
+
 const STORAGE_KEY = 'nusdash_snapshots_v1';
 const TYPE_WHITELIST_KEY = 'nusdash_type_whitelist_v1';
 
@@ -335,10 +489,43 @@ async function saveNameList(key, list) {
 // wekelijkse snapshots zelf.
 const WV_STATUS_KEY = 'nusdash_wv_status_v1';
 async function loadWvStatusMap() {
+  if (sharePointActive()) {
+    try {
+      spAssertHostedProperly();
+      const items = await spGetAllItems(state.sharePointConfig.siteUrl, WV_STATUS_LIST_NAME);
+      const map = {};
+      items.forEach(it => { map[it.Title] = { status: it.StatusVal || '', note: it.Note || '' }; });
+      return map;
+    } catch (e) {
+      showErrorToast('Ophalen van gedeelde WV-status (SharePoint) is mislukt: ' + e.message);
+      return {};
+    }
+  }
   try { return (await idbGet(WV_STATUS_KEY)) || {}; }
   catch (e) { console.error(e); return {}; }
 }
-async function saveWvStatusMap(map) {
+// orders: het ordernummer (of een array van ordernummers) dat net gewijzigd
+// is — alleen relevant wanneer SharePoint actief is, om gericht precies dat
+// item bij te werken i.p.v. de hele gedeelde lijst te herschrijven.
+async function saveWvStatusMap(map, orders) {
+  if (sharePointActive()) {
+    const list = orders == null ? [] : (Array.isArray(orders) ? orders : [orders]);
+    for (const order of list) {
+      const entry = map[order];
+      try {
+        spAssertHostedProperly();
+        if (entry && entry.status) {
+          await spUpsertItem(state.sharePointConfig.siteUrl, WV_STATUS_LIST_NAME, order, { StatusVal: entry.status || '', Note: entry.note || '' });
+        } else {
+          await spDeleteItemIfExists(state.sharePointConfig.siteUrl, WV_STATUS_LIST_NAME, order);
+        }
+      } catch (e) {
+        showErrorToast('Opslaan van gedeelde WV-status (SharePoint) is mislukt: ' + e.message);
+        throw e;
+      }
+    }
+    return;
+  }
   try { await idbSet(WV_STATUS_KEY, map); }
   catch (e) { showErrorToast('Opslaan van de WV-status is mislukt: ' + e.message); throw e; }
 }
@@ -350,10 +537,41 @@ async function saveWvStatusMap(map) {
 // en verdwijnt de "actie nodig"-markering voor die storing.
 const OV_BLOCK_STATUS_KEY = 'nusdash_ov_block_status_v1';
 async function loadOvBlockStatusMap() {
+  if (sharePointActive()) {
+    try {
+      spAssertHostedProperly();
+      const items = await spGetAllItems(state.sharePointConfig.siteUrl, OV_BLOCK_LIST_NAME);
+      const map = {};
+      items.forEach(it => { map[it.Title] = { reason: it.Reason || '', note: it.Note || '', since: it.SinceISO || undefined }; });
+      return map;
+    } catch (e) {
+      showErrorToast('Ophalen van gedeelde blokkade-status (SharePoint) is mislukt: ' + e.message);
+      return {};
+    }
+  }
   try { return (await idbGet(OV_BLOCK_STATUS_KEY)) || {}; }
   catch (e) { console.error(e); return {}; }
 }
-async function saveOvBlockStatusMap(map) {
+// orders: zie saveWvStatusMap hierboven — zelfde patroon.
+async function saveOvBlockStatusMap(map, orders) {
+  if (sharePointActive()) {
+    const list = orders == null ? [] : (Array.isArray(orders) ? orders : [orders]);
+    for (const order of list) {
+      const entry = map[order];
+      try {
+        spAssertHostedProperly();
+        if (entry && entry.reason) {
+          await spUpsertItem(state.sharePointConfig.siteUrl, OV_BLOCK_LIST_NAME, order, { Reason: entry.reason || '', Note: entry.note || '', SinceISO: entry.since || '' });
+        } else {
+          await spDeleteItemIfExists(state.sharePointConfig.siteUrl, OV_BLOCK_LIST_NAME, order);
+        }
+      } catch (e) {
+        showErrorToast('Opslaan van gedeelde blokkade-status (SharePoint) is mislukt: ' + e.message);
+        throw e;
+      }
+    }
+    return;
+  }
   try { await idbSet(OV_BLOCK_STATUS_KEY, map); }
   catch (e) { showErrorToast('Opslaan van de blokkade-reden is mislukt: ' + e.message); throw e; }
 }
@@ -382,6 +600,7 @@ async function exportBackup() {
     klaarzetterNamen: await loadNameList(PLAN_NAMES_KEY, DEFAULT_PLAN_NAMEN),
     ovBlockStatus: await loadOvBlockStatusMap(),
     bijnaVerlopenThreshold: await loadBijnaVerlopenThreshold(),
+    sharePointConfig: await loadSharePointConfig(),
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -457,11 +676,16 @@ async function importBackup(file) {
   if (Array.isArray(backup.teOnderzoekenSnapshots)) await saveToSnapshots(backup.teOnderzoekenSnapshots);
   if (Array.isArray(backup.meetdienstNamen)) await saveNameList(MEETDIENST_LIST_KEY, backup.meetdienstNamen);
   if (Array.isArray(backup.handoffNamen)) await saveNameList(HANDOFF_LIST_KEY, backup.handoffNamen);
-  if (backup.wvStatus && typeof backup.wvStatus === 'object') await saveWvStatusMap(backup.wvStatus);
+  // WV-status en blokkade-reden leven ergens anders (in SharePoint, gedeeld
+  // met collega's) zodra dat actief staat — een lokaal back-upbestand daar
+  // overheen zetten zou voor iedereen tegelijk verrassend zijn, dus dat
+  // slaan we dan bewust over. Herstel daarvan gebeurt via SharePoint zelf.
+  if (backup.wvStatus && typeof backup.wvStatus === 'object' && !sharePointActive()) await saveWvStatusMap(backup.wvStatus);
   if (Array.isArray(backup.klaarVoorInplannenSnapshots)) await savePlanSnapshots(backup.klaarVoorInplannenSnapshots);
   if (Array.isArray(backup.klaarzetterNamen)) await saveNameList(PLAN_NAMES_KEY, backup.klaarzetterNamen);
-  if (backup.ovBlockStatus && typeof backup.ovBlockStatus === 'object') await saveOvBlockStatusMap(backup.ovBlockStatus);
+  if (backup.ovBlockStatus && typeof backup.ovBlockStatus === 'object' && !sharePointActive()) await saveOvBlockStatusMap(backup.ovBlockStatus);
   if (Number.isFinite(backup.bijnaVerlopenThreshold) && backup.bijnaVerlopenThreshold > 0) await saveBijnaVerlopenThreshold(backup.bijnaVerlopenThreshold);
+  if (backup.sharePointConfig && typeof backup.sharePointConfig === 'object') await saveSharePointConfig(backup.sharePointConfig);
 }
 
 // Classificatie voor de "te onderzoeken storingen"-bak:
@@ -675,6 +899,7 @@ const state = {
   // de lijst dan opnieuw wordt opgebouwd.
   attentionOrders: null,
   bijnaVerlopenThreshold: DEFAULT_BIJNA_VERLOPEN_THRESHOLD,
+  sharePointConfig: { siteUrl: '', enabled: false },
 };
 
 /* ---------- Tooltip ---------- */
@@ -944,8 +1169,8 @@ function renderStatDetail(current, mutations) {
     ${body}`;
 
   if (showBlock) {
-    const refresh = async () => {
-      await saveOvBlockStatusMap(state.ovBlockStatus);
+    const refresh = async (order) => {
+      await saveOvBlockStatusMap(state.ovBlockStatus, order);
       renderDashboardFromState();
       if (state.toSnapshots.length > 0) renderToDashboardFromState();
       if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
@@ -953,13 +1178,13 @@ function renderStatDetail(current, mutations) {
     container.querySelectorAll('.ov-block-select').forEach(sel => {
       sel.addEventListener('change', () => {
         setOvBlockReason(sel.dataset.order, sel.value);
-        refresh();
+        refresh(sel.dataset.order);
       });
     });
     container.querySelectorAll('.ov-block-note').forEach(inp => {
       inp.addEventListener('change', () => {
         setOvBlockNote(inp.dataset.order, inp.value);
-        refresh();
+        refresh(inp.dataset.order);
       });
     });
   }
@@ -1059,8 +1284,8 @@ function renderAttentionList(current, allVisible) {
     }).join('')}</tbody></table>`;
 
   if (!isStaticExport) {
-    const refresh = () => {
-      saveOvBlockStatusMap(state.ovBlockStatus).then(() => {
+    const refresh = (order) => {
+      saveOvBlockStatusMap(state.ovBlockStatus, order).then(() => {
         renderDashboardFromState();
         if (state.toSnapshots.length > 0) renderToDashboardFromState();
         if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
@@ -1069,13 +1294,13 @@ function renderAttentionList(current, allVisible) {
     container.querySelectorAll('.ov-block-select').forEach(sel => {
       sel.addEventListener('change', () => {
         setOvBlockReason(sel.dataset.order, sel.value);
-        refresh();
+        refresh(sel.dataset.order);
       });
     });
     container.querySelectorAll('.ov-block-note').forEach(inp => {
       inp.addEventListener('change', () => {
         setOvBlockNote(inp.dataset.order, inp.value);
-        refresh();
+        refresh(inp.dataset.order);
       });
     });
   }
@@ -1414,7 +1639,7 @@ function renderTableAll(current) {
   container.querySelectorAll('.ov-block-select').forEach(sel => {
     sel.addEventListener('change', async () => {
       setOvBlockReason(sel.dataset.order, sel.value);
-      await saveOvBlockStatusMap(state.ovBlockStatus);
+      await saveOvBlockStatusMap(state.ovBlockStatus, sel.dataset.order);
       renderDashboardFromState();
       if (state.toSnapshots.length > 0) renderToDashboardFromState();
       if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
@@ -1423,7 +1648,7 @@ function renderTableAll(current) {
   container.querySelectorAll('.ov-block-note').forEach(inp => {
     inp.addEventListener('change', async () => {
       setOvBlockNote(inp.dataset.order, inp.value);
-      await saveOvBlockStatusMap(state.ovBlockStatus);
+      await saveOvBlockStatusMap(state.ovBlockStatus, inp.dataset.order);
       renderDashboardFromState();
       if (state.toSnapshots.length > 0) renderToDashboardFromState();
       if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
@@ -1738,7 +1963,7 @@ function renderToTableAll(classified) {
       const order = sel.dataset.order;
       const current = state.wvStatus[order] || {};
       state.wvStatus[order] = { status: sel.value, note: current.note || '' };
-      await saveWvStatusMap(state.wvStatus);
+      await saveWvStatusMap(state.wvStatus, order);
       renderToDashboardFromState();
     });
   });
@@ -1747,7 +1972,7 @@ function renderToTableAll(classified) {
       const order = inp.dataset.order;
       const current = state.wvStatus[order] || {};
       state.wvStatus[order] = { status: current.status, note: inp.value };
-      await saveWvStatusMap(state.wvStatus);
+      await saveWvStatusMap(state.wvStatus, order);
       renderToDashboardFromState();
     });
   });
@@ -2055,14 +2280,15 @@ function cleanupOldStatusData() {
     ...latestOf(state.planSnapshots).map(s => s.order),
   ]);
 
-  let removed = 0;
+  const wvRemoved = [];
   Object.keys(state.wvStatus).forEach(order => {
-    if (!liveOrders.has(order)) { delete state.wvStatus[order]; removed++; }
+    if (!liveOrders.has(order)) { delete state.wvStatus[order]; wvRemoved.push(order); }
   });
+  const blockRemoved = [];
   Object.keys(state.ovBlockStatus).forEach(order => {
-    if (!liveOrders.has(order)) { delete state.ovBlockStatus[order]; removed++; }
+    if (!liveOrders.has(order)) { delete state.ovBlockStatus[order]; blockRemoved.push(order); }
   });
-  return removed;
+  return { wvRemoved, blockRemoved };
 }
 
 function showParseWarning(errors, okCount) {
@@ -2077,6 +2303,10 @@ function showParseWarning(errors, okCount) {
 
 async function reloadAllStateAndRender() {
   state.attentionOrders = null;
+  // Vóór wvStatus/ovBlockStatus geladen worden: die functies kijken naar
+  // state.sharePointConfig om te bepalen of ze uit SharePoint of IndexedDB
+  // moeten lezen.
+  state.sharePointConfig = await loadSharePointConfig();
   state.snapshots = await loadSnapshots();
   state.typeWhitelist = await loadTypeWhitelist();
   state.toSnapshots = await loadToSnapshots();
@@ -2140,10 +2370,11 @@ function wireEvents() {
   document.getElementById('cleanup-btn').addEventListener('click', async () => {
     const statusEl = document.getElementById('cleanup-status');
     if (!confirm('WV-status en blokkade-redenen opschonen voor orders die niet meer in de actuele lijsten voorkomen? Weekgegevens blijven bewaard.')) return;
-    const removed = cleanupOldStatusData();
+    const { wvRemoved, blockRemoved } = cleanupOldStatusData();
+    const removed = wvRemoved.length + blockRemoved.length;
     if (removed === 0) { statusEl.textContent = 'Niets om op te schonen.'; return; }
-    await saveWvStatusMap(state.wvStatus);
-    await saveOvBlockStatusMap(state.ovBlockStatus);
+    await saveWvStatusMap(state.wvStatus, wvRemoved);
+    await saveOvBlockStatusMap(state.ovBlockStatus, blockRemoved);
     statusEl.textContent = `${removed} verouderde aantekening${removed === 1 ? '' : 'en'} verwijderd.`;
     renderDashboardFromState();
     if (state.toSnapshots.length > 0) renderToDashboardFromState();
@@ -2186,6 +2417,8 @@ function wireEvents() {
       await importBackup(file);
       await reloadAllStateAndRender();
       document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
+      document.getElementById('sharepoint-site-url').value = state.sharePointConfig.siteUrl;
+      document.getElementById('sharepoint-enabled-checkbox').checked = state.sharePointConfig.enabled;
       statusEl.textContent = 'Back-up hersteld.';
     } catch (e) {
       statusEl.textContent = 'Importeren mislukt: ' + e.message;
@@ -2274,8 +2507,9 @@ function wireEvents() {
   document.getElementById('ov-bulk-apply-btn').addEventListener('click', async () => {
     if (state.ovBulkSelected.size === 0) return;
     const reason = document.getElementById('ov-bulk-reason').value;
-    state.ovBulkSelected.forEach(order => setOvBlockReason(order, reason));
-    await saveOvBlockStatusMap(state.ovBlockStatus);
+    const changedOrders = Array.from(state.ovBulkSelected);
+    changedOrders.forEach(order => setOvBlockReason(order, reason));
+    await saveOvBlockStatusMap(state.ovBlockStatus, changedOrders);
     state.ovBulkSelected.clear();
     renderDashboardFromState();
     if (state.toSnapshots.length > 0) renderToDashboardFromState();
@@ -2315,6 +2549,42 @@ function wireEvents() {
     if (state.snapshots.length > 0) renderDashboardFromState();
     if (state.toSnapshots.length > 0) renderToDashboardFromState();
     if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
+  });
+
+  document.getElementById('sharepoint-test-btn').addEventListener('click', async () => {
+    const statusEl = document.getElementById('sharepoint-status');
+    const siteUrl = document.getElementById('sharepoint-site-url').value.trim();
+    if (!siteUrl) { statusEl.textContent = 'Vul eerst een site-URL in.'; return; }
+    statusEl.textContent = 'Bezig met testen…';
+    try {
+      await spTestConnection(siteUrl);
+      statusEl.textContent = '✅ Verbinding gelukt — beide lijsten zijn gevonden.';
+    } catch (e) {
+      statusEl.textContent = '⚠️ Verbinding mislukt: ' + e.message;
+    }
+  });
+
+  document.getElementById('sharepoint-save-btn').addEventListener('click', async () => {
+    const statusEl = document.getElementById('sharepoint-status');
+    const siteUrl = document.getElementById('sharepoint-site-url').value.trim();
+    const enabled = document.getElementById('sharepoint-enabled-checkbox').checked;
+    if (enabled && !siteUrl) { statusEl.textContent = 'Vul een site-URL in om gedeelde status in te schakelen.'; return; }
+    try {
+      const cfg = { siteUrl, enabled };
+      await saveSharePointConfig(cfg);
+      state.sharePointConfig = cfg;
+      // Blokkade-reden en WV-status komen vanaf nu uit een andere bron
+      // (SharePoint of weer terug naar lokaal) — opnieuw inladen zodat het
+      // scherm meteen klopt.
+      state.wvStatus = await loadWvStatusMap();
+      state.ovBlockStatus = await loadOvBlockStatusMap();
+      statusEl.textContent = 'Opgeslagen.';
+      if (state.snapshots.length > 0) renderDashboardFromState();
+      if (state.toSnapshots.length > 0) renderToDashboardFromState();
+      if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
+    } catch (e) {
+      statusEl.textContent = 'Opslaan mislukt: ' + e.message;
+    }
   });
 
   document.getElementById('to-process-btn').addEventListener('click', async () => {
@@ -2572,6 +2842,8 @@ async function init() {
   if (isStaticExport) applyStaticExportData();
   else await reloadAllStateAndRender();
   document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
+  document.getElementById('sharepoint-site-url').value = state.sharePointConfig.siteUrl;
+  document.getElementById('sharepoint-enabled-checkbox').checked = state.sharePointConfig.enabled;
   setupTabNav();
   setupSubtabNav();
 }
