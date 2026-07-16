@@ -999,6 +999,11 @@ function renderAttentionList(current, allVisible) {
     .filter(it => it.s);
   items.sort((a, b) => a.cat.prio - b.cat.prio || a.s.daysLeft - b.s.daysLeft);
 
+  // Voor het "Kopieer order + categorie"-knopje — precies de rijen die nu op
+  // het scherm staan, tab-gescheiden zodat het als 2 kolommen in Excel/Sheets
+  // plakt, zonder de rest van de tabel (adres, dagen, type, …) mee te kopiëren.
+  container.dataset.copyText = items.map(({ s, cat }) => `${s.order}\t${cat.label}`).join('\n');
+
   if (items.length === 0) {
     container.innerHTML = '<p class="all-clear"><span class="all-clear-icon" aria-hidden="true">🎉</span>Niets dat om actie vraagt deze week — goed bezig!</p>';
     return;
@@ -2171,6 +2176,20 @@ function wireEvents() {
     const original = btn.textContent;
     try {
       await navigator.clipboard.writeText(buildWeekSummaryText());
+      btn.textContent = '✅ Gekopieerd!';
+    } catch (e) {
+      btn.textContent = '⚠️ Kopiëren mislukt';
+    }
+    setTimeout(() => { btn.textContent = original; }, 2000);
+  });
+
+  document.getElementById('copy-attention-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('copy-attention-btn');
+    const original = btn.textContent;
+    const text = document.getElementById('attention-list').dataset.copyText || '';
+    if (!text) { btn.textContent = 'Niets om te kopiëren'; setTimeout(() => { btn.textContent = original; }, 2000); return; }
+    try {
+      await navigator.clipboard.writeText(text);
       btn.textContent = '✅ Gekopieerd!';
     } catch (e) {
       btn.textContent = '⚠️ Kopiëren mislukt';
