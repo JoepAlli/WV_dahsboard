@@ -691,6 +691,19 @@ function moveTooltip(evt) {
 }
 function hideTooltip() { tooltipEl.classList.add('hidden'); }
 
+// Voor tegels zonder eigen uitklaplijst (de storingen erachter staan al
+// zichtbaar elders op de pagina): springt ernaartoe en licht 'm even op,
+// zodat "elke tegel is klikbaar" geldt zonder dezelfde lijst dubbel te tonen.
+function scrollToAndHighlight(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.remove('flash-highlight');
+  void el.offsetWidth; // forceer reflow zodat de animatie herstart bij snel opnieuw klikken
+  el.classList.add('flash-highlight');
+  setTimeout(() => el.classList.remove('flash-highlight'), 1700);
+}
+
 /* ---------- Rendering: stat tiles ---------- */
 
 // Een storing is "onbeheerd verlopen" als het target al gemist is én er nog
@@ -791,27 +804,29 @@ function renderStatTiles(current, mutations) {
   const inplannenCount = current.filter(filters.inplannen.test).length;
   const geblokkeerdCount = current.filter(filters.geblokkeerd.test).length;
   const tiles = [
-    { key: 'totaal', icon: '📋', label: 'Totaal open', value: total },
+    { key: 'totaal', icon: '📋', label: 'Totaal open', value: total, scrollTarget: 'ov-full-table-card' },
     { key: 'nieuw', icon: '🆕', label: 'Nieuw binnengekomen', value: mutations.hasPrevious ? mutations.nieuw.length : '—',
-      note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
+      note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week', scrollTarget: 'mutations-in' },
     { key: 'afgesloten', icon: '✅', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
-      note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week' },
+      note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week', scrollTarget: 'mutations-out' },
     { key: 'bijnaVerlopen', icon: '⏳', label: 'Bijna verlopen', value: bijnaVerlopenCount, deltaClass: bijnaVerlopenCount > 0 ? 'bad' : 'good',
-      note: bijnaVerlopenCount > 0 ? `nog 1-${state.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD} dagen — zie Aandacht deze week` : 'geen' },
+      note: bijnaVerlopenCount > 0 ? `nog 1-${state.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD} dagen — zie Aandacht deze week` : 'geen', scrollTarget: 'attention-card' },
     { key: 'known', icon: '📅', label: 'Verlopen — uitvoering gepland', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
       note: overdueKnown > 0 ? 'gepland, nog te gebeuren' : 'geen', filterKey: 'known' },
     { key: 'verlopenDatum', icon: '⏰', label: 'Uitvoeringsdatum verstreken', value: expiredDateCount, deltaClass: expiredDateCount > 0 ? 'bad' : 'good',
-      note: expiredDateCount > 0 ? 'geplande datum is zelf ook al voorbij — zie Aandacht deze week' : 'geen', alert: expiredDateCount > 0 },
+      note: expiredDateCount > 0 ? 'geplande datum is zelf ook al voorbij — zie Aandacht deze week' : 'geen', alert: expiredDateCount > 0, scrollTarget: 'attention-card' },
     { key: 'unknown', icon: '⛔', label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
-      note: overdueUnknown > 0 ? 'nog niets ingepland — zie Aandacht deze week' : 'geen', alert: overdueUnknown > 0 },
+      note: overdueUnknown > 0 ? 'nog niets ingepland — zie Aandacht deze week' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
     { key: 'onderzoek', icon: '🔍', label: 'In onderzoek', value: onderzoekCount, note: 'te controleren door meetdienst', filterKey: 'onderzoek' },
     { key: 'inplannen', icon: '🗓️', label: 'Klaar voor inplannen', value: inplannenCount, note: 'kan ingepland worden', filterKey: 'inplannen' },
     { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Rezap / Naar Aanleg', filterKey: 'geblokkeerd' },
   ];
   el.innerHTML = tiles.map(t => {
-    const clickable = t.filterKey ? ' stat-tile-clickable' : '';
+    const clickable = (t.filterKey || t.scrollTarget) ? ' stat-tile-clickable' : '';
     const selected = t.filterKey && state.statDetailFilter === t.filterKey ? ' stat-tile-selected' : '';
-    const clickAttrs = t.filterKey ? ` data-stat-filter="${t.filterKey}" tabindex="0" role="button" aria-expanded="${state.statDetailFilter === t.filterKey}"` : '';
+    let clickAttrs = '';
+    if (t.filterKey) clickAttrs = ` data-stat-filter="${t.filterKey}" tabindex="0" role="button" aria-expanded="${state.statDetailFilter === t.filterKey}"`;
+    else if (t.scrollTarget) clickAttrs = ` data-scroll-target="${t.scrollTarget}" tabindex="0" role="button"`;
     return `
     <div class="stat-tile${t.alert ? ' stat-tile-alert' : ''}${clickable}${selected}" data-stat-key="${t.key}"${clickAttrs}>
       <div class="stat-tile-icon" aria-hidden="true">${t.icon}</div>
@@ -819,6 +834,7 @@ function renderStatTiles(current, mutations) {
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta ${t.deltaClass || ''}">${esc(t.note)}</div>` : ''}
       ${t.filterKey ? '<div class="stat-tile-hint">Klik voor de lijst</div>' : ''}
+      ${t.scrollTarget ? '<div class="stat-tile-hint">Klik om te bekijken ↓</div>' : ''}
     </div>`;
   }).join('');
 
@@ -840,6 +856,12 @@ function renderStatTiles(current, mutations) {
     tile.addEventListener('click', () => activate(tile.dataset.statFilter));
     tile.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(tile.dataset.statFilter); }
+    });
+  });
+  el.querySelectorAll('[data-scroll-target]').forEach(tile => {
+    tile.addEventListener('click', () => scrollToAndHighlight(tile.dataset.scrollTarget));
+    tile.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scrollToAndHighlight(tile.dataset.scrollTarget); }
     });
   });
 
@@ -1587,12 +1609,19 @@ function renderToStatTiles(classified) {
     { icon: '⏸️', label: 'Wachtend op iets', value: wachtendCount, note: onbepaaldCount > 0 ? `${onbepaaldCount} nog niet bepaald` : undefined },
   ];
   el.innerHTML = tiles.map(t => `
-    <div class="stat-tile">
+    <div class="stat-tile stat-tile-clickable" data-scroll-target="to-full-table-card" tabindex="0" role="button">
       <div class="stat-tile-icon" aria-hidden="true">${t.icon}</div>
       <div class="label">${esc(t.label)}</div>
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta muted">${esc(t.note)}</div>` : ''}
+      <div class="stat-tile-hint">Klik om te bekijken ↓</div>
     </div>`).join('');
+  el.querySelectorAll('[data-scroll-target]').forEach(tile => {
+    tile.addEventListener('click', () => scrollToAndHighlight(tile.dataset.scrollTarget));
+    tile.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scrollToAndHighlight(tile.dataset.scrollTarget); }
+    });
+  });
 }
 
 function renderToIgnored(classified) {
@@ -1808,12 +1837,19 @@ function renderPlanStatTiles(classified) {
     { icon: '🗓️', label: 'Klaar voor inplannen', value: relevant.length, note: 'kan worden ingepland' },
   ];
   el.innerHTML = tiles.map(t => `
-    <div class="stat-tile">
+    <div class="stat-tile stat-tile-clickable" data-scroll-target="plan-full-table-card" tabindex="0" role="button">
       <div class="stat-tile-icon" aria-hidden="true">${t.icon}</div>
       <div class="label">${esc(t.label)}</div>
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta muted">${esc(t.note)}</div>` : ''}
+      <div class="stat-tile-hint">Klik om te bekijken ↓</div>
     </div>`).join('');
+  el.querySelectorAll('[data-scroll-target]').forEach(tile => {
+    tile.addEventListener('click', () => scrollToAndHighlight(tile.dataset.scrollTarget));
+    tile.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scrollToAndHighlight(tile.dataset.scrollTarget); }
+    });
+  });
 }
 
 function renderPlanIgnored(classified) {

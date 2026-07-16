@@ -145,18 +145,18 @@
         <section class="card">
           <h2>🔄 Mutaties deze week</h2>
           <div class="mutations-grid">
-            <div>
+            <div id="mutations-in">
               <h3>Nieuw binnengekomen <span id="count-in" class="badge"></span></h3>
               <div id="table-in"></div>
             </div>
-            <div>
+            <div id="mutations-out">
               <h3>Afgesloten / uitgegaan <span id="count-out" class="badge"></span></h3>
               <div id="table-out"></div>
             </div>
           </div>
         </section>
 
-        <section class="card">
+        <section class="card" id="ov-full-table-card">
           <div class="card-header">
             <h2>📋 Volledige lijst — open storingen</h2>
             <input type="search" id="table-search" class="table-search" placeholder="Zoek op order of adres…">
@@ -204,7 +204,7 @@
           <div id="to-ignored"></div>
         </details>
 
-        <section class="card">
+        <section class="card" id="to-full-table-card">
           <div class="card-header">
             <h2>📋 Volledige lijst — relevante te onderzoeken storingen</h2>
             <input type="search" id="to-table-search" class="table-search" placeholder="Zoek op order of adres…">
@@ -243,7 +243,7 @@
           <div id="plan-ignored"></div>
         </details>
 
-        <section class="card">
+        <section class="card" id="plan-full-table-card">
           <div class="card-header">
             <h2>📋 Volledige lijst — klaar voor inplannen</h2>
             <input type="search" id="plan-table-search" class="table-search" placeholder="Zoek op order of adres…">

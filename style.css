@@ -391,6 +391,21 @@ button {
 .stat-tile-selected::before { opacity: 1; height: 4px; }
 .stat-tile-alert.stat-tile-selected { border-color: var(--status-critical); }
 
+/* Tegels die geen eigen uitklaplijst hebben (omdat de bijbehorende storingen
+   al ergens anders op de pagina getoond worden — "Aandacht deze week",
+   "Mutaties", de volledige tabel) springen bij een klik naar die plek en
+   lichten 'm even op, zodat je 'm meteen terugvindt. */
+@keyframes flash-highlight-pulse {
+  0%, 100% { outline-color: transparent; }
+  20%, 60% { outline-color: color-mix(in srgb, var(--series-1) 65%, transparent); }
+}
+.flash-highlight {
+  outline: 3px solid transparent;
+  outline-offset: 3px;
+  border-radius: var(--radius-md);
+  animation: flash-highlight-pulse 1.6s ease;
+}
+
 .badge {
   display: inline-block;
   font-size: 0.75rem;
