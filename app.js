@@ -260,7 +260,7 @@ async function loadSnapshots() {
 async function saveSnapshots(snaps) {
   snaps.sort((a, b) => a.week.localeCompare(b.week));
   try { await idbSet(STORAGE_KEY, snaps); }
-  catch (e) { throw new Error('Opslaan is mislukt: ' + e.message); }
+  catch (e) { showErrorToast('Opslaan is mislukt: ' + e.message); throw new Error('Opslaan is mislukt: ' + e.message); }
 }
 async function clearSnapshots() { await idbDelete(STORAGE_KEY); }
 
@@ -271,7 +271,7 @@ async function loadTypeWhitelist() {
 }
 async function saveTypeWhitelist(list) {
   try { await idbSet(TYPE_WHITELIST_KEY, list); }
-  catch (e) { console.error(e); }
+  catch (e) { showErrorToast('Opslaan van het type-filter is mislukt: ' + e.message); throw e; }
 }
 
 const BIJNA_VERLOPEN_THRESHOLD_KEY = 'nusdash_bijna_verlopen_threshold_v1';
@@ -282,7 +282,7 @@ async function loadBijnaVerlopenThreshold() {
 }
 async function saveBijnaVerlopenThreshold(n) {
   try { await idbSet(BIJNA_VERLOPEN_THRESHOLD_KEY, n); }
-  catch (e) { console.error(e); }
+  catch (e) { showErrorToast('Opslaan van de drempel is mislukt: ' + e.message); throw e; }
 }
 
 const TO_STORAGE_KEY = 'nusdash_snapshots_teonderzoeken_v1';
@@ -299,7 +299,7 @@ async function loadToSnapshots() {
 async function saveToSnapshots(snaps) {
   snaps.sort((a, b) => a.week.localeCompare(b.week));
   try { await idbSet(TO_STORAGE_KEY, snaps); }
-  catch (e) { throw new Error('Opslaan is mislukt: ' + e.message); }
+  catch (e) { showErrorToast('Opslaan is mislukt: ' + e.message); throw new Error('Opslaan is mislukt: ' + e.message); }
 }
 async function clearToSnapshots() { await idbDelete(TO_STORAGE_KEY); }
 
@@ -315,7 +315,7 @@ async function loadPlanSnapshots() {
 async function savePlanSnapshots(snaps) {
   snaps.sort((a, b) => a.week.localeCompare(b.week));
   try { await idbSet(PLAN_STORAGE_KEY, snaps); }
-  catch (e) { throw new Error('Opslaan is mislukt: ' + e.message); }
+  catch (e) { showErrorToast('Opslaan is mislukt: ' + e.message); throw new Error('Opslaan is mislukt: ' + e.message); }
 }
 async function clearPlanSnapshots() { await idbDelete(PLAN_STORAGE_KEY); }
 
@@ -326,7 +326,7 @@ async function loadNameList(key, fallback) {
 }
 async function saveNameList(key, list) {
   try { await idbSet(key, list); }
-  catch (e) { console.error(e); }
+  catch (e) { showErrorToast('Opslaan van de naamlijst is mislukt: ' + e.message); throw e; }
 }
 
 // Handmatige WV-status ("Moet opgepakt worden" / "Wachtend op iets") per
@@ -340,7 +340,7 @@ async function loadWvStatusMap() {
 }
 async function saveWvStatusMap(map) {
   try { await idbSet(WV_STATUS_KEY, map); }
-  catch (e) { console.error(e); }
+  catch (e) { showErrorToast('Opslaan van de WV-status is mislukt: ' + e.message); throw e; }
 }
 
 // Handmatige blokkade-reden voor OV NUSsen-storingen die open moeten blijven
@@ -355,7 +355,7 @@ async function loadOvBlockStatusMap() {
 }
 async function saveOvBlockStatusMap(map) {
   try { await idbSet(OV_BLOCK_STATUS_KEY, map); }
-  catch (e) { console.error(e); }
+  catch (e) { showErrorToast('Opslaan van de blokkade-reden is mislukt: ' + e.message); throw e; }
 }
 
 async function getStorageEstimate() {
@@ -690,6 +690,29 @@ function moveTooltip(evt) {
   tooltipEl.style.top = (evt.clientY + 14) + 'px';
 }
 function hideTooltip() { tooltipEl.classList.add('hidden'); }
+
+/* ---------- Foutmeldingen (toasts) ---------- */
+
+// Zichtbare melding voor mislukte opslagacties — zonder dit zou een fout bij
+// het wegschrijven naar IndexedDB (schijf/opslaglimiet vol, IndexedDB
+// geblokkeerd in bepaalde privénavigatie-modi, ...) alleen in de
+// browserconsole belanden terwijl de UI gewoon doorgaat alsof het gelukt is.
+function showErrorToast(message) {
+  const container = document.getElementById('toast-container');
+  if (!container) { console.error(message); return; }
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.innerHTML = `<span class="toast-icon" aria-hidden="true">⚠️</span><span>${esc(message)}</span>`;
+  toast.addEventListener('click', () => dismissToast(toast));
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('toast-visible'));
+  setTimeout(() => dismissToast(toast), 8000);
+}
+function dismissToast(toast) {
+  if (!toast.isConnected) return;
+  toast.classList.remove('toast-visible');
+  setTimeout(() => toast.remove(), 200);
+}
 
 // Voor tegels zonder eigen uitklaplijst (de storingen erachter staan al
 // zichtbaar elders op de pagina): springt ernaartoe en licht 'm even op,
@@ -1286,21 +1309,38 @@ function renderMutationTables(mutations) {
 
 /* ---------- Rendering: full table ---------- */
 
-const COLUMNS = [
-  { key: 'regioGroup', label: 'Regio' },
-  { key: 'gebiedscode', label: 'Gebied' },
-  { key: 'city', label: 'Plaats' },
-  { key: 'street', label: 'Adres' },
-  { key: 'order', label: 'Order' },
-  { key: 'asset', label: 'Asset' },
-  { key: 'wvNaam', label: "WV'er" },
-  { key: 'daysLeft', label: 'Dagen', num: true },
-  { key: 'firstSeenWeek', label: 'Open sinds' },
-  { key: 'executionDate', label: 'Uitvoering' },
-  { key: 'flags', label: 'Aanvragen' },
-  { key: 'type', label: 'Type' },
-  { key: 'blockReasonLabel', label: 'Blokkade' },
-];
+// Gedeeld door de drie "volledige lijst"-tabellen (OV NUSsen, Te onderzoeken,
+// Klaar voor inplannen): zelfde kop-opbouw, zelfde sorteerlogica, zelfde
+// rij-opbouw uit een kolommen-config. Alleen de kolommen zelf (en eventuele
+// extra's als de checkbox-kolom bij OV) verschillen per bak — die blijven per
+// bak gedefinieerd, zodat bak-specifieke logica (blokkade-select, WV-status,
+// cross-bucket badges) lokaal leesbaar blijft in plaats van weggestopt achter
+// generieke callbacks.
+function sortByState(rows, sortState) {
+  const { key, dir } = sortState;
+  return rows.slice().sort((a, b) => {
+    let va = a[key], vb = b[key];
+    if (key === 'flags') { va = (a.flags || []).length; vb = (b.flags || []).length; }
+    if (va == null) va = '';
+    if (vb == null) vb = '';
+    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+    return String(va).localeCompare(String(vb)) * dir;
+  });
+}
+function renderFullTable(container, rows, columns, sortState, opts) {
+  opts = opts || {};
+  const head = (opts.leadHead || '') + columns.map(c => {
+    const active = sortState.key === c.key ? (sortState.dir === 1 ? ' ↑' : ' ↓') : '';
+    return `<th data-key="${c.key}" class="${c.num ? 'num' : ''}">${esc(c.label)}${active}</th>`;
+  }).join('');
+  const body = rows.map(row => {
+    const lead = opts.leadCell ? opts.leadCell(row) : '';
+    const cells = columns.map(c => c.cell(row)).join('');
+    const cls = opts.rowClass ? opts.rowClass(row) : '';
+    return `<tr${cls ? ` class="${cls}"` : ''}>${lead}${cells}</tr>`;
+  }).join('');
+  container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
 
 // Zoekt per ordernummer de vroegste opgeslagen week waarin die storing al
 // voorkwam, zodat je in één oogopslag ziet hoe lang iets al meeloopt — los
@@ -1315,16 +1355,39 @@ function firstSeenWeekMapFor(snapshots) {
 }
 function firstSeenWeekMap() { return firstSeenWeekMapFor(state.snapshots); }
 
-function sortRows(rows) {
-  const { key, dir } = state.sortState;
-  return rows.slice().sort((a, b) => {
-    let va = a[key], vb = b[key];
-    if (key === 'flags') { va = a.flags.length; vb = b.flags.length; }
-    if (va == null) va = '';
-    if (vb == null) vb = '';
-    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
-    return String(va).localeCompare(String(vb)) * dir;
-  });
+function ovBlockCellHtml(s) {
+  const block = ovBlockStatusOf(s.order);
+  if (isStaticExport) {
+    return block.reason
+      ? `<span class="status-pill">${esc(OV_BLOCK_REASON_LABELS[block.reason])}</span>${block.note ? `<div class="muted small">${esc(block.note)}</div>` : ''}${blockSinceHtml(s.order)}`
+      : '<span class="muted small">— Geen —</span>';
+  }
+  return `
+      <select class="ov-block-select" data-order="${esc(s.order)}">
+        <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
+        <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Rezap aanwezig</option>
+        <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
+      </select>
+      ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
+      ${blockSinceHtml(s.order)}`;
+}
+
+function buildOvColumns(toOrderSet, planOrderSet) {
+  return [
+    { key: 'regioGroup', label: 'Regio', cell: s => `<td>${esc(regioGroupLabel(s.regioGroup))}</td>` },
+    { key: 'gebiedscode', label: 'Gebied', cell: s => `<td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>` },
+    { key: 'city', label: 'Plaats', cell: s => `<td>${esc(s.city)}</td>` },
+    { key: 'street', label: 'Adres', cell: s => `<td>${esc(s.street)}, ${esc(s.postcode)}</td>` },
+    { key: 'order', label: 'Order', cell: s => `<td>${esc(s.order)} ${crossBucketBadge(s.order, toOrderSet, 'ook in te onderzoeken-bak', '--series-2')} ${crossBucketBadge(s.order, planOrderSet, 'klaar voor inplannen', '--series-3')}</td>` },
+    { key: 'asset', label: 'Asset', cell: s => `<td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>` },
+    { key: 'wvNaam', label: "WV'er", cell: s => `<td>${s.wvNaam ? esc(s.wvNaam) : '—'}</td>` },
+    { key: 'daysLeft', label: 'Dagen', num: true, cell: s => `<td class="num">${renderDaysPill(s)}</td>` },
+    { key: 'firstSeenWeek', label: 'Open sinds', cell: s => `<td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>` },
+    { key: 'executionDate', label: 'Uitvoering', cell: s => `<td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>` },
+    { key: 'flags', label: 'Aanvragen', cell: s => `<td>${s.flags.length ? s.flags.map(f => `<span class="badge" title="${esc(FLAG_LABELS[f])}">${esc(f)}</span>`).join(' ') : '—'}</td>` },
+    { key: 'type', label: 'Type', cell: s => `<td>${esc(s.type)}</td>` },
+    { key: 'blockReasonLabel', label: 'Blokkade', cell: s => `<td class="ov-block-cell">${ovBlockCellHtml(s)}</td>` },
+  ];
 }
 
 function renderTableAll(current) {
@@ -1338,49 +1401,15 @@ function renderTableAll(current) {
     blockReasonLabel: OV_BLOCK_REASON_LABELS[ovBlockStatusOf(s.order).reason] || '',
     firstSeenWeek: firstSeenMap[s.order] || '',
   }));
-  const rows = sortRows(annotated);
+  const rows = sortByState(annotated, state.sortState);
   const toOrderSet = latestRelevantToOrderSet();
   const planOrderSet = latestRelevantPlanOrderSet();
-  const head = (isStaticExport ? '' : '<th class="checkbox-col"><input type="checkbox" id="ov-select-all" title="Alles selecteren"></th>') + COLUMNS.map(c => {
-    const active = state.sortState.key === c.key ? (state.sortState.dir === 1 ? ' ↑' : ' ↓') : '';
-    return `<th data-key="${c.key}" class="${c.num ? 'num' : ''}">${esc(c.label)}${active}</th>`;
-  }).join('');
-  const body = rows.map(s => {
-    const flagsHtml = s.flags.length
-      ? s.flags.map(f => `<span class="badge" title="${esc(FLAG_LABELS[f])}">${esc(f)}</span>`).join(' ')
-      : '—';
-    const block = ovBlockStatusOf(s.order);
-    const blockCell = isStaticExport
-      ? (block.reason
-          ? `<span class="status-pill">${esc(OV_BLOCK_REASON_LABELS[block.reason])}</span>${block.note ? `<div class="muted small">${esc(block.note)}</div>` : ''}${blockSinceHtml(s.order)}`
-          : '<span class="muted small">— Geen —</span>')
-      : `
-      <select class="ov-block-select" data-order="${esc(s.order)}">
-        <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
-        <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Rezap aanwezig</option>
-        <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
-      </select>
-      ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
-      ${blockSinceHtml(s.order)}`;
-    const checkboxTd = isStaticExport ? '' : `<td class="checkbox-col"><input type="checkbox" class="ov-row-select" data-order="${esc(s.order)}"${state.ovBulkSelected.has(s.order) ? ' checked' : ''}></td>`;
-    return `<tr${needsFollowUp(s) ? ' class="row-alert"' : ''}>
-      ${checkboxTd}
-      <td>${esc(regioGroupLabel(s.regioGroup))}</td>
-      <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
-      <td>${esc(s.city)}</td>
-      <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-      <td>${esc(s.order)} ${crossBucketBadge(s.order, toOrderSet, 'ook in te onderzoeken-bak', '--series-2')} ${crossBucketBadge(s.order, planOrderSet, 'klaar voor inplannen', '--series-3')}</td>
-      <td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>
-      <td>${s.wvNaam ? esc(s.wvNaam) : '—'}</td>
-      <td class="num">${renderDaysPill(s)}</td>
-      <td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>
-      <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
-      <td>${flagsHtml}</td>
-      <td>${esc(s.type)}</td>
-      <td class="ov-block-cell">${blockCell}</td>
-    </tr>`;
-  }).join('');
-  container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  const columns = buildOvColumns(toOrderSet, planOrderSet);
+  renderFullTable(container, rows, columns, state.sortState, {
+    leadHead: isStaticExport ? '' : '<th class="checkbox-col"><input type="checkbox" id="ov-select-all" title="Alles selecteren"></th>',
+    leadCell: isStaticExport ? null : s => `<td class="checkbox-col"><input type="checkbox" class="ov-row-select" data-order="${esc(s.order)}"${state.ovBulkSelected.has(s.order) ? ' checked' : ''}></td>`,
+    rowClass: s => needsFollowUp(s) ? 'row-alert' : '',
+  });
 
   container.querySelectorAll('.ov-block-select').forEach(sel => {
     sel.addEventListener('change', async () => {
@@ -1648,33 +1677,38 @@ function renderToIgnored(classified) {
   container.innerHTML = `${note}<table><thead><tr><th>Order</th><th>Adres</th><th>Naam</th><th>Reden</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-const TO_COLUMNS = [
-  { key: 'regioGroup', label: 'Regio' },
-  { key: 'gebiedscode', label: 'Gebied' },
-  { key: 'city', label: 'Plaats' },
-  { key: 'street', label: 'Adres' },
-  { key: 'order', label: 'Order' },
-  { key: 'toStatusLabel', label: 'Status' },
-  { key: 'namesLabel', label: 'Naam' },
-  { key: 'daysLeft', label: 'Dagen', num: true },
-  { key: 'firstSeenWeek', label: 'Open sinds' },
-  { key: 'executionDate', label: 'Uitvoering' },
-  { key: 'type', label: 'Type' },
-  { key: 'wvStatusSort', label: 'WV-status' },
-];
-
 const WV_STATUS_LABELS = { oppakken: 'Moet opgepakt worden', wachtend: 'Wachtend op iets' };
 
-function sortToRows(rows) {
-  const { key, dir } = state.toSortState;
-  return rows.slice().sort((a, b) => {
-    let va = a[key], vb = b[key];
-    if (va == null) va = '';
-    if (vb == null) vb = '';
-    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
-    return String(va).localeCompare(String(vb)) * dir;
-  });
+function wvStatusCellHtml(s) {
+  const wv = wvStatusOf(s.order);
+  if (isStaticExport) {
+    return wv.status
+      ? `<span class="status-pill">${esc(WV_STATUS_LABELS[wv.status])}</span>${wv.note ? `<div class="muted small">${esc(wv.note)}</div>` : ''}`
+      : '<span class="muted small">— Nog te bepalen —</span>';
+  }
+  return `
+      <select class="wv-status-select" data-order="${esc(s.order)}">
+        <option value="" ${!wv.status ? 'selected' : ''}>— Nog te bepalen —</option>
+        <option value="oppakken" ${wv.status === 'oppakken' ? 'selected' : ''}>Moet opgepakt worden</option>
+        <option value="wachtend" ${wv.status === 'wachtend' ? 'selected' : ''}>Wachtend op iets</option>
+      </select>
+      ${wv.status === 'wachtend' ? `<input type="text" class="wv-status-note" data-order="${esc(s.order)}" placeholder="Waarop wacht je?" value="${esc(wv.note || '')}">` : ''}`;
 }
+
+const TO_COLUMNS = [
+  { key: 'regioGroup', label: 'Regio', cell: s => `<td>${esc(regioGroupLabel(s.regioGroup))}</td>` },
+  { key: 'gebiedscode', label: 'Gebied', cell: s => `<td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>` },
+  { key: 'city', label: 'Plaats', cell: s => `<td>${esc(s.city)}</td>` },
+  { key: 'street', label: 'Adres', cell: s => `<td>${esc(s.street)}, ${esc(s.postcode)}</td>` },
+  { key: 'order', label: 'Order', cell: s => `<td>${esc(s.order)}</td>` },
+  { key: 'toStatusLabel', label: 'Status', cell: s => `<td>${esc(s.toStatusLabel)}</td>` },
+  { key: 'namesLabel', label: 'Naam', cell: s => `<td>${esc(s.namesLabel)}</td>` },
+  { key: 'daysLeft', label: 'Dagen', num: true, cell: s => `<td class="num">${renderDaysPill(s)}</td>` },
+  { key: 'firstSeenWeek', label: 'Open sinds', cell: s => `<td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>` },
+  { key: 'executionDate', label: 'Uitvoering', cell: s => `<td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>` },
+  { key: 'type', label: 'Type', cell: s => `<td>${esc(s.type)}</td>` },
+  { key: 'wvStatusSort', label: 'WV-status', cell: s => `<td class="wv-status-cell">${wvStatusCellHtml(s)}</td>` },
+];
 
 function renderToTableAll(classified) {
   const container = document.getElementById('to-table-all');
@@ -1694,40 +1728,10 @@ function renderToTableAll(classified) {
       firstSeenWeek: firstSeenMap[c.storing.order] || '',
     });
   });
-  const rows = sortToRows(annotated);
-  const head = TO_COLUMNS.map(col => {
-    const active = state.toSortState.key === col.key ? (state.toSortState.dir === 1 ? ' ↑' : ' ↓') : '';
-    return `<th data-key="${col.key}" class="${col.num ? 'num' : ''}">${esc(col.label)}${active}</th>`;
-  }).join('');
-  const body = rows.map(s => {
-    const wv = wvStatusOf(s.order);
-    const wvCell = isStaticExport
-      ? (wv.status
-          ? `<span class="status-pill">${esc(WV_STATUS_LABELS[wv.status])}</span>${wv.note ? `<div class="muted small">${esc(wv.note)}</div>` : ''}`
-          : '<span class="muted small">— Nog te bepalen —</span>')
-      : `
-      <select class="wv-status-select" data-order="${esc(s.order)}">
-        <option value="" ${!wv.status ? 'selected' : ''}>— Nog te bepalen —</option>
-        <option value="oppakken" ${wv.status === 'oppakken' ? 'selected' : ''}>Moet opgepakt worden</option>
-        <option value="wachtend" ${wv.status === 'wachtend' ? 'selected' : ''}>Wachtend op iets</option>
-      </select>
-      ${wv.status === 'wachtend' ? `<input type="text" class="wv-status-note" data-order="${esc(s.order)}" placeholder="Waarop wacht je?" value="${esc(wv.note || '')}">` : ''}`;
-    return `<tr${needsFollowUp(s) ? ' class="row-alert"' : ''}>
-      <td>${esc(regioGroupLabel(s.regioGroup))}</td>
-      <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
-      <td>${esc(s.city)}</td>
-      <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-      <td>${esc(s.order)}</td>
-      <td>${esc(s.toStatusLabel)}</td>
-      <td>${esc(s.namesLabel)}</td>
-      <td class="num">${renderDaysPill(s)}</td>
-      <td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>
-      <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
-      <td>${esc(s.type)}</td>
-      <td class="wv-status-cell">${wvCell}</td>
-    </tr>`;
-  }).join('');
-  container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  const rows = sortByState(annotated, state.toSortState);
+  renderFullTable(container, rows, TO_COLUMNS, state.toSortState, {
+    rowClass: s => needsFollowUp(s) ? 'row-alert' : '',
+  });
 
   container.querySelectorAll('.wv-status-select').forEach(sel => {
     sel.addEventListener('change', async () => {
@@ -1877,28 +1881,17 @@ function renderPlanIgnored(classified) {
 }
 
 const PLAN_COLUMNS = [
-  { key: 'regioGroup', label: 'Regio' },
-  { key: 'gebiedscode', label: 'Gebied' },
-  { key: 'city', label: 'Plaats' },
-  { key: 'street', label: 'Adres' },
-  { key: 'order', label: 'Order' },
-  { key: 'namesLabel', label: 'Naam' },
-  { key: 'daysLeft', label: 'Dagen', num: true },
-  { key: 'firstSeenWeek', label: 'Open sinds' },
-  { key: 'executionDate', label: 'Uitvoering' },
-  { key: 'type', label: 'Type' },
+  { key: 'regioGroup', label: 'Regio', cell: s => `<td>${esc(regioGroupLabel(s.regioGroup))}</td>` },
+  { key: 'gebiedscode', label: 'Gebied', cell: s => `<td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>` },
+  { key: 'city', label: 'Plaats', cell: s => `<td>${esc(s.city)}</td>` },
+  { key: 'street', label: 'Adres', cell: s => `<td>${esc(s.street)}, ${esc(s.postcode)}</td>` },
+  { key: 'order', label: 'Order', cell: s => `<td>${esc(s.order)}</td>` },
+  { key: 'namesLabel', label: 'Naam', cell: s => `<td>${esc(s.namesLabel)}</td>` },
+  { key: 'daysLeft', label: 'Dagen', num: true, cell: s => `<td class="num">${renderDaysPill(s)}</td>` },
+  { key: 'firstSeenWeek', label: 'Open sinds', cell: s => `<td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>` },
+  { key: 'executionDate', label: 'Uitvoering', cell: s => `<td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>` },
+  { key: 'type', label: 'Type', cell: s => `<td>${esc(s.type)}</td>` },
 ];
-
-function sortPlanRows(rows) {
-  const { key, dir } = state.planSortState;
-  return rows.slice().sort((a, b) => {
-    let va = a[key], vb = b[key];
-    if (va == null) va = '';
-    if (vb == null) vb = '';
-    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
-    return String(va).localeCompare(String(vb)) * dir;
-  });
-}
 
 function renderPlanTableAll(classified) {
   const container = document.getElementById('plan-table-all');
@@ -1912,24 +1905,10 @@ function renderPlanTableAll(classified) {
     namesLabel: (c.storing.names || []).join(' → ') || '—',
     firstSeenWeek: firstSeenMap[c.storing.order] || '',
   }));
-  const rows = sortPlanRows(annotated);
-  const head = PLAN_COLUMNS.map(col => {
-    const active = state.planSortState.key === col.key ? (state.planSortState.dir === 1 ? ' ↑' : ' ↓') : '';
-    return `<th data-key="${col.key}" class="${col.num ? 'num' : ''}">${esc(col.label)}${active}</th>`;
-  }).join('');
-  const body = rows.map(s => `<tr${needsFollowUp(s) ? ' class="row-alert"' : ''}>
-      <td>${esc(regioGroupLabel(s.regioGroup))}</td>
-      <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
-      <td>${esc(s.city)}</td>
-      <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-      <td>${esc(s.order)}</td>
-      <td>${esc(s.namesLabel)}</td>
-      <td class="num">${renderDaysPill(s)}</td>
-      <td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>
-      <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
-      <td>${esc(s.type)}</td>
-    </tr>`).join('');
-  container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  const rows = sortByState(annotated, state.planSortState);
+  renderFullTable(container, rows, PLAN_COLUMNS, state.planSortState, {
+    rowClass: s => needsFollowUp(s) ? 'row-alert' : '',
+  });
 }
 
 function renderPlanWeeksList() {

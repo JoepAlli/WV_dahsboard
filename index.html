@@ -15,9 +15,9 @@
     <p class="hero-tagline">Tijdelijk lokaal dashboard. Alle data blijft in je browser (IndexedDB) — er wordt niets verzonden.</p>
     <p id="static-export-banner" class="hero-tagline static-export-banner hidden"></p>
     <nav class="tab-nav" role="tablist" aria-label="Onderdelen">
-      <button class="tab-btn" data-tab="invoer" role="tab" aria-selected="false">✏️ Invoer</button>
-      <button class="tab-btn active" data-tab="data" role="tab" aria-selected="true">📊 Data</button>
-      <button class="tab-btn" data-tab="settings" role="tab" aria-selected="false">⚙️ Instellingen</button>
+      <button class="tab-btn" id="tab-btn-invoer" data-tab="invoer" role="tab" aria-selected="false" aria-controls="section-invoer">✏️ Invoer</button>
+      <button class="tab-btn active" id="tab-btn-data" data-tab="data" role="tab" aria-selected="true" aria-controls="section-data">📊 Data</button>
+      <button class="tab-btn" id="tab-btn-settings" data-tab="settings" role="tab" aria-selected="false" aria-controls="section-settings">⚙️ Instellingen</button>
     </nav>
   </div>
   <svg class="hero-wave" viewBox="0 0 1440 60" preserveAspectRatio="none" aria-hidden="true">
@@ -27,7 +27,7 @@
 
 <main>
 
-  <section class="tab-panel hidden" id="section-invoer" data-tab-panel="invoer">
+  <section class="tab-panel hidden" id="section-invoer" data-tab-panel="invoer" role="tabpanel" aria-labelledby="tab-btn-invoer" tabindex="0">
     <div class="panel-banner panel-banner-invoer">
       <span class="panel-icon">✏️</span>
       <div>
@@ -76,7 +76,7 @@
     </section>
   </section>
 
-  <section class="tab-panel" id="section-data" data-tab-panel="data">
+  <section class="tab-panel" id="section-data" data-tab-panel="data" role="tabpanel" aria-labelledby="tab-btn-data" tabindex="0">
     <div class="panel-banner panel-banner-data">
       <span class="panel-icon">📊</span>
       <div>
@@ -86,12 +86,12 @@
     </div>
 
     <nav class="subtab-nav" role="tablist" aria-label="Databronnen">
-      <button class="subtab-btn active" data-subtab="ov" role="tab" aria-selected="true">💡 OV NUSsen</button>
-      <button class="subtab-btn" data-subtab="to" role="tab" aria-selected="false">🔍 Te onderzoeken</button>
-      <button class="subtab-btn" data-subtab="plan" role="tab" aria-selected="false">📅 Klaar voor inplannen</button>
+      <button class="subtab-btn active" id="subtab-btn-ov" data-subtab="ov" role="tab" aria-selected="true" aria-controls="subsection-ov">💡 OV NUSsen</button>
+      <button class="subtab-btn" id="subtab-btn-to" data-subtab="to" role="tab" aria-selected="false" aria-controls="subsection-to">🔍 Te onderzoeken</button>
+      <button class="subtab-btn" id="subtab-btn-plan" data-subtab="plan" role="tab" aria-selected="false" aria-controls="subsection-plan">📅 Klaar voor inplannen</button>
     </nav>
 
-    <section class="subtab-panel" id="subsection-ov" data-subtab-panel="ov">
+    <section class="subtab-panel" id="subsection-ov" data-subtab-panel="ov" role="tabpanel" aria-labelledby="subtab-btn-ov" tabindex="0">
       <section class="card empty-state-card hidden" id="dashboard-empty">
         <p class="empty-state-icon">💡</p>
         <h3>Nog geen data voor OV NUSsen</h3>
@@ -186,7 +186,7 @@
       </section>
     </section>
 
-    <section class="subtab-panel hidden" id="subsection-to" data-subtab-panel="to">
+    <section class="subtab-panel hidden" id="subsection-to" data-subtab-panel="to" role="tabpanel" aria-labelledby="subtab-btn-to" tabindex="0">
       <section class="card empty-state-card hidden" id="to-dashboard-empty">
         <p class="empty-state-icon">🔍</p>
         <h3>Nog geen data voor Te onderzoeken</h3>
@@ -225,7 +225,7 @@
       </section>
     </section>
 
-    <section class="subtab-panel hidden" id="subsection-plan" data-subtab-panel="plan">
+    <section class="subtab-panel hidden" id="subsection-plan" data-subtab-panel="plan" role="tabpanel" aria-labelledby="subtab-btn-plan" tabindex="0">
       <section class="card empty-state-card hidden" id="plan-dashboard-empty">
         <p class="empty-state-icon">📅</p>
         <h3>Nog geen data voor Klaar voor inplannen</h3>
@@ -266,7 +266,7 @@
 
   </section>
 
-  <section class="tab-panel hidden" id="section-settings" data-tab-panel="settings">
+  <section class="tab-panel hidden" id="section-settings" data-tab-panel="settings" role="tabpanel" aria-labelledby="tab-btn-settings" tabindex="0">
     <div class="panel-banner panel-banner-settings">
       <span class="panel-icon">⚙️</span>
       <div>
@@ -365,6 +365,7 @@
 </main>
 
 <div id="tooltip" class="tooltip hidden"></div>
+<div id="toast-container" class="toast-container" aria-live="assertive" aria-atomic="true"></div>
 
 <script src="export-template.js"></script>
 <script src="app.js"></script>
