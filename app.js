@@ -543,7 +543,7 @@ async function saveWvStatusMap(map, orders) {
 }
 
 // Handmatige blokkade-reden voor OV NUSsen-storingen die open moeten blijven
-// maar waar wij niets mee kunnen (bv. "Rezap aanwezig" of "Naar Aanleg").
+// maar waar wij niets mee kunnen (bv. "Aannemerij" of "Naar Aanleg").
 // Ook op ordernummer bijgehouden, zodat je een lang openstaande storing niet
 // elke week opnieuw hoeft te beoordelen — eenmaal gezet blijft de reden staan
 // en verdwijnt de "actie nodig"-markering voor die storing.
@@ -988,13 +988,13 @@ function isExpiredExecutionDate(s) {
 }
 
 // Sommige storingen moeten openblijven maar daar kunnen wij niets meer aan
-// doen (bv. wachten op Rezap, of overgedragen aan Aanleg). Eenmaal zo
+// doen (bv. wachten op Aannemerij, of overgedragen aan Aanleg). Eenmaal zo
 // gemarkeerd hoeft die storing niet meer als "actie nodig" op te vallen —
 // dat is precies waarom dit bestaat: niet elke week opnieuw dezelfde lang
 // openstaande storingen langslopen.
-const OV_BLOCK_REASON_LABELS = { rezap: 'Rezap aanwezig', aanleg: 'Naar Aanleg' };
+const OV_BLOCK_REASON_LABELS = { rezap: 'Aannemerij', aanleg: 'Naar Aanleg' };
 // Storingen die 4+ weken onafgebroken geblokkeerd staan zijn het waard om
-// nog eens te checken — een Rezap-tekort van 2 maanden geleden is misschien
+// nog eens te checken — een tekort bij de aannemerij van 2 maanden geleden is misschien
 // allang opgelost.
 const OV_BLOCK_STALE_DAYS = 28;
 function ovBlockStatusOf(order) { return state.ovBlockStatus[order] || {}; }
@@ -1039,13 +1039,13 @@ function statTileFilters() {
   const onderzoekSet = latestRelevantToOrderSet();
   const planSet = latestRelevantPlanOrderSet();
   return {
-    known: { title: 'Verlopen — uitvoering gepland', test: s => s.overdue && !!s.executionDate && !isExpiredExecutionDate(s) },
+    known: { title: 'Verlopen — uitvoering gepland', test: s => s.overdue && !!s.executionDate && !isExpiredExecutionDate(s) && !isOvBlocked(s) },
     verlopenDatum: { title: 'Uitvoeringsdatum verstreken', test: s => isActionableExpiredDate(s) },
     unknown: { title: 'Verlopen — uitvoering onbekend', test: s => isActionableOverdue(s) },
     bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' && !isOvBlocked(s) },
-    onderzoek: { title: 'In onderzoek (te controleren)', test: s => onderzoekSet.has(s.order) },
-    inplannen: { title: 'Klaar voor inplannen', test: s => planSet.has(s.order) },
-    geblokkeerd: { title: 'Geblokkeerd (Rezap / Naar Aanleg)', test: s => isOvBlocked(s) },
+    onderzoek: { title: 'In onderzoek (te controleren)', test: s => onderzoekSet.has(s.order) && !isOvBlocked(s) },
+    inplannen: { title: 'Klaar voor inplannen', test: s => planSet.has(s.order) && !isOvBlocked(s) },
+    geblokkeerd: { title: 'Geblokkeerd (Aannemerij / Naar Aanleg)', test: s => isOvBlocked(s) },
   };
 }
 
@@ -1076,7 +1076,7 @@ function renderStatTiles(current, mutations) {
       note: overdueUnknown > 0 ? 'nog niets ingepland — zie Aandacht deze week' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
     { key: 'onderzoek', icon: '🔍', label: 'In onderzoek', value: onderzoekCount, note: 'te controleren door meetdienst', filterKey: 'onderzoek' },
     { key: 'inplannen', icon: '🗓️', label: 'Klaar voor inplannen', value: inplannenCount, note: 'kan ingepland worden', filterKey: 'inplannen' },
-    { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Rezap / Naar Aanleg', filterKey: 'geblokkeerd' },
+    { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg', filterKey: 'geblokkeerd' },
   ];
   el.innerHTML = tiles.map(t => {
     const clickable = (t.filterKey || t.scrollTarget) ? ' stat-tile-clickable' : '';
@@ -1153,7 +1153,7 @@ function renderStatDetail(current, mutations) {
         const blockCell = `
           <select class="ov-block-select" data-order="${esc(s.order)}">
             <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
-            <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Rezap aanwezig</option>
+            <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Aannemerij</option>
             <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
           </select>
           ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
@@ -1273,7 +1273,7 @@ function renderAttentionList(current, allVisible) {
       const blockCell = isStaticExport ? '' : `<td class="ov-block-cell">
           <select class="ov-block-select" data-order="${esc(s.order)}">
             <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
-            <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Rezap aanwezig</option>
+            <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Aannemerij</option>
             <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
           </select>
           ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
@@ -1599,7 +1599,7 @@ function ovBlockCellHtml(s) {
   return `
       <select class="ov-block-select" data-order="${esc(s.order)}">
         <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
-        <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Rezap aanwezig</option>
+        <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Aannemerij</option>
         <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
       </select>
       ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
@@ -2269,7 +2269,7 @@ function buildWeekSummaryText() {
     `Verlopen — uitvoering onbekend: ${count('unknown')}`,
     `In onderzoek: ${count('onderzoek')}`,
     `Klaar voor inplannen: ${count('inplannen')}`,
-    `Geblokkeerd (Rezap / Naar Aanleg): ${count('geblokkeerd')}`,
+    `Geblokkeerd (Aannemerij / Naar Aanleg): ${count('geblokkeerd')}`,
   );
   return lines.join('\n');
 }
