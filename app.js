@@ -509,8 +509,9 @@ async function loadWvStatusMap() {
       const current = await spGetFileContent(state.sharePointConfig.siteUrl);
       return current.data.wvStatus;
     } catch (e) {
-      showErrorToast('Ophalen van gedeelde WV-status (SharePoint) is mislukt: ' + e.message);
-      return {};
+      showErrorToast('Ophalen van gedeelde WV-status (SharePoint) is mislukt, lokale versie gebruikt: ' + e.message);
+      // val terug op de lokale kopie zodat een mislukte sync niet de hele
+      // WV-status-lijst leegtrekt
     }
   }
   try { return (await idbGet(WV_STATUS_KEY)) || {}; }
@@ -532,11 +533,11 @@ async function saveWvStatusMap(map, orders) {
           else delete data.wvStatus[order];
         });
       });
+      return;
     } catch (e) {
-      showErrorToast('Opslaan van gedeelde WV-status (SharePoint) is mislukt: ' + e.message);
-      throw e;
+      showErrorToast('Delen via SharePoint is mislukt, wijziging lokaal opgeslagen: ' + e.message);
+      // val terug op lokaal opslaan zodat de wijziging niet verloren gaat
     }
-    return;
   }
   try { await idbSet(WV_STATUS_KEY, map); }
   catch (e) { showErrorToast('Opslaan van de WV-status is mislukt: ' + e.message); throw e; }
@@ -555,8 +556,9 @@ async function loadOvBlockStatusMap() {
       const current = await spGetFileContent(state.sharePointConfig.siteUrl);
       return current.data.ovBlockStatus;
     } catch (e) {
-      showErrorToast('Ophalen van gedeelde blokkade-status (SharePoint) is mislukt: ' + e.message);
-      return {};
+      showErrorToast('Ophalen van gedeelde blokkade-status (SharePoint) is mislukt, lokale versie gebruikt: ' + e.message);
+      // val terug op de lokale kopie zodat een mislukte sync niet de hele
+      // blokkade-lijst leegtrekt
     }
   }
   try { return (await idbGet(OV_BLOCK_STATUS_KEY)) || {}; }
@@ -575,11 +577,11 @@ async function saveOvBlockStatusMap(map, orders) {
           else delete data.ovBlockStatus[order];
         });
       });
+      return;
     } catch (e) {
-      showErrorToast('Opslaan van gedeelde blokkade-status (SharePoint) is mislukt: ' + e.message);
-      throw e;
+      showErrorToast('Delen via SharePoint is mislukt, wijziging lokaal opgeslagen: ' + e.message);
+      // val terug op lokaal opslaan zodat de wijziging niet verloren gaat
     }
-    return;
   }
   try { await idbSet(OV_BLOCK_STATUS_KEY, map); }
   catch (e) { showErrorToast('Opslaan van de blokkade-reden is mislukt: ' + e.message); throw e; }
@@ -992,7 +994,7 @@ function isExpiredExecutionDate(s) {
 // gemarkeerd hoeft die storing niet meer als "actie nodig" op te vallen —
 // dat is precies waarom dit bestaat: niet elke week opnieuw dezelfde lang
 // openstaande storingen langslopen.
-const OV_BLOCK_REASON_LABELS = { rezap: 'Aannemerij', aanleg: 'Naar Aanleg' };
+const OV_BLOCK_REASON_LABELS = { rezap: 'Aannemerij', aanleg: 'Naar Aanleg', uitvoerder: 'Uitvoerder' };
 // Storingen die 4+ weken onafgebroken geblokkeerd staan zijn het waard om
 // nog eens te checken — een tekort bij de aannemerij van 2 maanden geleden is misschien
 // allang opgelost.
@@ -1045,7 +1047,7 @@ function statTileFilters() {
     bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' && !isOvBlocked(s) },
     onderzoek: { title: 'In onderzoek (te controleren)', test: s => onderzoekSet.has(s.order) && !isOvBlocked(s) },
     inplannen: { title: 'Klaar voor inplannen', test: s => planSet.has(s.order) && !isOvBlocked(s) },
-    geblokkeerd: { title: 'Geblokkeerd (Aannemerij / Naar Aanleg)', test: s => isOvBlocked(s) },
+    geblokkeerd: { title: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder)', test: s => isOvBlocked(s) },
   };
 }
 
@@ -1076,7 +1078,7 @@ function renderStatTiles(current, mutations) {
       note: overdueUnknown > 0 ? 'nog niets ingepland — zie Aandacht deze week' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
     { key: 'onderzoek', icon: '🔍', label: 'In onderzoek', value: onderzoekCount, note: 'te controleren door meetdienst', filterKey: 'onderzoek' },
     { key: 'inplannen', icon: '🗓️', label: 'Klaar voor inplannen', value: inplannenCount, note: 'kan ingepland worden', filterKey: 'inplannen' },
-    { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg', filterKey: 'geblokkeerd' },
+    { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder', filterKey: 'geblokkeerd' },
   ];
   el.innerHTML = tiles.map(t => {
     const clickable = (t.filterKey || t.scrollTarget) ? ' stat-tile-clickable' : '';
@@ -1155,6 +1157,7 @@ function renderStatDetail(current, mutations) {
             <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
             <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Aannemerij</option>
             <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
+            <option value="uitvoerder" ${block.reason === 'uitvoerder' ? 'selected' : ''}>Uitvoerder</option>
           </select>
           ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
           ${blockSinceHtml(s.order)}`;
@@ -1275,6 +1278,7 @@ function renderAttentionList(current, allVisible) {
             <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
             <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Aannemerij</option>
             <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
+            <option value="uitvoerder" ${block.reason === 'uitvoerder' ? 'selected' : ''}>Uitvoerder</option>
           </select>
           ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
           ${blockSinceHtml(s.order)}
@@ -1601,6 +1605,7 @@ function ovBlockCellHtml(s) {
         <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
         <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Aannemerij</option>
         <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
+        <option value="uitvoerder" ${block.reason === 'uitvoerder' ? 'selected' : ''}>Uitvoerder</option>
       </select>
       ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
       ${blockSinceHtml(s.order)}`;
@@ -2269,7 +2274,7 @@ function buildWeekSummaryText() {
     `Verlopen — uitvoering onbekend: ${count('unknown')}`,
     `In onderzoek: ${count('onderzoek')}`,
     `Klaar voor inplannen: ${count('inplannen')}`,
-    `Geblokkeerd (Aannemerij / Naar Aanleg): ${count('geblokkeerd')}`,
+    `Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder): ${count('geblokkeerd')}`,
   );
   return lines.join('\n');
 }
