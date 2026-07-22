@@ -1254,9 +1254,14 @@ function renderAttentionList(current, allVisible) {
   // orderMap komt uit `current` (regio-gefilterd): een bevroren order die niet
   // in de actieve regiotab valt, wordt hier vanzelf weggefilterd.
   const orderMap = new Map(current.map(s => [s.order, s]));
+  // Eenmaal geblokkeerd verdwijnt een storing meteen uit deze lijst (ook al
+  // was hij deze week al bevroren opgenomen) — vanaf dat moment is hij alleen
+  // nog te vinden via de "Geblokkeerd"-tegel. Wordt de blokkade weer
+  // opgeheven, dan duikt hij hier vanzelf weer op (nog steeds bevroren op
+  // dezelfde categorie van deze week).
   const items = state.attentionOrders
     .map(({ order, catKey }) => ({ s: orderMap.get(order), cat: ATTENTION_CATEGORIES.find(c => c.key === catKey) }))
-    .filter(it => it.s);
+    .filter(it => it.s && !isOvBlocked(it.s));
   items.sort((a, b) => a.cat.prio - b.cat.prio || a.s.daysLeft - b.s.daysLeft);
 
   // Voor het "Kopieer order + categorie"-knopje — precies de rijen die nu op
@@ -2321,6 +2326,14 @@ async function reloadAllStateAndRender() {
   // state.sharePointConfig om te bepalen of ze uit SharePoint of IndexedDB
   // moeten lezen.
   state.sharePointConfig = await loadSharePointConfig();
+  if (state.sharePointConfig.enabled && location.protocol === 'file:') {
+    // Kan sowieso nooit werken vanaf een lokaal geopend bestand (zie
+    // spAssertHostedProperly) — automatisch uitzetten voorkomt dat bij elke
+    // wijziging opnieuw dezelfde onvermijdelijke foutmelding verschijnt.
+    state.sharePointConfig.enabled = false;
+    await saveSharePointConfig(state.sharePointConfig);
+    showErrorToast('Gedeelde status via SharePoint is uitgezet: dit dashboard is lokaal geopend, niet vanaf de SharePoint-site, dus delen kan hier niet werken.');
+  }
   state.snapshots = await loadSnapshots();
   state.typeWhitelist = await loadTypeWhitelist();
   state.toSnapshots = await loadToSnapshots();
