@@ -125,8 +125,15 @@ function parseOneEntry(lines, start) {
   }
 
   const flagLineRe = /^[A-Z]+$/;
+  // Bij "te onderzoeken"-storingen staat er soms een losse regel met alleen
+  // "1" tussen de naam/namen en de dagen-regel — dat betekent dat er iets
+  // loopt waardoor de storing bij de meetdienst open moet blijven staan (zie
+  // applyOnderzoekBlockFlags). Geen naam, dus expliciet uit nameLines houden,
+  // anders verstoort hij de naam-gebaseerde classificatie (classifyTeOnderzoeken).
+  const onderzoekBlockFlagRe = /^1$/;
   const flagLines = middleLines.filter(l => flagLineRe.test(l));
-  const nameLines = middleLines.filter(l => !flagLineRe.test(l));
+  const onderzoekBlockFlag = middleLines.some(l => onderzoekBlockFlagRe.test(l));
+  const nameLines = middleLines.filter(l => !flagLineRe.test(l) && !onderzoekBlockFlagRe.test(l));
 
   let wvNaam = null;
   if (nameLines.length >= 2) wvNaam = nameLines[0]; // 1e naam = WV'er; 2e = uitvoerder (genegeerd)
@@ -138,6 +145,7 @@ function parseOneEntry(lines, start) {
   const storing = {
     type, city, street, postcode, order, asset, assetType,
     wvNaam, names: nameLines, flags, daysLeft, overdue, executionDate, executionDateRaw,
+    onderzoekBlockFlag,
   };
   return { storing, next: i };
 }
@@ -573,7 +581,7 @@ async function saveOvBlockStatusMap(map, orders) {
       await spUpdateSharedFile(state.sharePointConfig.siteUrl, (data) => {
         list.forEach(order => {
           const entry = map[order];
-          if (entry && entry.reason) data.ovBlockStatus[order] = { reason: entry.reason, note: entry.note || '', since: entry.since || undefined };
+          if (entry && entry.reason) data.ovBlockStatus[order] = { reason: entry.reason, note: entry.note || '', since: entry.since || undefined, auto: entry.auto || undefined };
           else delete data.ovBlockStatus[order];
         });
       });
@@ -734,6 +742,40 @@ function classifyTeOnderzoekenFull(s) {
   if (base.status === 'genegeerd' || state.snapshots.length === 0) return base;
   if (!latestOvOrderSet().has(s.order)) return { status: 'genegeerd', reden: NOT_IN_OV_REASON };
   return base;
+}
+
+// Zet/heft de blokkade-reden "Onderzoek loopt" automatisch op basis van de
+// "1"-vlag in de zojuist verwerkte week "te onderzoeken"-storingen (zie
+// onderzoekBlockFlag in parseOneEntry). Alleen relevante storingen (niet
+// "genegeerd") tellen mee, net als bij de andere cross-bak-koppelingen.
+// - Zet de reden alleen als er nog géén reden staat, zodat een handmatig
+//   gekozen reden (ook als die toevallig ook "onderzoek" is) nooit overschreven
+//   wordt.
+// - Heft de reden alleen weer automatisch op bij storingen die zelf ook
+//   automatisch geblokkeerd waren (auto: true) en waar de vlag nu ontbreekt —
+//   een handmatige keuze blijft altijd staan tot iemand 'm zelf wijzigt.
+// Geeft de lijst gewijzigde ordernummers terug (voor een gerichte save).
+function applyOnderzoekBlockFlags(storingen) {
+  const flagged = new Set(
+    storingen
+      .filter(s => s.onderzoekBlockFlag && classifyTeOnderzoekenFull(s).status !== 'genegeerd')
+      .map(s => s.order)
+  );
+  const changed = [];
+  flagged.forEach(order => {
+    if (!ovBlockStatusOf(order).reason) {
+      setOvBlockReason(order, 'onderzoek', true);
+      changed.push(order);
+    }
+  });
+  Object.keys(state.ovBlockStatus).forEach(order => {
+    const entry = state.ovBlockStatus[order];
+    if (entry.reason === 'onderzoek' && entry.auto && !flagged.has(order)) {
+      setOvBlockReason(order, '');
+      changed.push(order);
+    }
+  });
+  return changed;
 }
 
 // Classificatie voor "klaar voor inplannen": ook een filter óver de OV NUS-
@@ -994,7 +1036,7 @@ function isExpiredExecutionDate(s) {
 // gemarkeerd hoeft die storing niet meer als "actie nodig" op te vallen —
 // dat is precies waarom dit bestaat: niet elke week opnieuw dezelfde lang
 // openstaande storingen langslopen.
-const OV_BLOCK_REASON_LABELS = { rezap: 'Aannemerij', aanleg: 'Naar Aanleg', uitvoerder: 'Uitvoerder' };
+const OV_BLOCK_REASON_LABELS = { rezap: 'Aannemerij', aanleg: 'Naar Aanleg', uitvoerder: 'Uitvoerder', onderzoek: 'Onderzoek loopt' };
 // Storingen die 4+ weken onafgebroken geblokkeerd staan zijn het waard om
 // nog eens te checken — een tekort bij de aannemerij van 2 maanden geleden is misschien
 // allang opgelost.
@@ -1013,10 +1055,13 @@ function isOvBlockStale(order) {
 // niet-geblokkeerd naar geblokkeerd, zodat dit de duur van de HUIDIGE
 // blokkade blijft — niet gereset door bv. een reden-wissel (rezap -> aanleg)
 // of een toelichting bijwerken.
-function setOvBlockReason(order, reason) {
+// `auto`: alleen true wanneer dit door applyOnderzoekBlockFlags automatisch
+// gezet is (i.p.v. via de dropdown) — bepaalt of een volgende week 'm ook
+// weer automatisch mag opheffen zonder een handmatige keuze aan te tasten.
+function setOvBlockReason(order, reason, auto) {
   const cur = state.ovBlockStatus[order] || {};
   const since = reason ? (cur.reason ? cur.since : new Date().toISOString()) : undefined;
-  state.ovBlockStatus[order] = { reason, note: cur.note || '', since };
+  state.ovBlockStatus[order] = { reason, note: cur.note || '', since, auto: reason ? !!auto : undefined };
 }
 function setOvBlockNote(order, note) {
   const cur = state.ovBlockStatus[order] || {};
@@ -1047,7 +1092,7 @@ function statTileFilters() {
     bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' && !isOvBlocked(s) },
     onderzoek: { title: 'In onderzoek (te controleren)', test: s => onderzoekSet.has(s.order) && !isOvBlocked(s) },
     inplannen: { title: 'Klaar voor inplannen', test: s => planSet.has(s.order) && !isOvBlocked(s) },
-    geblokkeerd: { title: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder)', test: s => isOvBlocked(s) },
+    geblokkeerd: { title: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt)', test: s => isOvBlocked(s) },
   };
 }
 
@@ -1078,7 +1123,7 @@ function renderStatTiles(current, mutations) {
       note: overdueUnknown > 0 ? 'nog niets ingepland — zie Aandacht deze week' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
     { key: 'onderzoek', icon: '🔍', label: 'In onderzoek', value: onderzoekCount, note: 'te controleren door meetdienst', filterKey: 'onderzoek' },
     { key: 'inplannen', icon: '🗓️', label: 'Klaar voor inplannen', value: inplannenCount, note: 'kan ingepland worden', filterKey: 'inplannen' },
-    { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder', filterKey: 'geblokkeerd' },
+    { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
   ];
   el.innerHTML = tiles.map(t => {
     const clickable = (t.filterKey || t.scrollTarget) ? ' stat-tile-clickable' : '';
@@ -1158,6 +1203,7 @@ function renderStatDetail(current, mutations) {
             <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Aannemerij</option>
             <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
             <option value="uitvoerder" ${block.reason === 'uitvoerder' ? 'selected' : ''}>Uitvoerder</option>
+            <option value="onderzoek" ${block.reason === 'onderzoek' ? 'selected' : ''}>Onderzoek loopt</option>
           </select>
           ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
           ${blockSinceHtml(s.order)}`;
@@ -1284,6 +1330,7 @@ function renderAttentionList(current, allVisible) {
             <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Aannemerij</option>
             <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
             <option value="uitvoerder" ${block.reason === 'uitvoerder' ? 'selected' : ''}>Uitvoerder</option>
+            <option value="onderzoek" ${block.reason === 'onderzoek' ? 'selected' : ''}>Onderzoek loopt</option>
           </select>
           ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
           ${blockSinceHtml(s.order)}
@@ -2279,7 +2326,7 @@ function buildWeekSummaryText() {
     `Verlopen — uitvoering onbekend: ${count('unknown')}`,
     `In onderzoek: ${count('onderzoek')}`,
     `Klaar voor inplannen: ${count('inplannen')}`,
-    `Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder): ${count('geblokkeerd')}`,
+    `Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt): ${count('geblokkeerd')}`,
   );
   return lines.join('\n');
 }
@@ -2647,6 +2694,12 @@ function wireEvents() {
       return;
     }
     state.toSnapshots = snaps;
+
+    const blockFlagChanges = applyOnderzoekBlockFlags(storingen);
+    if (blockFlagChanges.length > 0) {
+      try { await saveOvBlockStatusMap(state.ovBlockStatus, blockFlagChanges); }
+      catch (e) { /* saveOvBlockStatusMap toont zelf al een foutmelding */ }
+    }
 
     renderToDashboardFromState();
     if (state.snapshots.length > 0) renderDashboardFromState(); // cross-bak badges bijwerken
