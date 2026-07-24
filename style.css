@@ -521,6 +521,39 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .empty-state-card h3 { margin: 0 0 6px; font-size: 1.1rem; }
 .empty-state-card p.muted { max-width: 420px; margin: 0 auto 18px; }
 
+/* Vriendelijke samenvattingszin bovenaan de Data-pagina — vertaalt de tegels
+   eronder naar één leesbare zin, zodat je niet meteen tien getallen hoeft
+   te doorgronden om te weten of er iets te doen is deze week. */
+.week-summary-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+  border-radius: var(--radius-md);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.week-summary-banner p { margin: 0; }
+.week-summary-icon {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  font-size: 1.3rem;
+  border-radius: 50%;
+}
+.week-summary-good {
+  background: color-mix(in srgb, var(--status-good) 10%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--status-good) 28%, var(--border));
+}
+.week-summary-good .week-summary-icon { background: color-mix(in srgb, var(--status-good) 18%, transparent); }
+.week-summary-attention {
+  background: color-mix(in srgb, var(--status-warning) 12%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--status-warning) 35%, var(--border));
+}
+.week-summary-attention .week-summary-icon { background: color-mix(in srgb, var(--status-warning) 22%, transparent); }
+
 .all-clear {
   display: flex;
   align-items: center;

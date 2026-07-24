@@ -1172,6 +1172,35 @@ function renderStatTiles(current, mutations) {
   renderStatDetail(current, mutations);
 }
 
+// Eén korte, menselijke zin bovenaan die samenvat hoe de week ervoor staat —
+// zodat je niet meteen 10 tegels hoeft door te rekenen om te weten of er iets
+// te doen is. "Actie nodig" volgt dezelfde telling als "Aandacht deze week"
+// hieronder (ATTENTION_CATEGORIES), zodat de twee nooit uit de pas lopen.
+function renderWeekSummaryBanner(current, mutations) {
+  const el = document.getElementById('week-summary-banner');
+  if (!el) return;
+  const total = current.length;
+  const filters = statTileFilters();
+  const attentionCount = current.filter(s => ATTENTION_CATEGORIES.some(cat => filters[cat.key].test(s))).length;
+
+  let mood, icon, text;
+  if (attentionCount === 0) {
+    mood = 'good'; icon = '🎉';
+    text = total > 0
+      ? `Niets vraagt deze week om actie — alle <strong>${total}</strong> open ${total === 1 ? 'storing ligt' : 'storingen liggen'} op schema.`
+      : 'Niets vraagt deze week om actie.';
+  } else {
+    mood = 'attention'; icon = '⚡';
+    text = `<strong>${attentionCount}</strong> van de <strong>${total}</strong> open ${total === 1 ? 'storing' : 'storingen'} ${attentionCount === 1 ? 'vraagt' : 'vragen'} deze week om actie — zie "Aandacht deze week" hieronder.`;
+  }
+  if (mutations.hasPrevious) {
+    text += ` Sinds vorige week: <strong>${mutations.nieuw.length}</strong> nieuw binnengekomen, <strong>${mutations.uitgegaan.length}</strong> afgesloten.`;
+  }
+
+  el.className = `week-summary-banner week-summary-${mood}`;
+  el.innerHTML = `<span class="week-summary-icon" aria-hidden="true">${icon}</span><p>${text}</p>`;
+}
+
 // Toont (indien een klikbare tegel is aangeklikt) de exacte lijst van
 // storingen daarachter, zodat je niet handmatig door de hele tabel hoeft te
 // zoeken naar welke opdrachten het precies betreft.
@@ -2285,6 +2314,7 @@ function renderDashboardFromState() {
   const mutations = computeMutations(latestFiltered, previousFiltered);
 
   setDashboardEmpty('dashboard', 'dashboard-empty', false);
+  renderWeekSummaryBanner(latestFiltered, mutations);
   renderStatTiles(latestFiltered, mutations);
   renderAttentionList(latestFiltered, latestVisible);
   renderDoorlooptijdCard();
