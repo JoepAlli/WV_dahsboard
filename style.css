@@ -358,7 +358,21 @@ button {
 }
 #subsection-to .stat-tile::before { background: linear-gradient(90deg, var(--series-2), color-mix(in srgb, var(--series-2) 45%, var(--series-1))); }
 #subsection-plan .stat-tile::before { background: linear-gradient(90deg, var(--series-3), color-mix(in srgb, var(--series-3) 45%, var(--series-2))); }
-.stat-tile-icon { font-size: 1.15rem; line-height: 1; margin-bottom: 8px; opacity: 0.9; }
+.stat-tile-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  font-size: 1.05rem;
+  margin-bottom: 10px;
+  background: color-mix(in srgb, var(--series-1) 15%, transparent);
+}
+#subsection-to .stat-tile-icon { background: color-mix(in srgb, var(--series-2) 15%, transparent); }
+#subsection-plan .stat-tile-icon { background: color-mix(in srgb, var(--series-3) 20%, transparent); }
+.stat-tile-icon-bad { background: color-mix(in srgb, var(--status-critical) 16%, transparent); }
+.stat-tile-icon-good { background: color-mix(in srgb, var(--status-good) 16%, transparent); }
 .stat-tile .label { font-size: 0.76rem; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
 .stat-tile .value { font-size: 2.1rem; font-weight: 800; margin-top: 4px; letter-spacing: -0.02em; }
 .stat-tile .delta { font-size: 0.8rem; margin-top: 4px; }
@@ -444,6 +458,12 @@ button {
   gap: 20px;
 }
 .mutations-grid h3 { font-size: 0.95rem; margin-bottom: 6px; font-weight: 700; }
+
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 22px;
+}
 
 table {
   width: 100%;
@@ -610,6 +630,7 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .legend-item { display: flex; align-items: center; gap: 6px; }
 .legend-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
+.chart-svg { display: block; height: auto; }
 .chart-svg text { fill: var(--text-muted); font-size: 11px; }
 .chart-svg .axis-line { stroke: var(--baseline); stroke-width: 1; }
 .chart-svg .grid-line { stroke: var(--gridline); stroke-width: 1; }

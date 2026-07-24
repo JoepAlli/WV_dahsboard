@@ -1133,7 +1133,7 @@ function renderStatTiles(current, mutations) {
     else if (t.scrollTarget) clickAttrs = ` data-scroll-target="${t.scrollTarget}" tabindex="0" role="button"`;
     return `
     <div class="stat-tile${t.alert ? ' stat-tile-alert' : ''}${clickable}${selected}" data-stat-key="${t.key}"${clickAttrs}>
-      <div class="stat-tile-icon" aria-hidden="true">${t.icon}</div>
+      <div class="stat-tile-icon${t.deltaClass ? ' stat-tile-icon-' + t.deltaClass : ''}" aria-hidden="true">${t.icon}</div>
       <div class="label">${esc(t.label)}</div>
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta ${t.deltaClass || ''}">${esc(t.note)}</div>` : ''}
@@ -1519,7 +1519,7 @@ function renderTrendChart(snapshots) {
     return;
   }
 
-  const leftPad = 40, rightPad = 60, topPad = 16, plotH = 200, bottomPad = 34;
+  const leftPad = 40, rightPad = 100, topPad = 16, plotH = 200, bottomPad = 34;
   const plotW = Math.max(360, snapshots.length * 70);
   const chartW = leftPad + plotW + rightPad;
   const chartH = topPad + plotH + bottomPad;
