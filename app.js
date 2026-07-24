@@ -1854,34 +1854,6 @@ function renderTypeWhitelist() {
   });
 }
 
-// Wekelijks signaal (in de OV NUSsen-sectie zelf, niet in Instellingen):
-// welke types uit de laatst verwerkte week niet meetellen.
-function renderTypeUnknownReview() {
-  const unknownEl = document.getElementById('type-unknown');
-  const latest = state.snapshots[state.snapshots.length - 1];
-  if (!latest) { unknownEl.classList.add('hidden'); unknownEl.innerHTML = ''; return; }
-  const unknownCounts = {};
-  latest.storingen.forEach(s => {
-    if (!isTypeIncluded(s)) unknownCounts[s.type] = (unknownCounts[s.type] || 0) + 1;
-  });
-  const unknownTypes = Object.keys(unknownCounts);
-  if (unknownTypes.length === 0) { unknownEl.classList.add('hidden'); unknownEl.innerHTML = ''; return; }
-  unknownEl.classList.remove('hidden');
-  unknownEl.innerHTML = `<strong>${unknownTypes.length} onbekend(e) type(s) deze week — niet meegeteld:</strong>` +
-    unknownTypes.map(t => `
-      <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
-        <span>${esc(t)} (${unknownCounts[t]}×)</span>
-        <button class="btn-link add-type-btn" data-type="${esc(t)}">+ Meetellen</button>
-      </div>`).join('');
-  unknownEl.querySelectorAll('.add-type-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (!state.typeWhitelist.includes(btn.dataset.type)) state.typeWhitelist.push(btn.dataset.type);
-      await saveTypeWhitelist(state.typeWhitelist);
-      renderDashboardFromState();
-    });
-  });
-}
-
 function renderFilterTabs(latestVisible) {
   const container = document.getElementById('filter-tabs');
   const present = latestVisible ? sortByGroupOrder(Array.from(new Set(latestVisible.map(s => regioGroupOf(s))))) : [];
@@ -2311,7 +2283,6 @@ function renderDashboardFromState() {
   const previousVisible = previous ? typeFiltered(previous.storingen) : null;
 
   renderTypeWhitelist();
-  renderTypeUnknownReview();
   renderFilterTabs(latestVisible);
 
   const latestFiltered = filterByActive(latestVisible);
@@ -2427,7 +2398,7 @@ async function reloadAllStateAndRender() {
   state.ovBlockStatus = await loadOvBlockStatusMap();
   state.bijnaVerlopenThreshold = await loadBijnaVerlopenThreshold();
   if (state.snapshots.length > 0) renderDashboardFromState();
-  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderTypeUnknownReview(); }
+  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); }
   if (state.toSnapshots.length > 0) renderToDashboardFromState();
   else { setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true); renderMeetdienstList(); renderHandoffList(); }
   if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
