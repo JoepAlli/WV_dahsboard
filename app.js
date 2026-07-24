@@ -1797,16 +1797,19 @@ function renderOvBulkBar() {
 function renderWeeksList() {
   const container = document.getElementById('weeks-list');
   if (state.snapshots.length === 0) { container.innerHTML = '<p class="empty-note">Nog geen weken opgeslagen.</p>'; return; }
-  const rows = state.snapshots.slice().sort((a, b) => b.week.localeCompare(a.week)).map(sn => `
+  // Meerdere updates op dezelfde datum kunnen naast elkaar bestaan (zie
+  // "process-btn"-handler) — sorteren en verwijderen gebeurt daarom op het
+  // exacte opslagmoment (savedAt), niet op de (mogelijk niet-unieke) datum.
+  const rows = state.snapshots.slice().sort((a, b) => b.week.localeCompare(a.week) || b.savedAt.localeCompare(a.savedAt)).map(sn => `
     <div class="weeks-list-row">
       <span>Week van <strong>${esc(sn.week)}</strong> — ${sn.storingen.length} storingen (opgeslagen ${esc(fmtDate(sn.savedAt))})</span>
-      <button class="btn-link danger" data-week="${esc(sn.week)}">Verwijderen</button>
+      <button class="btn-link danger" data-saved-at="${esc(sn.savedAt)}">Verwijderen</button>
     </div>`).join('');
   container.innerHTML = rows;
-  container.querySelectorAll('button[data-week]').forEach(btn => {
+  container.querySelectorAll('button[data-saved-at]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm(`Week ${btn.dataset.week} verwijderen?`)) return;
-      const snaps = (await loadSnapshots()).filter(s => s.week !== btn.dataset.week);
+      if (!confirm('Deze update verwijderen?')) return;
+      const snaps = (await loadSnapshots()).filter(s => s.savedAt !== btn.dataset.savedAt);
       await saveSnapshots(snaps);
       state.snapshots = snaps;
       state.attentionOrders = null;
@@ -2053,16 +2056,16 @@ function renderToTableAll(classified) {
 function renderToWeeksList() {
   const container = document.getElementById('to-weeks-list');
   if (state.toSnapshots.length === 0) { container.innerHTML = '<p class="empty-note">Nog geen weken opgeslagen.</p>'; return; }
-  const rows = state.toSnapshots.slice().sort((a, b) => b.week.localeCompare(a.week)).map(sn => `
+  const rows = state.toSnapshots.slice().sort((a, b) => b.week.localeCompare(a.week) || b.savedAt.localeCompare(a.savedAt)).map(sn => `
     <div class="weeks-list-row">
       <span>Week van <strong>${esc(sn.week)}</strong> — ${sn.storingen.length} storingen (opgeslagen ${esc(fmtDate(sn.savedAt))})</span>
-      <button class="btn-link danger" data-to-week="${esc(sn.week)}">Verwijderen</button>
+      <button class="btn-link danger" data-saved-at="${esc(sn.savedAt)}">Verwijderen</button>
     </div>`).join('');
   container.innerHTML = rows;
-  container.querySelectorAll('button[data-to-week]').forEach(btn => {
+  container.querySelectorAll('button[data-saved-at]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm(`Week ${btn.dataset.toWeek} verwijderen?`)) return;
-      const snaps = (await loadToSnapshots()).filter(s => s.week !== btn.dataset.toWeek);
+      if (!confirm('Deze update verwijderen?')) return;
+      const snaps = (await loadToSnapshots()).filter(s => s.savedAt !== btn.dataset.savedAt);
       await saveToSnapshots(snaps);
       state.toSnapshots = snaps;
       if (snaps.length === 0) setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true);
@@ -2211,16 +2214,16 @@ function renderPlanTableAll(classified) {
 function renderPlanWeeksList() {
   const container = document.getElementById('plan-weeks-list');
   if (state.planSnapshots.length === 0) { container.innerHTML = '<p class="empty-note">Nog geen weken opgeslagen.</p>'; return; }
-  const rows = state.planSnapshots.slice().sort((a, b) => b.week.localeCompare(a.week)).map(sn => `
+  const rows = state.planSnapshots.slice().sort((a, b) => b.week.localeCompare(a.week) || b.savedAt.localeCompare(a.savedAt)).map(sn => `
     <div class="weeks-list-row">
       <span>Week van <strong>${esc(sn.week)}</strong> — ${sn.storingen.length} storingen (opgeslagen ${esc(fmtDate(sn.savedAt))})</span>
-      <button class="btn-link danger" data-plan-week="${esc(sn.week)}">Verwijderen</button>
+      <button class="btn-link danger" data-saved-at="${esc(sn.savedAt)}">Verwijderen</button>
     </div>`).join('');
   container.innerHTML = rows;
-  container.querySelectorAll('button[data-plan-week]').forEach(btn => {
+  container.querySelectorAll('button[data-saved-at]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if (!confirm(`Week ${btn.dataset.planWeek} verwijderen?`)) return;
-      const snaps = (await loadPlanSnapshots()).filter(s => s.week !== btn.dataset.planWeek);
+      if (!confirm('Deze update verwijderen?')) return;
+      const snaps = (await loadPlanSnapshots()).filter(s => s.savedAt !== btn.dataset.savedAt);
       await savePlanSnapshots(snaps);
       state.planSnapshots = snaps;
       if (snaps.length === 0) setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', true);
@@ -2521,14 +2524,14 @@ function wireEvents() {
       return;
     }
 
+    // Elke keer verwerken voegt een nieuw punt in de tijd toe (ook meerdere
+    // keren per dag) i.p.v. een eerdere update van dezelfde datum te
+    // overschrijven — zo blijft "Nieuw binnengekomen"/"Afgesloten" en de
+    // doorlooptijd altijd de vergelijking met je vórige update, niet met
+    // gisteren, ook als je vandaag al eerder bijgewerkt hebt.
     const snaps = await loadSnapshots();
-    const idx = snaps.findIndex(s => s.week === week);
-    if (idx >= 0 && !confirm(`Week ${week} bestaat al (${snaps[idx].storingen.length} storingen). Vervangen door deze ${storingen.length} storingen?`)) {
-      statusEl.textContent = 'Verwerken geannuleerd.';
-      return;
-    }
     const snapshot = { week, savedAt: new Date().toISOString(), storingen };
-    if (idx >= 0) snaps[idx] = snapshot; else snaps.push(snapshot);
+    snaps.push(snapshot);
     try {
       await saveSnapshots(snaps);
     } catch (err) {
@@ -2686,13 +2689,8 @@ function wireEvents() {
     }
 
     const snaps = await loadToSnapshots();
-    const idx = snaps.findIndex(s => s.week === week);
-    if (idx >= 0 && !confirm(`Week ${week} bestaat al (${snaps[idx].storingen.length} storingen). Vervangen door deze ${storingen.length} storingen?`)) {
-      statusEl.textContent = 'Verwerken geannuleerd.';
-      return;
-    }
     const snapshot = { week, savedAt: new Date().toISOString(), storingen };
-    if (idx >= 0) snaps[idx] = snapshot; else snaps.push(snapshot);
+    snaps.push(snapshot);
     try {
       await saveToSnapshots(snaps);
     } catch (err) {
@@ -2779,13 +2777,8 @@ function wireEvents() {
     }
 
     const snaps = await loadPlanSnapshots();
-    const idx = snaps.findIndex(s => s.week === week);
-    if (idx >= 0 && !confirm(`Week ${week} bestaat al (${snaps[idx].storingen.length} storingen). Vervangen door deze ${storingen.length} storingen?`)) {
-      statusEl.textContent = 'Verwerken geannuleerd.';
-      return;
-    }
     const snapshot = { week, savedAt: new Date().toISOString(), storingen };
-    if (idx >= 0) snaps[idx] = snapshot; else snaps.push(snapshot);
+    snaps.push(snapshot);
     try {
       await savePlanSnapshots(snaps);
     } catch (err) {
