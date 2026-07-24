@@ -853,3 +853,24 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 }
 .details-card[open] > summary::before { transform: rotate(90deg); }
 .details-body-header { margin-top: 12px; }
+
+/* Analytische verdieping (doorlooptijd, grafieken, mutaties) staat standaard
+   ingeklapt achter één regel — dat is waar je normaal gesproken niet meteen
+   naar hoeft te kijken, alleen wanneer je er zelf voor kiest om te verdiepen. */
+.details-toggle {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--ease);
+}
+.details-toggle:hover { box-shadow: var(--shadow-card-hover); }
+.details-toggle summary { font-size: 0.95rem; }
+.details-toggle[open] { padding-bottom: 22px; }
+.details-toggle-body {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  margin-top: 18px;
+}

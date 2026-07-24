@@ -998,6 +998,11 @@ function dismissToast(toast) {
 function scrollToAndHighlight(id) {
   const el = document.getElementById(id);
   if (!el) return;
+  // Zit het doelwit in een ingeklapt <details>-blok (bv. "Trends, grafieken &
+  // mutaties"), klap dat dan eerst open — anders scrollt dit naar een dichte
+  // regel in plaats van naar de daadwerkelijke data.
+  const details = el.closest('details');
+  if (details && !details.open) details.open = true;
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   el.classList.remove('flash-highlight');
   void el.offsetWidth; // forceer reflow zodat de animatie herstart bij snel opnieuw klikken
