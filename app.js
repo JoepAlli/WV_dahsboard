@@ -1149,6 +1149,90 @@ function statTileFilters() {
 
 const OV_STATUS_ICONS = { 'Nieuw': '🆕', 'In onderzoek': '🔍', 'In voorbereiding': '🧰', 'Planning': '🗓️', 'In uitvoering': '🚧' };
 
+// Elke OV-tegel is nu klikbaar en toont dan (in #overdue-detail) een verloop-
+// grafiekje van hoe die tegel's waarde zich ontwikkelt over alle opgeslagen
+// momenten heen — inclusief meerdere updates op één dag. Alleen deze
+// tegels hebben er daarnaast ook een rij-per-storing-tabel bij (de rest
+// duplicerde toch al wat "Aandacht deze week"/"Volledige lijst" al tonen).
+const OV_DETAIL_LIST_KEYS = new Set([...Object.values(OV_STATUS_FILTER_KEYS), 'geblokkeerd']);
+const OV_TILE_TITLES = {
+  totaal: 'Totaal open',
+  verlopenDatum: 'Uitvoeringsdatum verstreken',
+  unknown: 'Verlopen — uitvoering onbekend',
+  afgesloten: 'Afgesloten / uitgegaan',
+  geblokkeerd: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt)',
+};
+OV_STATUS_ORDER.forEach(status => { OV_TILE_TITLES[OV_STATUS_FILTER_KEYS[status]] = `Status: ${status}`; });
+
+// Berekent het verloop van één tegel over alle opgeslagen OV-momenten heen,
+// mét de actieve regiotab (net als de tegel zelf). "afgesloten" is een
+// uitzondering: dat is een verschil tússen opeenvolgende momenten (wat is
+// verdwenen), geen standenmeting op één moment, dus dat telt per paar.
+function ovTileTrendSeries(key) {
+  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week) || a.savedAt.localeCompare(b.savedAt));
+  if (key === 'afgesloten') {
+    const points = [];
+    for (let i = 1; i < snaps.length; i++) {
+      const cur = filterByActive(typeFiltered(snaps[i].storingen));
+      const prev = filterByActive(typeFiltered(snaps[i - 1].storingen));
+      points.push({ week: snaps[i].week, savedAt: snaps[i].savedAt, value: computeMutations(cur, { storingen: prev }).uitgegaan.length });
+    }
+    return points;
+  }
+  const test = key === 'totaal' ? (() => true) : statTileFilters()[key].test;
+  return snaps.map(sn => ({
+    week: sn.week,
+    savedAt: sn.savedAt,
+    value: filterByActive(typeFiltered(sn.storingen)).filter(test).length,
+  }));
+}
+
+// Compacte lijn-grafiek voor in het detailpaneel — zelfde opzet als de grote
+// "Trend over tijd"-grafiek, maar één lijn en zonder tabel-toggle (dat blijft
+// voorbehouden aan de hoofdgrafiek).
+function tileTrendChartHtml(points) {
+  if (points.length < 2) {
+    return '<p class="empty-note">Nog niet genoeg opgeslagen momenten voor een verloop — verwerk nog een update.</p>';
+  }
+  const leftPad = 36, rightPad = 12, topPad = 14, plotH = 110, bottomPad = 26;
+  const plotW = Math.max(240, points.length * 46);
+  const chartW = leftPad + plotW + rightPad;
+  const chartH = topPad + plotH + bottomPad;
+  const maxVal = Math.max(1, ...points.map(p => p.value));
+  const niceMax = Math.ceil(maxVal / 4) * 4 || 4;
+  const scaleY = plotH / niceMax;
+  const stepX = plotW / (points.length - 1);
+
+  let gridSvg = '';
+  for (let g = 0; g <= 4; g++) {
+    const val = (niceMax / 4) * g;
+    const y = topPad + plotH - val * scaleY;
+    gridSvg += `<line class="grid-line" x1="${leftPad}" x2="${leftPad + plotW}" y1="${y}" y2="${y}" />`;
+    gridSvg += `<text x="${leftPad - 8}" y="${y + 3}" text-anchor="end">${Math.round(val)}</text>`;
+  }
+  // Meerdere updates op dezelfde dag -> label met tijd i.p.v. alleen datum,
+  // anders staan er dubbele/onleesbare labels onder elkaar.
+  const dateCounts = {};
+  points.forEach(p => { dateCounts[p.week] = (dateCounts[p.week] || 0) + 1; });
+  const xLabel = p => dateCounts[p.week] > 1 ? fmtDate(p.savedAt).split(', ')[1] : p.week.slice(5);
+  const xLabels = points.map((p, i) => `<text x="${leftPad + i * stepX}" y="${topPad + plotH + 18}" text-anchor="middle">${esc(xLabel(p))}</text>`).join('');
+
+  const linePts = points.map((p, i) => `${leftPad + i * stepX},${topPad + plotH - p.value * scaleY}`).join(' ');
+  const markers = points.map((p, i) => {
+    const cx = leftPad + i * stepX, cy = topPad + plotH - p.value * scaleY;
+    return `<circle class="tile-trend-pt" data-label="${esc(fmtDate(p.savedAt))}" data-val="${p.value}" cx="${cx}" cy="${cy}" r="3.5" fill="var(--series-1)" />`;
+  }).join('');
+
+  return `<svg class="chart-svg tile-trend-svg" viewBox="0 0 ${chartW} ${chartH}" width="100%" height="${chartH}">
+      <line class="axis-line" x1="${leftPad}" x2="${leftPad}" y1="${topPad}" y2="${topPad + plotH}" />
+      <line class="axis-line" x1="${leftPad}" x2="${leftPad + plotW}" y1="${topPad + plotH}" y2="${topPad + plotH}" />
+      ${gridSvg}
+      <polyline points="${linePts}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      ${markers}
+      ${xLabels}
+    </svg>`;
+}
+
 function renderStatTiles(current, mutations) {
   const el = document.getElementById('stat-tiles');
   const total = current.length;
@@ -1173,25 +1257,27 @@ function renderStatTiles(current, mutations) {
       note: mutations.hasPrevious ? 'sinds vorige update' : 'nog geen vorige update', scrollTarget: 'mutations-out' },
     { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
   );
+  // Elke tegel is nu klikbaar: altijd voor het verloop-grafiekje in het
+  // paneel hieronder, en (waar van toepassing) óók voor de rij-per-storing-
+  // lijst of het wegscrollen naar het bijbehorende kaartje verderop.
   el.innerHTML = tiles.map(t => {
-    const clickable = (t.filterKey || t.scrollTarget) ? ' stat-tile-clickable' : '';
-    const selected = t.filterKey && state.statDetailFilter === t.filterKey ? ' stat-tile-selected' : '';
-    let clickAttrs = '';
-    if (t.filterKey) clickAttrs = ` data-stat-filter="${t.filterKey}" tabindex="0" role="button" aria-expanded="${state.statDetailFilter === t.filterKey}"`;
-    else if (t.scrollTarget) clickAttrs = ` data-scroll-target="${t.scrollTarget}" tabindex="0" role="button"`;
+    const selected = state.statDetailFilter === t.key ? ' stat-tile-selected' : '';
+    const hasList = OV_DETAIL_LIST_KEYS.has(t.key);
+    const hint = (hasList ? 'Klik voor lijst + verloop' : 'Klik voor verloop') + (t.scrollTarget ? ' ↓' : '');
+    const clickAttrs = ` data-stat-filter="${t.key}"${t.scrollTarget ? ` data-scroll-target="${t.scrollTarget}"` : ''} tabindex="0" role="button" aria-expanded="${state.statDetailFilter === t.key}"`;
     return `
-    <div class="stat-tile${t.alert ? ' stat-tile-alert' : ''}${clickable}${selected}" data-stat-key="${t.key}"${clickAttrs}>
+    <div class="stat-tile stat-tile-clickable${t.alert ? ' stat-tile-alert' : ''}${selected}" data-stat-key="${t.key}"${clickAttrs}>
       <div class="stat-tile-icon${t.deltaClass ? ' stat-tile-icon-' + t.deltaClass : ''}" aria-hidden="true">${t.icon}</div>
       <div class="label">${esc(t.label)}</div>
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta ${t.deltaClass || ''}">${esc(t.note)}</div>` : ''}
-      ${t.filterKey ? '<div class="stat-tile-hint">Klik voor de lijst</div>' : ''}
-      ${t.scrollTarget ? '<div class="stat-tile-hint">Klik om te bekijken ↓</div>' : ''}
+      <div class="stat-tile-hint">${hint}</div>
     </div>`;
   }).join('');
 
   const activate = (key) => {
-    if (state.statDetailFilter === key) {
+    const opening = state.statDetailFilter !== key;
+    if (!opening) {
       state.statDetailFilter = null;
       state.statDetailOrders = null;
     } else {
@@ -1199,21 +1285,22 @@ function renderStatTiles(current, mutations) {
       // Bevriest welke orders erin zitten op het moment van openen — anders
       // verdwijnt een rij meteen uit beeld zodra je 'm hier bewerkt (bv. een
       // blokkade-reden instellen bij "Verlopen — uitvoering onbekend" haalt
-      // 'm per definitie uit die lijst).
-      state.statDetailOrders = current.filter(statTileFilters()[key].test).map(s => s.order);
+      // 'm per definitie uit die lijst). Alleen relevant voor tegels met een
+      // eigen lijst — de rest toont straks alleen het verloop-grafiekje.
+      state.statDetailOrders = OV_DETAIL_LIST_KEYS.has(key) ? current.filter(statTileFilters()[key].test).map(s => s.order) : null;
     }
     renderStatTiles(current, mutations);
+    return opening;
   };
   el.querySelectorAll('[data-stat-filter]').forEach(tile => {
-    tile.addEventListener('click', () => activate(tile.dataset.statFilter));
+    const key = tile.dataset.statFilter;
+    const scrollTarget = tile.dataset.scrollTarget;
+    // Alleen scrollen bij het ÓPENEN van het paneel — anders spring je bij het
+    // sluiten (nogmaals klikken) ineens weg van waar je net was.
+    const handle = () => { if (activate(key) && scrollTarget) scrollToAndHighlight(scrollTarget); };
+    tile.addEventListener('click', handle);
     tile.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(tile.dataset.statFilter); }
-    });
-  });
-  el.querySelectorAll('[data-scroll-target]').forEach(tile => {
-    tile.addEventListener('click', () => scrollToAndHighlight(tile.dataset.scrollTarget));
-    tile.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scrollToAndHighlight(tile.dataset.scrollTarget); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handle(); }
     });
   });
 
@@ -1257,53 +1344,72 @@ function renderStatDetail(current, mutations) {
   const filterKey = state.statDetailFilter;
   if (!filterKey) { container.classList.add('hidden'); container.innerHTML = ''; return; }
 
-  const filter = statTileFilters()[filterKey];
-  const orderSet = new Set(state.statDetailOrders || []);
-  const list = current.filter(s => orderSet.has(s.order));
+  const hasList = OV_DETAIL_LIST_KEYS.has(filterKey);
   container.classList.remove('hidden');
 
-  // Bij "Geblokkeerd" kun je de blokkade-reden direct hier aanpassen. "Verlopen
-  // — uitvoering onbekend" en "Uitvoeringsdatum verstreken" hebben geen eigen
-  // uitklaplijst meer (die zaten dubbelop met "Aandacht deze week" hieronder,
-  // dat dezelfde storingen mét bewerkbare blokkade-reden al toont).
+  // Bij "Geblokkeerd" kun je de blokkade-reden direct hier aanpassen. Tegels
+  // zonder eigen lijst (Totaal, de 2 rode tegels, Afgesloten) tonen alleen het
+  // verloop-grafiekje — hun storingen staan toch al in "Aandacht deze
+  // week"/"Volledige lijst"/"Mutaties", een 2e tabel zou dat dubbelop tonen.
   const showBlock = filterKey === 'geblokkeerd' && !isStaticExport;
-  const firstSeenMap = firstSeenWeekMap();
-  const body = list.length === 0
-    ? '<p class="empty-note">Geen storingen in deze lijst.</p>'
-    : `<div class="table-scroll"><table><thead><tr>
-        <th>Order</th><th>Regio</th><th>Gebied</th><th>Status</th><th>Adres</th><th class="num">Dagen</th><th>Open sinds</th><th>Type</th><th>Uitvoering</th>${showBlock ? '<th>Blokkade</th>' : ''}
-      </tr></thead><tbody>${list.map(s => {
-        const block = ovBlockStatusOf(s.order);
-        const blockCell = `
-          <select class="ov-block-select" data-order="${esc(s.order)}">
-            <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
-            <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Aannemerij</option>
-            <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
-            <option value="uitvoerder" ${block.reason === 'uitvoerder' ? 'selected' : ''}>Uitvoerder</option>
-            <option value="onderzoek" ${block.reason === 'onderzoek' ? 'selected' : ''}>Onderzoek loopt</option>
-          </select>
-          ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
-          ${blockSinceHtml(s.order)}`;
-        return `<tr>
-        <td>${esc(s.order)}</td>
-        <td>${esc(regioGroupLabel(regioGroupOf(s)))}</td>
-        <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
-        <td>${ovStatusPillHtml(s)}</td>
-        <td>${esc(s.city)} — ${esc(s.street)}, ${esc(s.postcode)}</td>
-        <td class="num">${renderDaysPill(s)}</td>
-        <td>${firstSeenMap[s.order] ? esc(firstSeenMap[s.order]) : '—'}</td>
-        <td>${esc(s.type)}</td>
-        <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
-        ${showBlock ? `<td class="ov-block-cell">${blockCell}</td>` : ''}
-      </tr>`;
-      }).join('')}</tbody></table></div>`;
+
+  let badgeCount, body;
+  if (hasList) {
+    const orderSet = new Set(state.statDetailOrders || []);
+    const list = current.filter(s => orderSet.has(s.order));
+    badgeCount = list.length;
+    const firstSeenMap = firstSeenWeekMap();
+    body = list.length === 0
+      ? '<p class="empty-note">Geen storingen in deze lijst.</p>'
+      : `<div class="table-scroll"><table><thead><tr>
+          <th>Order</th><th>Regio</th><th>Gebied</th><th>Status</th><th>Adres</th><th class="num">Dagen</th><th>Open sinds</th><th>Type</th><th>Uitvoering</th>${showBlock ? '<th>Blokkade</th>' : ''}
+        </tr></thead><tbody>${list.map(s => {
+          const block = ovBlockStatusOf(s.order);
+          const blockCell = `
+            <select class="ov-block-select" data-order="${esc(s.order)}">
+              <option value="" ${!block.reason ? 'selected' : ''}>— Geen —</option>
+              <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Aannemerij</option>
+              <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
+              <option value="uitvoerder" ${block.reason === 'uitvoerder' ? 'selected' : ''}>Uitvoerder</option>
+              <option value="onderzoek" ${block.reason === 'onderzoek' ? 'selected' : ''}>Onderzoek loopt</option>
+            </select>
+            ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
+            ${blockSinceHtml(s.order)}`;
+          return `<tr>
+          <td>${esc(s.order)}</td>
+          <td>${esc(regioGroupLabel(regioGroupOf(s)))}</td>
+          <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
+          <td>${ovStatusPillHtml(s)}</td>
+          <td>${esc(s.city)} — ${esc(s.street)}, ${esc(s.postcode)}</td>
+          <td class="num">${renderDaysPill(s)}</td>
+          <td>${firstSeenMap[s.order] ? esc(firstSeenMap[s.order]) : '—'}</td>
+          <td>${esc(s.type)}</td>
+          <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
+          ${showBlock ? `<td class="ov-block-cell">${blockCell}</td>` : ''}
+        </tr>`;
+        }).join('')}</tbody></table></div>`;
+  } else {
+    badgeCount = filterKey === 'totaal' ? current.length
+      : filterKey === 'afgesloten' ? (mutations.hasPrevious ? mutations.uitgegaan.length : 0)
+      : current.filter(statTileFilters()[filterKey].test).length;
+    body = '';
+  }
+
+  const chartHtml = tileTrendChartHtml(ovTileTrendSeries(filterKey));
 
   container.innerHTML = `
     <div class="card-header">
-      <h3>${esc(filter.title)} <span class="badge">${list.length}</span></h3>
+      <h3>${esc(OV_TILE_TITLES[filterKey])} <span class="badge">${badgeCount}</span></h3>
       <button class="btn-link" id="close-overdue-detail">Sluiten ✕</button>
     </div>
+    <div class="tile-trend-chart">${chartHtml}</div>
     ${body}`;
+
+  container.querySelectorAll('.tile-trend-pt').forEach(pt => {
+    pt.addEventListener('mouseenter', e => showTooltip(e, `<strong>${esc(pt.dataset.label)}</strong><br>${esc(pt.dataset.val)}`));
+    pt.addEventListener('mousemove', moveTooltip);
+    pt.addEventListener('mouseleave', hideTooltip);
+  });
 
   if (showBlock) {
     const refresh = async (order) => {

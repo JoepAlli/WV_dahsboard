@@ -709,6 +709,8 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .chart-svg .axis-line { stroke: var(--baseline); stroke-width: 1; }
 .chart-svg .grid-line { stroke: var(--gridline); stroke-width: 1; }
 
+.tile-trend-chart { margin: 14px 0 18px; }
+
 .tooltip {
   position: fixed;
   background: var(--text-primary);
