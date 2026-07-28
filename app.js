@@ -3,8 +3,8 @@
 // Een geëxporteerd "interactief dashboard" (zie buildStandaloneExport) bakt de
 // data van dat moment in als window.__DASHBOARD_DATA__ i.p.v. dat er uit
 // IndexedDB gelezen wordt. In die modus is het dashboard bekijk-alleen: geen
-// nieuwe week verwerken, geen instellingen, geen WV-status bewerken — dat blijft
-// voorbehouden aan het originele dashboard waar de data vandaan komt.
+// nieuwe week verwerken, geen instellingen, geen blokkade-reden bewerken —
+// dat blijft voorbehouden aan het originele dashboard waar de data vandaan komt.
 const STATIC_DATA = window.__DASHBOARD_DATA__ || null;
 const isStaticExport = !!STATIC_DATA;
 
@@ -134,15 +134,8 @@ function parseOneEntry(lines, start) {
   }
 
   const flagLineRe = /^[A-Z]+$/;
-  // Bij "te onderzoeken"-storingen staat er soms een losse regel met alleen
-  // "1" tussen de naam/namen en de dagen-regel — dat betekent dat er iets
-  // loopt waardoor de storing bij de meetdienst open moet blijven staan (zie
-  // applyOnderzoekBlockFlags). Geen naam, dus expliciet uit nameLines houden,
-  // anders verstoort hij de naam-gebaseerde classificatie (classifyTeOnderzoeken).
-  const onderzoekBlockFlagRe = /^1$/;
   const flagLines = middleLines.filter(l => flagLineRe.test(l));
-  const onderzoekBlockFlag = middleLines.some(l => onderzoekBlockFlagRe.test(l));
-  const nameLines = middleLines.filter(l => !flagLineRe.test(l) && !onderzoekBlockFlagRe.test(l));
+  const nameLines = middleLines.filter(l => !flagLineRe.test(l));
 
   let wvNaam = null;
   if (nameLines.length >= 2) wvNaam = nameLines[0]; // 1e naam = WV'er; 2e = uitvoerder (genegeerd)
@@ -154,7 +147,6 @@ function parseOneEntry(lines, start) {
   const storing = {
     type, city, street, postcode, order, asset, assetType,
     wvNaam, names: nameLines, flags, daysLeft, overdue, executionDate, executionDateRaw,
-    onderzoekBlockFlag,
   };
   return { storing, next: i };
 }
@@ -265,8 +257,8 @@ async function migrateLegacyKey(key) {
 
 /* ---------- Optioneel: gedeelde status via SharePoint ---------- */
 //
-// Blokkade-reden (OV NUSsen) en WV-status (Te onderzoeken) kunnen — als je
-// dit expliciet instelt in Instellingen — via één gedeeld JSON-bestand in de
+// Blokkade-reden (OV NUSsen) kan — als je dit expliciet instelt in
+// Instellingen — via één gedeeld JSON-bestand in de
 // standaard documentbibliotheek van een SharePoint-site gedeeld worden i.p.v.
 // alleen lokaal in IndexedDB te leven, zodat collega's die hetzelfde
 // dashboard vanaf dezelfde SharePoint-site openen elkaars wijzigingen zien.
@@ -347,7 +339,7 @@ async function spGetFileContent(siteUrl) {
   const res = await fetch(spApiUrl(siteUrl, `web/GetFileByServerRelativeUrl('${encodeURIComponent(fileUrl)}')/$value`), {
     credentials: 'same-origin',
   });
-  if (res.status === 404) return { exists: false, data: { ovBlockStatus: {}, wvStatus: {} }, etag: null };
+  if (res.status === 404) return { exists: false, data: { ovBlockStatus: {} }, etag: null };
   if (!res.ok) throw new Error(`ophalen van gedeeld statusbestand mislukt (status ${res.status}) — bestaat de bibliotheek "${sharePointLibraryName()}" op deze site?`);
   const etag = res.headers.get('ETag');
   const text = await res.text();
@@ -355,7 +347,6 @@ async function spGetFileContent(siteUrl) {
   try { data = text ? JSON.parse(text) : {}; }
   catch (e) { throw new Error('het gedeelde statusbestand bevat geen geldige data (kapotte JSON)'); }
   if (!data.ovBlockStatus) data.ovBlockStatus = {};
-  if (!data.wvStatus) data.wvStatus = {};
   return { exists: true, data, etag };
 }
 
@@ -476,96 +467,6 @@ async function saveBijnaVerlopenThreshold(n) {
   catch (e) { showErrorToast('Opslaan van de drempel is mislukt: ' + e.message); throw e; }
 }
 
-const TO_STORAGE_KEY = 'nusdash_snapshots_teonderzoeken_v1';
-const MEETDIENST_LIST_KEY = 'nusdash_meetdienst_namen_v1';
-const HANDOFF_LIST_KEY = 'nusdash_handoff_namen_v1';
-const DEFAULT_MEETDIENST_NAMEN = ['Kees Smit', 'Bas M. Oudshoorn', 'Mark Rollenberg'];
-const DEFAULT_HANDOFF_NAMEN = ['Conor', 'Patricia', 'Dulani'];
-
-async function loadToSnapshots() {
-  await migrateLegacyKey(TO_STORAGE_KEY);
-  try { return (await idbGet(TO_STORAGE_KEY)) || []; }
-  catch (e) { console.error(e); return []; }
-}
-async function saveToSnapshots(snaps) {
-  snaps.sort((a, b) => a.week.localeCompare(b.week));
-  try { await idbSet(TO_STORAGE_KEY, snaps); }
-  catch (e) { showErrorToast('Opslaan is mislukt: ' + e.message); throw new Error('Opslaan is mislukt: ' + e.message); }
-}
-async function clearToSnapshots() { await idbDelete(TO_STORAGE_KEY); }
-
-const PLAN_STORAGE_KEY = 'nusdash_snapshots_klaarvoorinplannen_v1';
-const PLAN_NAMES_KEY = 'nusdash_klaarzetters_namen_v1';
-const DEFAULT_PLAN_NAMEN = ['Marc van Veen'];
-
-async function loadPlanSnapshots() {
-  await migrateLegacyKey(PLAN_STORAGE_KEY);
-  try { return (await idbGet(PLAN_STORAGE_KEY)) || []; }
-  catch (e) { console.error(e); return []; }
-}
-async function savePlanSnapshots(snaps) {
-  snaps.sort((a, b) => a.week.localeCompare(b.week));
-  try { await idbSet(PLAN_STORAGE_KEY, snaps); }
-  catch (e) { showErrorToast('Opslaan is mislukt: ' + e.message); throw new Error('Opslaan is mislukt: ' + e.message); }
-}
-async function clearPlanSnapshots() { await idbDelete(PLAN_STORAGE_KEY); }
-
-async function loadNameList(key, fallback) {
-  await migrateLegacyKey(key);
-  try { const v = await idbGet(key); return v || fallback.slice(); }
-  catch (e) { console.error(e); return fallback.slice(); }
-}
-async function saveNameList(key, list) {
-  try { await idbSet(key, list); }
-  catch (e) { showErrorToast('Opslaan van de naamlijst is mislukt: ' + e.message); throw e; }
-}
-
-// Handmatige WV-status ("Moet opgepakt worden" / "Wachtend op iets") per
-// storing, bijgehouden op ordernummer zodat het meeloopt als dezelfde
-// storing de week erna opnieuw wordt geplakt. Onafhankelijk van de
-// wekelijkse snapshots zelf.
-const WV_STATUS_KEY = 'nusdash_wv_status_v1';
-async function loadWvStatusMap() {
-  if (sharePointActive()) {
-    try {
-      spAssertHostedProperly();
-      const current = await spGetFileContent(state.sharePointConfig.siteUrl);
-      return current.data.wvStatus;
-    } catch (e) {
-      showErrorToast('Ophalen van gedeelde WV-status (SharePoint) is mislukt, lokale versie gebruikt: ' + e.message);
-      // val terug op de lokale kopie zodat een mislukte sync niet de hele
-      // WV-status-lijst leegtrekt
-    }
-  }
-  try { return (await idbGet(WV_STATUS_KEY)) || {}; }
-  catch (e) { console.error(e); return {}; }
-}
-// orders: het ordernummer (of een array van ordernummers) dat net gewijzigd
-// is — alleen relevant wanneer SharePoint actief is, om gericht precies dat
-// deel van het gedeelde bestand bij te werken i.p.v. het hele bestand met
-// mogelijk verouderde lokale data te overschrijven.
-async function saveWvStatusMap(map, orders) {
-  if (sharePointActive()) {
-    try {
-      spAssertHostedProperly();
-      const list = orders == null ? [] : (Array.isArray(orders) ? orders : [orders]);
-      await spUpdateSharedFile(state.sharePointConfig.siteUrl, (data) => {
-        list.forEach(order => {
-          const entry = map[order];
-          if (entry && entry.status) data.wvStatus[order] = { status: entry.status, note: entry.note || '' };
-          else delete data.wvStatus[order];
-        });
-      });
-      return;
-    } catch (e) {
-      showErrorToast('Delen via SharePoint is mislukt, wijziging lokaal opgeslagen: ' + e.message);
-      // val terug op lokaal opslaan zodat de wijziging niet verloren gaat
-    }
-  }
-  try { await idbSet(WV_STATUS_KEY, map); }
-  catch (e) { showErrorToast('Opslaan van de WV-status is mislukt: ' + e.message); throw e; }
-}
-
 // Handmatige blokkade-reden voor OV NUSsen-storingen die open moeten blijven
 // maar waar wij niets mee kunnen (bv. "Aannemerij" of "Naar Aanleg").
 // Ook op ordernummer bijgehouden, zodat je een lang openstaande storing niet
@@ -587,7 +488,10 @@ async function loadOvBlockStatusMap() {
   try { return (await idbGet(OV_BLOCK_STATUS_KEY)) || {}; }
   catch (e) { console.error(e); return {}; }
 }
-// orders: zie saveWvStatusMap hierboven — zelfde patroon.
+// orders: het ordernummer (of een array van ordernummers) dat net gewijzigd
+// is — alleen relevant wanneer SharePoint actief is, om gericht precies dat
+// deel van het gedeelde bestand bij te werken i.p.v. het hele bestand met
+// mogelijk verouderde lokale data te overschrijven.
 async function saveOvBlockStatusMap(map, orders) {
   if (sharePointActive()) {
     try {
@@ -596,7 +500,7 @@ async function saveOvBlockStatusMap(map, orders) {
       await spUpdateSharedFile(state.sharePointConfig.siteUrl, (data) => {
         list.forEach(order => {
           const entry = map[order];
-          if (entry && entry.reason) data.ovBlockStatus[order] = { reason: entry.reason, note: entry.note || '', since: entry.since || undefined, auto: entry.auto || undefined };
+          if (entry && entry.reason) data.ovBlockStatus[order] = { reason: entry.reason, note: entry.note || '', since: entry.since || undefined };
           else delete data.ovBlockStatus[order];
         });
       });
@@ -626,12 +530,6 @@ async function exportBackup() {
     version: 1,
     ovSnapshots: await loadSnapshots(),
     typeWhitelist: await loadTypeWhitelist(),
-    teOnderzoekenSnapshots: await loadToSnapshots(),
-    meetdienstNamen: await loadNameList(MEETDIENST_LIST_KEY, DEFAULT_MEETDIENST_NAMEN),
-    handoffNamen: await loadNameList(HANDOFF_LIST_KEY, DEFAULT_HANDOFF_NAMEN),
-    wvStatus: await loadWvStatusMap(),
-    klaarVoorInplannenSnapshots: await loadPlanSnapshots(),
-    klaarzetterNamen: await loadNameList(PLAN_NAMES_KEY, DEFAULT_PLAN_NAMEN),
     ovBlockStatus: await loadOvBlockStatusMap(),
     bijnaVerlopenThreshold: await loadBijnaVerlopenThreshold(),
     sharePointConfig: await loadSharePointConfig(),
@@ -666,12 +564,6 @@ function buildStandaloneExport() {
   const data = {
     ovSnapshots: state.snapshots,
     typeWhitelist: state.typeWhitelist,
-    teOnderzoekenSnapshots: state.toSnapshots,
-    meetdienstNamen: state.meetdienstNamen,
-    handoffNamen: state.handoffNamen,
-    wvStatus: state.wvStatus,
-    klaarVoorInplannenSnapshots: state.planSnapshots,
-    klaarzetterNamen: state.planNamen,
     ovBlockStatus: state.ovBlockStatus,
     bijnaVerlopenThreshold: state.bijnaVerlopenThreshold,
     exportedAt: new Date().toISOString(),
@@ -707,120 +599,15 @@ async function importBackup(file) {
   if (!backup || typeof backup !== 'object') throw new Error('bestand is geen geldig back-upbestand');
   if (Array.isArray(backup.ovSnapshots)) await saveSnapshots(backup.ovSnapshots);
   if (Array.isArray(backup.typeWhitelist)) await saveTypeWhitelist(backup.typeWhitelist);
-  if (Array.isArray(backup.teOnderzoekenSnapshots)) await saveToSnapshots(backup.teOnderzoekenSnapshots);
-  if (Array.isArray(backup.meetdienstNamen)) await saveNameList(MEETDIENST_LIST_KEY, backup.meetdienstNamen);
-  if (Array.isArray(backup.handoffNamen)) await saveNameList(HANDOFF_LIST_KEY, backup.handoffNamen);
-  // WV-status en blokkade-reden leven ergens anders (in SharePoint, gedeeld
-  // met collega's) zodra dat actief staat — een lokaal back-upbestand daar
+  // Blokkade-reden leeft ergens anders (in SharePoint, gedeeld met
+  // collega's) zodra dat actief staat — een lokaal back-upbestand daar
   // overheen zetten zou voor iedereen tegelijk verrassend zijn, dus dat
   // slaan we dan bewust over. Herstel daarvan gebeurt via SharePoint zelf.
-  if (backup.wvStatus && typeof backup.wvStatus === 'object' && !sharePointActive()) await saveWvStatusMap(backup.wvStatus);
-  if (Array.isArray(backup.klaarVoorInplannenSnapshots)) await savePlanSnapshots(backup.klaarVoorInplannenSnapshots);
-  if (Array.isArray(backup.klaarzetterNamen)) await saveNameList(PLAN_NAMES_KEY, backup.klaarzetterNamen);
   if (backup.ovBlockStatus && typeof backup.ovBlockStatus === 'object' && !sharePointActive()) await saveOvBlockStatusMap(backup.ovBlockStatus);
   if (Number.isFinite(backup.bijnaVerlopenThreshold) && backup.bijnaVerlopenThreshold > 0) await saveBijnaVerlopenThreshold(backup.bijnaVerlopenThreshold);
   if (backup.sharePointConfig && typeof backup.sharePointConfig === 'object') await saveSharePointConfig(backup.sharePointConfig);
 }
 
-// Classificatie voor de "te onderzoeken storingen"-bak:
-// - 1 naam: telt alleen mee als die naam een meetdienst-collega is (anders is
-//   het een andere monteur, niet voor onze werkvoorbereiders).
-// - 2 namen: telt alleen mee als de 2e naam een overdracht-naam is (dan is 'm
-//   overgedragen aan de werkvoorbereiders om in te plannen).
-// - 0 namen: standaard genegeerd, maar zichtbaar in het "genegeerd"-overzicht.
-function classifyTeOnderzoeken(s) {
-  const names = s.names || [];
-  if (names.length === 1) {
-    const isMeetdienst = state.meetdienstNamen.some(m => m.trim().toLowerCase() === names[0].trim().toLowerCase());
-    return isMeetdienst
-      ? { status: 'meetdienst', reden: null }
-      : { status: 'genegeerd', reden: `andere monteur (${names[0]}), niet de meetdienst` };
-  }
-  if (names.length === 2) {
-    const isHandoff = state.handoffNamen.some(h => names[1].toLowerCase().includes(h.trim().toLowerCase()));
-    return isHandoff
-      ? { status: 'werkvoorbereiders', reden: null }
-      : { status: 'genegeerd', reden: `2e naam (${names[1]}) is geen overdracht naar ons` };
-  }
-  return { status: 'genegeerd', reden: 'geen naam vermeld' };
-}
-
-// "Te controleren onderzoeken" is geen eigen bak, maar een filter óver de OV
-// NUS-lijst: elke relevante storing daarin hoort ook in de actuele OV NUS-lijst
-// te staan. Ordernummers die daar niet in voorkomen tellen we dus ook als
-// genegeerd — mits we de OV NUS-lijst al hebben om tegen te vergelijken (staat
-// die nog leeg, dan kunnen we het niet checken en laten we de naam-classificatie
-// ongemoeid, om niet alles ten onrechte als "niet gevonden" te bestempelen).
-const NOT_IN_OV_REASON = 'niet gevonden in de actuele OV NUS-lijst';
-function classifyTeOnderzoekenFull(s) {
-  const base = classifyTeOnderzoeken(s);
-  if (base.status === 'genegeerd' || state.snapshots.length === 0) return base;
-  if (!latestOvOrderSet().has(s.order)) return { status: 'genegeerd', reden: NOT_IN_OV_REASON };
-  return base;
-}
-
-// Zet/heft de blokkade-reden "Onderzoek loopt" automatisch op basis van de
-// "1"-vlag in de zojuist verwerkte week "te onderzoeken"-storingen (zie
-// onderzoekBlockFlag in parseOneEntry). Alleen relevante storingen (niet
-// "genegeerd") tellen mee, net als bij de andere cross-bak-koppelingen.
-// - Zet de reden alleen als er nog géén reden staat, zodat een handmatig
-//   gekozen reden (ook als die toevallig ook "onderzoek" is) nooit overschreven
-//   wordt.
-// - Heft de reden alleen weer automatisch op bij storingen die zelf ook
-//   automatisch geblokkeerd waren (auto: true) en waar de vlag nu ontbreekt —
-//   een handmatige keuze blijft altijd staan tot iemand 'm zelf wijzigt.
-// Geeft de lijst gewijzigde ordernummers terug (voor een gerichte save).
-function applyOnderzoekBlockFlags(storingen) {
-  const flagged = new Set(
-    storingen
-      .filter(s => s.onderzoekBlockFlag && classifyTeOnderzoekenFull(s).status !== 'genegeerd')
-      .map(s => s.order)
-  );
-  const changed = [];
-  flagged.forEach(order => {
-    if (!ovBlockStatusOf(order).reason) {
-      setOvBlockReason(order, 'onderzoek', true);
-      changed.push(order);
-    }
-  });
-  Object.keys(state.ovBlockStatus).forEach(order => {
-    const entry = state.ovBlockStatus[order];
-    if (entry.reason === 'onderzoek' && entry.auto && !flagged.has(order)) {
-      setOvBlockReason(order, '');
-      changed.push(order);
-    }
-  });
-  return changed;
-}
-
-// Classificatie voor "klaar voor inplannen": ook een filter óver de OV NUS-
-// lijst. Hier staan altijd 2 namen; de 1e naam is wie de storing heeft
-// klaargezet — telt alleen mee als die naam in de klaarzetters-lijst staat
-// (standaard "Marc van Veen"). De 2e naam wordt niet voor classificatie
-// gebruikt, alleen getoond.
-function classifyKlaarVoorInplannen(s) {
-  const names = s.names || [];
-  if (names.length === 2) {
-    const isKlaarzetter = state.planNamen.some(n => n.trim().toLowerCase() === names[0].trim().toLowerCase());
-    return isKlaarzetter
-      ? { status: 'klaar', reden: null }
-      : { status: 'genegeerd', reden: `1e naam (${names[0]}) is geen klaarzetter` };
-  }
-  return { status: 'genegeerd', reden: 'geen 2 namen vermeld' };
-}
-function classifyKlaarVoorInplannenFull(s) {
-  const base = classifyKlaarVoorInplannen(s);
-  if (base.status === 'genegeerd' || state.snapshots.length === 0) return base;
-  if (!latestOvOrderSet().has(s.order)) return { status: 'genegeerd', reden: NOT_IN_OV_REASON };
-  return base;
-}
-
-// "Te controleren onderzoeken" en "klaar voor inplannen" zijn filters óver de
-// OV NUS-lijst, geen eigen bakken — dus elke relevante storing daarin hoort
-// ook in de actuele OV NUS-lijst te staan (zie classifyTeOnderzoekenFull /
-// classifyKlaarVoorInplannenFull). Deze sets worden gebruikt om dat
-// ordernummer terug te vinden vanuit de andere kant, bv. voor de badges en
-// klikbare tegels op de OV NUS-tabel.
 // Bouwt, in één keer over alle bestaande OV-snapshots (nieuwste eerst), een
 // opzoektabel van de laatst bekende gebiedscode/status per ordernummer. Wordt
 // gebruikt om net-verwerkte storingen aan te vullen met de waarde die deze
@@ -845,26 +632,6 @@ function enrichWithCarriedForwardOvFields(storingen, priorSnapshots) {
     if (!s.gebiedscode && gebiedscodeByOrder[s.order]) s.gebiedscode = gebiedscodeByOrder[s.order];
     if (!s.ovStatus && statusByOrder[s.order]) s.ovStatus = statusByOrder[s.order];
   });
-}
-
-function latestOvOrderSet() {
-  if (state.snapshots.length === 0) return new Set();
-  const latest = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).pop();
-  return new Set(typeFiltered(latest.storingen).map(s => s.order));
-}
-function latestRelevantToOrderSet() {
-  if (state.toSnapshots.length === 0) return new Set();
-  const latest = state.toSnapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).pop();
-  return new Set(latest.storingen.filter(s => classifyTeOnderzoekenFull(s).status !== 'genegeerd').map(s => s.order));
-}
-function latestRelevantPlanOrderSet() {
-  if (state.planSnapshots.length === 0) return new Set();
-  const latest = state.planSnapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).pop();
-  return new Set(latest.storingen.filter(s => classifyKlaarVoorInplannenFull(s).status !== 'genegeerd').map(s => s.order));
-}
-function crossBucketBadge(order, orderSet, label, seriesVar) {
-  if (!orderSet || !orderSet.has(order)) return '';
-  return `<span class="cross-bucket-badge" style="--cb-color:var(${seriesVar})" title="${esc(label)}">⇄ ${esc(label)}</span>`;
 }
 
 /* ---------- Derived helpers ---------- */
@@ -969,22 +736,10 @@ const state = {
   sortState: { key: 'daysLeft', dir: 1 },
   regioViewMode: 'chart',
   trendViewMode: 'chart',
-  toSnapshots: [],
-  meetdienstNamen: [],
-  handoffNamen: [],
-  toSortState: { key: 'daysLeft', dir: 1 },
-  toActiveFilter: 'Totaal',
-  wvStatus: {},
   statDetailFilter: null,
   statDetailOrders: null,
-  planSnapshots: [],
-  planNamen: [],
-  planSortState: { key: 'daysLeft', dir: 1 },
-  planActiveFilter: 'Totaal',
   ovBlockStatus: {},
   searchQuery: '',
-  toSearchQuery: '',
-  planSearchQuery: '',
   ovBulkSelected: new Set(),
   // Bevriest welke orders + categorie in "Aandacht deze week" staan, zodat
   // een rij niet meteen verdwijnt zodra je 'm daar blokkeert (zelfde reden als
@@ -1101,13 +856,10 @@ function isOvBlockStale(order) {
 // niet-geblokkeerd naar geblokkeerd, zodat dit de duur van de HUIDIGE
 // blokkade blijft — niet gereset door bv. een reden-wissel (rezap -> aanleg)
 // of een toelichting bijwerken.
-// `auto`: alleen true wanneer dit door applyOnderzoekBlockFlags automatisch
-// gezet is (i.p.v. via de dropdown) — bepaalt of een volgende week 'm ook
-// weer automatisch mag opheffen zonder een handmatige keuze aan te tasten.
-function setOvBlockReason(order, reason, auto) {
+function setOvBlockReason(order, reason) {
   const cur = state.ovBlockStatus[order] || {};
   const since = reason ? (cur.reason ? cur.since : new Date().toISOString()) : undefined;
-  state.ovBlockStatus[order] = { reason, note: cur.note || '', since, auto: reason ? !!auto : undefined };
+  state.ovBlockStatus[order] = { reason, note: cur.note || '', since };
 }
 function setOvBlockNote(order, note) {
   const cur = state.ovBlockStatus[order] || {};
@@ -1415,8 +1167,6 @@ function renderStatDetail(current, mutations) {
     const refresh = async (order) => {
       await saveOvBlockStatusMap(state.ovBlockStatus, order);
       renderDashboardFromState();
-      if (state.toSnapshots.length > 0) renderToDashboardFromState();
-      if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
     };
     container.querySelectorAll('.ov-block-select').forEach(sel => {
       sel.addEventListener('change', () => {
@@ -1539,8 +1289,6 @@ function renderAttentionList(current, allVisible) {
     const refresh = (order) => {
       saveOvBlockStatusMap(state.ovBlockStatus, order).then(() => {
         renderDashboardFromState();
-        if (state.toSnapshots.length > 0) renderToDashboardFromState();
-        if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
       });
     };
     container.querySelectorAll('.ov-block-select').forEach(sel => {
@@ -1761,9 +1509,9 @@ function renderTrendChart(snapshots) {
 
 /* ---------- Rendering: mutation tables ---------- */
 
-function miniTable(list, toOrderSet, planOrderSet) {
+function miniTable(list) {
   if (list.length === 0) return '<p class="empty-note">Geen mutaties.</p>';
-  const rows = list.map(s => `<tr><td>${esc(s.order)} ${crossBucketBadge(s.order, toOrderSet, 'ook in te onderzoeken-bak', '--series-2')} ${crossBucketBadge(s.order, planOrderSet, 'klaar voor inplannen', '--series-3')}</td><td>${esc(regioOf(s))} — ${esc(s.street)}</td><td>${esc(s.type)}</td></tr>`).join('');
+  const rows = list.map(s => `<tr><td>${esc(s.order)}</td><td>${esc(regioOf(s))} — ${esc(s.street)}</td><td>${esc(s.type)}</td></tr>`).join('');
   return `<table><thead><tr><th>Order</th><th>Adres</th><th>Type</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
@@ -1775,24 +1523,14 @@ function renderMutationTables(mutations) {
     document.getElementById('table-out').innerHTML = '<p class="empty-note">Nog geen vorige week om mee te vergelijken.</p>';
     return;
   }
-  // Alleen zinvol bij "nieuw binnengekomen": relevante te-onderzoeken/klaar-
-  // voor-inplannen-orders zijn per definitie ook actuele OV NUS-orders (zie
-  // classifyTeOnderzoekenFull/classifyKlaarVoorInplannenFull), dus een order
-  // dat net uit OV NUS is verdwenen kan nooit meer in die sets zitten — het
-  // badge zou daar dus nooit aanslaan.
-  document.getElementById('table-in').innerHTML = miniTable(mutations.nieuw, latestRelevantToOrderSet(), latestRelevantPlanOrderSet());
+  document.getElementById('table-in').innerHTML = miniTable(mutations.nieuw);
   document.getElementById('table-out').innerHTML = miniTable(mutations.uitgegaan);
 }
 
 /* ---------- Rendering: full table ---------- */
 
-// Gedeeld door de drie "volledige lijst"-tabellen (OV NUSsen, Te onderzoeken,
-// Klaar voor inplannen): zelfde kop-opbouw, zelfde sorteerlogica, zelfde
-// rij-opbouw uit een kolommen-config. Alleen de kolommen zelf (en eventuele
-// extra's als de checkbox-kolom bij OV) verschillen per bak — die blijven per
-// bak gedefinieerd, zodat bak-specifieke logica (blokkade-select, WV-status,
-// cross-bucket badges) lokaal leesbaar blijft in plaats van weggestopt achter
-// generieke callbacks.
+// Gedeeld door "Volledige lijst": kop-opbouw, sorteerlogica en rij-opbouw uit
+// een kolommen-config.
 function sortByState(rows, sortState) {
   const { key, dir } = sortState;
   return rows.slice().sort((a, b) => {
@@ -1857,14 +1595,14 @@ function ovStatusPillHtml(s) {
   return `<span class="ov-status-pill ov-status-${OV_STATUS_SLUGS[s.ovStatus] || 'onbekend'}">${esc(s.ovStatus)}</span>`;
 }
 
-function buildOvColumns(toOrderSet, planOrderSet) {
+function buildOvColumns() {
   return [
     { key: 'regioGroup', label: 'Regio', cell: s => `<td>${esc(regioGroupLabel(s.regioGroup))}</td>` },
     { key: 'gebiedscode', label: 'Gebied', cell: s => `<td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>` },
     { key: 'ovStatus', label: 'Status', cell: s => `<td>${ovStatusPillHtml(s)}</td>` },
     { key: 'city', label: 'Plaats', cell: s => `<td>${esc(s.city)}</td>` },
     { key: 'street', label: 'Adres', cell: s => `<td>${esc(s.street)}, ${esc(s.postcode)}</td>` },
-    { key: 'order', label: 'Order', cell: s => `<td>${esc(s.order)} ${crossBucketBadge(s.order, toOrderSet, 'ook in te onderzoeken-bak', '--series-2')} ${crossBucketBadge(s.order, planOrderSet, 'klaar voor inplannen', '--series-3')}</td>` },
+    { key: 'order', label: 'Order', cell: s => `<td>${esc(s.order)}</td>` },
     { key: 'asset', label: 'Asset', cell: s => `<td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>` },
     { key: 'wvNaam', label: "WV'er", cell: s => `<td>${s.wvNaam ? esc(s.wvNaam) : '—'}</td>` },
     { key: 'daysLeft', label: 'Dagen', num: true, cell: s => `<td class="num">${renderDaysPill(s)}</td>` },
@@ -1888,9 +1626,7 @@ function renderTableAll(current) {
     firstSeenWeek: firstSeenMap[s.order] || '',
   }));
   const rows = sortByState(annotated, state.sortState);
-  const toOrderSet = latestRelevantToOrderSet();
-  const planOrderSet = latestRelevantPlanOrderSet();
-  const columns = buildOvColumns(toOrderSet, planOrderSet);
+  const columns = buildOvColumns();
   renderFullTable(container, rows, columns, state.sortState, {
     leadHead: isStaticExport ? '' : '<th class="checkbox-col"><input type="checkbox" id="ov-select-all" title="Alles selecteren"></th>',
     leadCell: isStaticExport ? null : s => `<td class="checkbox-col"><input type="checkbox" class="ov-row-select" data-order="${esc(s.order)}"${state.ovBulkSelected.has(s.order) ? ' checked' : ''}></td>`,
@@ -1902,8 +1638,6 @@ function renderTableAll(current) {
       setOvBlockReason(sel.dataset.order, sel.value);
       await saveOvBlockStatusMap(state.ovBlockStatus, sel.dataset.order);
       renderDashboardFromState();
-      if (state.toSnapshots.length > 0) renderToDashboardFromState();
-      if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
     });
   });
   container.querySelectorAll('.ov-block-note').forEach(inp => {
@@ -1911,8 +1645,6 @@ function renderTableAll(current) {
       setOvBlockNote(inp.dataset.order, inp.value);
       await saveOvBlockStatusMap(state.ovBlockStatus, inp.dataset.order);
       renderDashboardFromState();
-      if (state.toSnapshots.length > 0) renderToDashboardFromState();
-      if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
     });
   });
 
@@ -1976,7 +1708,6 @@ function renderWeeksList() {
       state.attentionOrders = null;
       if (snaps.length === 0) setDashboardEmpty('dashboard', 'dashboard-empty', true);
       else renderDashboardFromState();
-      if (state.toSnapshots.length > 0) renderToDashboardFromState(); // cross-bak badges bijwerken
       renderWeeksList();
     });
   });
@@ -2033,396 +1764,6 @@ function renderFilterTabs(latestVisible) {
       renderDashboardFromState();
     });
   });
-}
-
-/* ---------- Te onderzoeken storingen (tweede bak) ---------- */
-
-function renderNameChipList(containerId, list, onRemove) {
-  const container = document.getElementById(containerId);
-  if (list.length === 0) { container.innerHTML = '<p class="empty-note">Nog geen namen ingesteld.</p>'; return; }
-  container.innerHTML = list.map(n => `<span class="type-chip">${esc(n)}<button class="remove-name" data-name="${esc(n)}" title="Verwijderen">×</button></span>`).join('');
-  container.querySelectorAll('.remove-name').forEach(btn => {
-    btn.addEventListener('click', () => onRemove(btn.dataset.name));
-  });
-}
-
-function renderMeetdienstList() {
-  renderNameChipList('meetdienst-list', state.meetdienstNamen, async (name) => {
-    state.meetdienstNamen = state.meetdienstNamen.filter(n => n !== name);
-    await saveNameList(MEETDIENST_LIST_KEY, state.meetdienstNamen);
-    renderToDashboardFromState();
-  });
-}
-function renderHandoffList() {
-  renderNameChipList('handoff-list', state.handoffNamen, async (name) => {
-    state.handoffNamen = state.handoffNamen.filter(n => n !== name);
-    await saveNameList(HANDOFF_LIST_KEY, state.handoffNamen);
-    renderToDashboardFromState();
-  });
-}
-
-function filterToByActive(classified) {
-  if (state.toActiveFilter === 'Totaal') return classified;
-  return classified.filter(c => regioGroupOf(c.storing) === state.toActiveFilter);
-}
-
-function renderToFilterTabs(classifiedRelevant) {
-  const container = document.getElementById('to-filter-tabs');
-  const present = sortByGroupOrder(Array.from(new Set(classifiedRelevant.map(c => regioGroupOf(c.storing)))));
-  if (!present.includes(state.toActiveFilter) && state.toActiveFilter !== 'Totaal') state.toActiveFilter = 'Totaal';
-  const tabs = ['Totaal', ...present];
-  container.innerHTML = tabs.map(t => {
-    const active = state.toActiveFilter === t ? ' active' : '';
-    return `<button class="filter-tab${active}" data-to-filter="${esc(t)}">${esc(t === 'Totaal' ? 'Totaal' : regioGroupLabel(t))}</button>`;
-  }).join('');
-  container.querySelectorAll('button[data-to-filter]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.toActiveFilter = btn.dataset.toFilter;
-      renderToDashboardFromState();
-    });
-  });
-}
-
-// Handmatige WV-status: instelbaar voor elke relevante storing (zowel "bij
-// meetdienst" als "open voor werkvoorbereiders"), zodat je ook kan vastleggen
-// dat een storing bij de meetdienst ligt te wachten op iets specifieks.
-function wvStatusOf(order) { return state.wvStatus[order] || {}; }
-
-function renderToStatTiles(classified) {
-  const el = document.getElementById('to-stat-tiles');
-  const meetdienstCount = classified.filter(c => c.status === 'meetdienst').length;
-  const wvItems = classified.filter(c => c.status === 'werkvoorbereiders');
-  const relevant = classified.filter(c => c.status !== 'genegeerd');
-  const oppakkenCount = relevant.filter(c => wvStatusOf(c.storing.order).status === 'oppakken').length;
-  const wachtendCount = relevant.filter(c => wvStatusOf(c.storing.order).status === 'wachtend').length;
-  const onbepaaldCount = relevant.length - oppakkenCount - wachtendCount;
-  const tiles = [
-    { icon: '📋', label: 'Totaal relevant', value: meetdienstCount + wvItems.length },
-    { icon: '🔬', label: 'Bij meetdienst', value: meetdienstCount, note: 'nog niets aan te doen' },
-    { icon: '🧑‍💼', label: 'Open voor werkvoorbereiders', value: wvItems.length, note: 'moet ingepland worden' },
-    { icon: '▶️', label: 'Moet opgepakt worden', value: oppakkenCount },
-    { icon: '⏸️', label: 'Wachtend op iets', value: wachtendCount, note: onbepaaldCount > 0 ? `${onbepaaldCount} nog niet bepaald` : undefined },
-  ];
-  el.innerHTML = tiles.map(t => `
-    <div class="stat-tile stat-tile-clickable" data-scroll-target="to-full-table-card" tabindex="0" role="button">
-      <div class="stat-tile-icon" aria-hidden="true">${t.icon}</div>
-      <div class="label">${esc(t.label)}</div>
-      <div class="value">${esc(t.value)}</div>
-      ${t.note ? `<div class="delta muted">${esc(t.note)}</div>` : ''}
-      <div class="stat-tile-hint">Klik om te bekijken ↓</div>
-    </div>`).join('');
-  el.querySelectorAll('[data-scroll-target]').forEach(tile => {
-    tile.addEventListener('click', () => scrollToAndHighlight(tile.dataset.scrollTarget));
-    tile.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scrollToAndHighlight(tile.dataset.scrollTarget); }
-    });
-  });
-}
-
-function renderToIgnored(classified) {
-  const container = document.getElementById('to-ignored');
-  const countEl = document.getElementById('to-ignored-count');
-  const ignored = classified.filter(c => c.status === 'genegeerd');
-  const notInOvCount = ignored.filter(c => c.reden === NOT_IN_OV_REASON).length;
-  if (countEl) countEl.textContent = ignored.length ? String(ignored.length) : '';
-  if (ignored.length === 0) { container.innerHTML = '<p class="empty-note">Niets genegeerd deze week.</p>'; return; }
-  const note = notInOvCount > 0
-    ? `<p class="muted small">Waarvan <strong>${notInOvCount}</strong> niet gevonden in de actuele OV NUS-lijst — "te controleren onderzoeken" is een filter óver die lijst, dus die storingen zijn (nu) niet voor ons.</p>`
-    : '';
-  const rows = ignored.map(c => `<tr>
-      <td>${esc(c.storing.order)}</td>
-      <td>${esc(c.storing.city)} — ${esc(c.storing.street)}</td>
-      <td>${esc((c.storing.names || []).join(' → ') || '—')}</td>
-      <td>${esc(c.reden)}</td>
-    </tr>`).join('');
-  container.innerHTML = `${note}<table><thead><tr><th>Order</th><th>Adres</th><th>Naam</th><th>Reden</th></tr></thead><tbody>${rows}</tbody></table>`;
-}
-
-const WV_STATUS_LABELS = { oppakken: 'Moet opgepakt worden', wachtend: 'Wachtend op iets' };
-
-function wvStatusCellHtml(s) {
-  const wv = wvStatusOf(s.order);
-  if (isStaticExport) {
-    return wv.status
-      ? `<span class="status-pill">${esc(WV_STATUS_LABELS[wv.status])}</span>${wv.note ? `<div class="muted small">${esc(wv.note)}</div>` : ''}`
-      : '<span class="muted small">— Nog te bepalen —</span>';
-  }
-  return `
-      <select class="wv-status-select" data-order="${esc(s.order)}">
-        <option value="" ${!wv.status ? 'selected' : ''}>— Nog te bepalen —</option>
-        <option value="oppakken" ${wv.status === 'oppakken' ? 'selected' : ''}>Moet opgepakt worden</option>
-        <option value="wachtend" ${wv.status === 'wachtend' ? 'selected' : ''}>Wachtend op iets</option>
-      </select>
-      ${wv.status === 'wachtend' ? `<input type="text" class="wv-status-note" data-order="${esc(s.order)}" placeholder="Waarop wacht je?" value="${esc(wv.note || '')}">` : ''}`;
-}
-
-const TO_COLUMNS = [
-  { key: 'regioGroup', label: 'Regio', cell: s => `<td>${esc(regioGroupLabel(s.regioGroup))}</td>` },
-  { key: 'gebiedscode', label: 'Gebied', cell: s => `<td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>` },
-  { key: 'city', label: 'Plaats', cell: s => `<td>${esc(s.city)}</td>` },
-  { key: 'street', label: 'Adres', cell: s => `<td>${esc(s.street)}, ${esc(s.postcode)}</td>` },
-  { key: 'order', label: 'Order', cell: s => `<td>${esc(s.order)}</td>` },
-  { key: 'toStatusLabel', label: 'Status', cell: s => `<td>${esc(s.toStatusLabel)}</td>` },
-  { key: 'namesLabel', label: 'Naam', cell: s => `<td>${esc(s.namesLabel)}</td>` },
-  { key: 'daysLeft', label: 'Dagen', num: true, cell: s => `<td class="num">${renderDaysPill(s)}</td>` },
-  { key: 'firstSeenWeek', label: 'Open sinds', cell: s => `<td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>` },
-  { key: 'executionDate', label: 'Uitvoering', cell: s => `<td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>` },
-  { key: 'type', label: 'Type', cell: s => `<td>${esc(s.type)}</td>` },
-  { key: 'wvStatusSort', label: 'WV-status', cell: s => `<td class="wv-status-cell">${wvStatusCellHtml(s)}</td>` },
-];
-
-function renderToTableAll(classified) {
-  const container = document.getElementById('to-table-all');
-  let relevant = classified.filter(c => c.status !== 'genegeerd');
-  if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen relevante storingen.</p>'; return; }
-  relevant = relevant.filter(c => matchesSearch(c.storing, state.toSearchQuery));
-  if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen storingen gevonden voor deze zoekopdracht.</p>'; return; }
-  const firstSeenMap = firstSeenWeekMapFor(state.toSnapshots);
-  const annotated = relevant.map(c => {
-    const wv = wvStatusOf(c.storing.order);
-    return Object.assign({}, c.storing, {
-      regioGroup: regioGroupOf(c.storing),
-      toStatus: c.status,
-      toStatusLabel: c.status === 'meetdienst' ? 'Bij meetdienst' : "Open voor WV'ers",
-      namesLabel: (c.storing.names || []).join(' → ') || '—',
-      wvStatusSort: c.status === 'werkvoorbereiders' ? (WV_STATUS_LABELS[wv.status] || '') : '',
-      firstSeenWeek: firstSeenMap[c.storing.order] || '',
-    });
-  });
-  const rows = sortByState(annotated, state.toSortState);
-  renderFullTable(container, rows, TO_COLUMNS, state.toSortState, {
-    rowClass: s => needsFollowUp(s) ? 'row-alert' : '',
-  });
-
-  container.querySelectorAll('.wv-status-select').forEach(sel => {
-    sel.addEventListener('change', async () => {
-      const order = sel.dataset.order;
-      const current = state.wvStatus[order] || {};
-      state.wvStatus[order] = { status: sel.value, note: current.note || '' };
-      await saveWvStatusMap(state.wvStatus, order);
-      renderToDashboardFromState();
-    });
-  });
-  container.querySelectorAll('.wv-status-note').forEach(inp => {
-    inp.addEventListener('change', async () => {
-      const order = inp.dataset.order;
-      const current = state.wvStatus[order] || {};
-      state.wvStatus[order] = { status: current.status, note: inp.value };
-      await saveWvStatusMap(state.wvStatus, order);
-      renderToDashboardFromState();
-    });
-  });
-}
-
-function renderToWeeksList() {
-  const container = document.getElementById('to-weeks-list');
-  if (state.toSnapshots.length === 0) { container.innerHTML = '<p class="empty-note">Nog geen weken opgeslagen.</p>'; return; }
-  const rows = state.toSnapshots.slice().sort((a, b) => b.week.localeCompare(a.week) || b.savedAt.localeCompare(a.savedAt)).map(sn => `
-    <div class="weeks-list-row">
-      <span>Week van <strong>${esc(sn.week)}</strong> — ${sn.storingen.length} storingen (opgeslagen ${esc(fmtDate(sn.savedAt))})</span>
-      <button class="btn-link danger" data-saved-at="${esc(sn.savedAt)}">Verwijderen</button>
-    </div>`).join('');
-  container.innerHTML = rows;
-  container.querySelectorAll('button[data-saved-at]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('Deze update verwijderen?')) return;
-      const snaps = (await loadToSnapshots()).filter(s => s.savedAt !== btn.dataset.savedAt);
-      await saveToSnapshots(snaps);
-      state.toSnapshots = snaps;
-      if (snaps.length === 0) setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true);
-      else renderToDashboardFromState();
-      if (state.snapshots.length > 0) renderDashboardFromState(); // cross-bak badges bijwerken
-      renderToWeeksList();
-    });
-  });
-}
-
-function showToParseWarning(errors, okCount) {
-  const el = document.getElementById('to-parse-warning');
-  if (errors.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
-  el.classList.remove('hidden');
-  el.innerHTML = `<strong>${errors.length} van de ${errors.length + okCount} blokken kon niet worden herkend.</strong>
-    <details><summary>Bekijk details</summary>
-      ${errors.map(e => `<div style="margin-top:8px;"><em>${esc(e.message)}</em><pre style="white-space:pre-wrap;font-size:0.75rem;">${esc(e.raw)}</pre></div>`).join('')}
-    </details>`;
-}
-
-function renderToDashboardFromState() {
-  const snaps = state.toSnapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
-  state.toSnapshots = snaps;
-  renderMeetdienstList();
-  renderHandoffList();
-  if (snaps.length === 0) { setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true); return; }
-  const latest = snaps[snaps.length - 1];
-  const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoekenFull(s)));
-  const relevantAll = classified.filter(c => c.status !== 'genegeerd');
-
-  renderToFilterTabs(relevantAll);
-  const classifiedFiltered = filterToByActive(classified);
-
-  setDashboardEmpty('to-dashboard', 'to-dashboard-empty', false);
-  renderToStatTiles(classifiedFiltered);
-  renderToIgnored(classifiedFiltered);
-  renderToTableAll(classifiedFiltered);
-  renderToWeeksList();
-  updateStorageUsage();
-}
-
-/* ---------- Klaar voor inplannen (derde bak) ---------- */
-
-function renderKlaarzetterList() {
-  renderNameChipList('klaarzetter-list', state.planNamen, async (name) => {
-    state.planNamen = state.planNamen.filter(n => n !== name);
-    await saveNameList(PLAN_NAMES_KEY, state.planNamen);
-    renderPlanDashboardFromState();
-  });
-}
-
-function filterPlanByActive(classified) {
-  if (state.planActiveFilter === 'Totaal') return classified;
-  return classified.filter(c => regioGroupOf(c.storing) === state.planActiveFilter);
-}
-
-function renderPlanFilterTabs(classifiedRelevant) {
-  const container = document.getElementById('plan-filter-tabs');
-  const present = sortByGroupOrder(Array.from(new Set(classifiedRelevant.map(c => regioGroupOf(c.storing)))));
-  if (!present.includes(state.planActiveFilter) && state.planActiveFilter !== 'Totaal') state.planActiveFilter = 'Totaal';
-  const tabs = ['Totaal', ...present];
-  container.innerHTML = tabs.map(t => {
-    const active = state.planActiveFilter === t ? ' active' : '';
-    return `<button class="filter-tab${active}" data-plan-filter="${esc(t)}">${esc(t === 'Totaal' ? 'Totaal' : regioGroupLabel(t))}</button>`;
-  }).join('');
-  container.querySelectorAll('button[data-plan-filter]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.planActiveFilter = btn.dataset.planFilter;
-      renderPlanDashboardFromState();
-    });
-  });
-}
-
-function renderPlanStatTiles(classified) {
-  const el = document.getElementById('plan-stat-tiles');
-  const relevant = classified.filter(c => c.status !== 'genegeerd');
-  const tiles = [
-    { icon: '🗓️', label: 'Klaar voor inplannen', value: relevant.length, note: 'kan worden ingepland' },
-  ];
-  el.innerHTML = tiles.map(t => `
-    <div class="stat-tile stat-tile-clickable" data-scroll-target="plan-full-table-card" tabindex="0" role="button">
-      <div class="stat-tile-icon" aria-hidden="true">${t.icon}</div>
-      <div class="label">${esc(t.label)}</div>
-      <div class="value">${esc(t.value)}</div>
-      ${t.note ? `<div class="delta muted">${esc(t.note)}</div>` : ''}
-      <div class="stat-tile-hint">Klik om te bekijken ↓</div>
-    </div>`).join('');
-  el.querySelectorAll('[data-scroll-target]').forEach(tile => {
-    tile.addEventListener('click', () => scrollToAndHighlight(tile.dataset.scrollTarget));
-    tile.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scrollToAndHighlight(tile.dataset.scrollTarget); }
-    });
-  });
-}
-
-function renderPlanIgnored(classified) {
-  const container = document.getElementById('plan-ignored');
-  const countEl = document.getElementById('plan-ignored-count');
-  const ignored = classified.filter(c => c.status === 'genegeerd');
-  const notInOvCount = ignored.filter(c => c.reden === NOT_IN_OV_REASON).length;
-  if (countEl) countEl.textContent = ignored.length ? String(ignored.length) : '';
-  if (ignored.length === 0) { container.innerHTML = '<p class="empty-note">Niets genegeerd deze week.</p>'; return; }
-  const note = notInOvCount > 0
-    ? `<p class="muted small">Waarvan <strong>${notInOvCount}</strong> niet gevonden in de actuele OV NUS-lijst — "klaar voor inplannen" is een filter óver die lijst, dus die storingen zijn (nu) niet voor ons.</p>`
-    : '';
-  const rows = ignored.map(c => `<tr>
-      <td>${esc(c.storing.order)}</td>
-      <td>${esc(c.storing.city)} — ${esc(c.storing.street)}</td>
-      <td>${esc((c.storing.names || []).join(' → ') || '—')}</td>
-      <td>${esc(c.reden)}</td>
-    </tr>`).join('');
-  container.innerHTML = `${note}<table><thead><tr><th>Order</th><th>Adres</th><th>Naam</th><th>Reden</th></tr></thead><tbody>${rows}</tbody></table>`;
-}
-
-const PLAN_COLUMNS = [
-  { key: 'regioGroup', label: 'Regio', cell: s => `<td>${esc(regioGroupLabel(s.regioGroup))}</td>` },
-  { key: 'gebiedscode', label: 'Gebied', cell: s => `<td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>` },
-  { key: 'city', label: 'Plaats', cell: s => `<td>${esc(s.city)}</td>` },
-  { key: 'street', label: 'Adres', cell: s => `<td>${esc(s.street)}, ${esc(s.postcode)}</td>` },
-  { key: 'order', label: 'Order', cell: s => `<td>${esc(s.order)}</td>` },
-  { key: 'namesLabel', label: 'Naam', cell: s => `<td>${esc(s.namesLabel)}</td>` },
-  { key: 'daysLeft', label: 'Dagen', num: true, cell: s => `<td class="num">${renderDaysPill(s)}</td>` },
-  { key: 'firstSeenWeek', label: 'Open sinds', cell: s => `<td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>` },
-  { key: 'executionDate', label: 'Uitvoering', cell: s => `<td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>` },
-  { key: 'type', label: 'Type', cell: s => `<td>${esc(s.type)}</td>` },
-];
-
-function renderPlanTableAll(classified) {
-  const container = document.getElementById('plan-table-all');
-  let relevant = classified.filter(c => c.status !== 'genegeerd');
-  if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen relevante storingen.</p>'; return; }
-  relevant = relevant.filter(c => matchesSearch(c.storing, state.planSearchQuery));
-  if (relevant.length === 0) { container.innerHTML = '<p class="empty-note">Geen storingen gevonden voor deze zoekopdracht.</p>'; return; }
-  const firstSeenMap = firstSeenWeekMapFor(state.planSnapshots);
-  const annotated = relevant.map(c => Object.assign({}, c.storing, {
-    regioGroup: regioGroupOf(c.storing),
-    namesLabel: (c.storing.names || []).join(' → ') || '—',
-    firstSeenWeek: firstSeenMap[c.storing.order] || '',
-  }));
-  const rows = sortByState(annotated, state.planSortState);
-  renderFullTable(container, rows, PLAN_COLUMNS, state.planSortState, {
-    rowClass: s => needsFollowUp(s) ? 'row-alert' : '',
-  });
-}
-
-function renderPlanWeeksList() {
-  const container = document.getElementById('plan-weeks-list');
-  if (state.planSnapshots.length === 0) { container.innerHTML = '<p class="empty-note">Nog geen weken opgeslagen.</p>'; return; }
-  const rows = state.planSnapshots.slice().sort((a, b) => b.week.localeCompare(a.week) || b.savedAt.localeCompare(a.savedAt)).map(sn => `
-    <div class="weeks-list-row">
-      <span>Week van <strong>${esc(sn.week)}</strong> — ${sn.storingen.length} storingen (opgeslagen ${esc(fmtDate(sn.savedAt))})</span>
-      <button class="btn-link danger" data-saved-at="${esc(sn.savedAt)}">Verwijderen</button>
-    </div>`).join('');
-  container.innerHTML = rows;
-  container.querySelectorAll('button[data-saved-at]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('Deze update verwijderen?')) return;
-      const snaps = (await loadPlanSnapshots()).filter(s => s.savedAt !== btn.dataset.savedAt);
-      await savePlanSnapshots(snaps);
-      state.planSnapshots = snaps;
-      if (snaps.length === 0) setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', true);
-      else renderPlanDashboardFromState();
-      if (state.snapshots.length > 0) renderDashboardFromState(); // klikbare OV-tegels bijwerken
-      renderPlanWeeksList();
-    });
-  });
-}
-
-function showPlanParseWarning(errors, okCount) {
-  const el = document.getElementById('plan-parse-warning');
-  if (errors.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
-  el.classList.remove('hidden');
-  el.innerHTML = `<strong>${errors.length} van de ${errors.length + okCount} blokken kon niet worden herkend.</strong>
-    <details><summary>Bekijk details</summary>
-      ${errors.map(e => `<div style="margin-top:8px;"><em>${esc(e.message)}</em><pre style="white-space:pre-wrap;font-size:0.75rem;">${esc(e.raw)}</pre></div>`).join('')}
-    </details>`;
-}
-
-function renderPlanDashboardFromState() {
-  const snaps = state.planSnapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
-  state.planSnapshots = snaps;
-  renderKlaarzetterList();
-  if (snaps.length === 0) { setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', true); return; }
-  const latest = snaps[snaps.length - 1];
-  const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyKlaarVoorInplannenFull(s)));
-  const relevantAll = classified.filter(c => c.status !== 'genegeerd');
-
-  renderPlanFilterTabs(relevantAll);
-  const classifiedFiltered = filterPlanByActive(classified);
-
-  setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', false);
-  renderPlanStatTiles(classifiedFiltered);
-  renderPlanIgnored(classifiedFiltered);
-  renderPlanTableAll(classifiedFiltered);
-  renderPlanWeeksList();
-  updateStorageUsage();
 }
 
 /* ---------- Orchestration ---------- */
@@ -2502,30 +1843,22 @@ function buildWeekSummaryText() {
   return lines.join('\n');
 }
 
-// Verwijdert WV-status- en blokkade-reden-aantekeningen van orders die in
-// geen van de 3 bakken meer voorkomen in de meest recente week — voorkomt dat
-// deze mapjes onbeperkt blijven groeien met aantekeningen bij storingen die
-// allang zijn afgesloten. De weekgegevens zelf blijven altijd bewaard.
+// Verwijdert blokkade-reden-aantekeningen van orders die niet meer voorkomen
+// in de meest recente week — voorkomt dat dit mapje onbeperkt blijft groeien
+// met aantekeningen bij storingen die allang zijn afgesloten. De
+// weekgegevens zelf blijven altijd bewaard.
 function cleanupOldStatusData() {
   const latestOf = (snapshots) => {
     if (snapshots.length === 0) return [];
     return snapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).pop().storingen;
   };
-  const liveOrders = new Set([
-    ...latestOf(state.snapshots).map(s => s.order),
-    ...latestOf(state.toSnapshots).map(s => s.order),
-    ...latestOf(state.planSnapshots).map(s => s.order),
-  ]);
+  const liveOrders = new Set(latestOf(state.snapshots).map(s => s.order));
 
-  const wvRemoved = [];
-  Object.keys(state.wvStatus).forEach(order => {
-    if (!liveOrders.has(order)) { delete state.wvStatus[order]; wvRemoved.push(order); }
-  });
   const blockRemoved = [];
   Object.keys(state.ovBlockStatus).forEach(order => {
     if (!liveOrders.has(order)) { delete state.ovBlockStatus[order]; blockRemoved.push(order); }
   });
-  return { wvRemoved, blockRemoved };
+  return { blockRemoved };
 }
 
 function showParseWarning(errors, okCount) {
@@ -2540,9 +1873,9 @@ function showParseWarning(errors, okCount) {
 
 async function reloadAllStateAndRender() {
   state.attentionOrders = null;
-  // Vóór wvStatus/ovBlockStatus geladen worden: die functies kijken naar
+  // Vóór ovBlockStatus geladen wordt: die functie kijkt naar
   // state.sharePointConfig om te bepalen of ze uit SharePoint of IndexedDB
-  // moeten lezen.
+  // moet lezen.
   state.sharePointConfig = await loadSharePointConfig();
   if (state.sharePointConfig.enabled && location.protocol === 'file:') {
     // Kan sowieso nooit werken vanaf een lokaal geopend bestand (zie
@@ -2554,20 +1887,10 @@ async function reloadAllStateAndRender() {
   }
   state.snapshots = await loadSnapshots();
   state.typeWhitelist = await loadTypeWhitelist();
-  state.toSnapshots = await loadToSnapshots();
-  state.meetdienstNamen = await loadNameList(MEETDIENST_LIST_KEY, DEFAULT_MEETDIENST_NAMEN);
-  state.handoffNamen = await loadNameList(HANDOFF_LIST_KEY, DEFAULT_HANDOFF_NAMEN);
-  state.wvStatus = await loadWvStatusMap();
-  state.planSnapshots = await loadPlanSnapshots();
-  state.planNamen = await loadNameList(PLAN_NAMES_KEY, DEFAULT_PLAN_NAMEN);
   state.ovBlockStatus = await loadOvBlockStatusMap();
   state.bijnaVerlopenThreshold = await loadBijnaVerlopenThreshold();
   if (state.snapshots.length > 0) renderDashboardFromState();
   else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); }
-  if (state.toSnapshots.length > 0) renderToDashboardFromState();
-  else { setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true); renderMeetdienstList(); renderHandoffList(); }
-  if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
-  else { setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', true); renderKlaarzetterList(); }
 }
 
 function wireEvents() {
@@ -2614,16 +1937,12 @@ function wireEvents() {
 
   document.getElementById('cleanup-btn').addEventListener('click', async () => {
     const statusEl = document.getElementById('cleanup-status');
-    if (!confirm('WV-status en blokkade-redenen opschonen voor orders die niet meer in de actuele lijsten voorkomen? Weekgegevens blijven bewaard.')) return;
-    const { wvRemoved, blockRemoved } = cleanupOldStatusData();
-    const removed = wvRemoved.length + blockRemoved.length;
-    if (removed === 0) { statusEl.textContent = 'Niets om op te schonen.'; return; }
-    await saveWvStatusMap(state.wvStatus, wvRemoved);
+    if (!confirm('Blokkade-redenen opschonen voor orders die niet meer in de actuele lijst voorkomen? Weekgegevens blijven bewaard.')) return;
+    const { blockRemoved } = cleanupOldStatusData();
+    if (blockRemoved.length === 0) { statusEl.textContent = 'Niets om op te schonen.'; return; }
     await saveOvBlockStatusMap(state.ovBlockStatus, blockRemoved);
-    statusEl.textContent = `${removed} verouderde aantekening${removed === 1 ? '' : 'en'} verwijderd.`;
+    statusEl.textContent = `${blockRemoved.length} verouderde aantekening${blockRemoved.length === 1 ? '' : 'en'} verwijderd.`;
     renderDashboardFromState();
-    if (state.toSnapshots.length > 0) renderToDashboardFromState();
-    if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
   });
 
   document.getElementById('copy-summary-btn').addEventListener('click', async () => {
@@ -2705,7 +2024,6 @@ function wireEvents() {
     state.attentionOrders = null;
 
     renderDashboardFromState();
-    if (state.toSnapshots.length > 0) renderToDashboardFromState(); // cross-bak badges bijwerken
     showParseWarning(errors, storingen.length);
     statusEl.textContent = `${storingen.length} storingen verwerkt voor week ${week}` + (errors.length ? `, ${errors.length} regels niet herkend` : '');
     textarea.value = '';
@@ -2717,7 +2035,6 @@ function wireEvents() {
     state.snapshots = [];
     state.attentionOrders = null;
     setDashboardEmpty('dashboard', 'dashboard-empty', true);
-    if (state.toSnapshots.length > 0) renderToDashboardFromState(); // cross-bak badges bijwerken
   });
 
   document.querySelectorAll('.toggle-table').forEach(btn => {
@@ -2759,8 +2076,6 @@ function wireEvents() {
     await saveOvBlockStatusMap(state.ovBlockStatus, changedOrders);
     state.ovBulkSelected.clear();
     renderDashboardFromState();
-    if (state.toSnapshots.length > 0) renderToDashboardFromState();
-    if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
   });
 
   document.getElementById('ov-bulk-clear-btn').addEventListener('click', () => {
@@ -2794,8 +2109,6 @@ function wireEvents() {
     await saveBijnaVerlopenThreshold(n);
     statusEl.textContent = 'Opgeslagen.';
     if (state.snapshots.length > 0) renderDashboardFromState();
-    if (state.toSnapshots.length > 0) renderToDashboardFromState();
-    if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
   });
 
   document.getElementById('sharepoint-test-btn').addEventListener('click', async () => {
@@ -2822,186 +2135,20 @@ function wireEvents() {
       const cfg = { siteUrl, enabled, libraryName };
       await saveSharePointConfig(cfg);
       state.sharePointConfig = cfg;
-      // Blokkade-reden en WV-status komen vanaf nu uit een andere bron
-      // (SharePoint of weer terug naar lokaal) — opnieuw inladen zodat het
-      // scherm meteen klopt.
-      state.wvStatus = await loadWvStatusMap();
+      // Blokkade-reden komt vanaf nu uit een andere bron (SharePoint of weer
+      // terug naar lokaal) — opnieuw inladen zodat het scherm meteen klopt.
       state.ovBlockStatus = await loadOvBlockStatusMap();
       statusEl.textContent = 'Opgeslagen.';
       if (state.snapshots.length > 0) renderDashboardFromState();
-      if (state.toSnapshots.length > 0) renderToDashboardFromState();
-      if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
     } catch (e) {
       statusEl.textContent = 'Opslaan mislukt: ' + e.message;
-    }
-  });
-
-  document.getElementById('to-process-btn').addEventListener('click', async () => {
-    const textarea = document.getElementById('to-paste-input');
-    const raw = textarea.value;
-    const statusEl = document.getElementById('to-process-status');
-    const week = document.getElementById('to-week-date').value;
-    if (!raw.trim()) { statusEl.textContent = 'Plak eerst tekst.'; return; }
-    if (!week) { statusEl.textContent = 'Kies een weekdatum.'; return; }
-
-    const { storingen, errors } = parseText(raw);
-    if (storingen.length === 0) {
-      statusEl.textContent = 'Geen storingen herkend — controleer het formaat hieronder.';
-      showToParseWarning(errors, 0);
-      return;
-    }
-
-    const snaps = await loadToSnapshots();
-    const snapshot = { week, savedAt: new Date().toISOString(), storingen };
-    snaps.push(snapshot);
-    try {
-      await saveToSnapshots(snaps);
-    } catch (err) {
-      statusEl.textContent = err.message;
-      return;
-    }
-    state.toSnapshots = snaps;
-
-    const blockFlagChanges = applyOnderzoekBlockFlags(storingen);
-    if (blockFlagChanges.length > 0) {
-      try { await saveOvBlockStatusMap(state.ovBlockStatus, blockFlagChanges); }
-      catch (e) { /* saveOvBlockStatusMap toont zelf al een foutmelding */ }
-    }
-
-    renderToDashboardFromState();
-    if (state.snapshots.length > 0) renderDashboardFromState(); // cross-bak badges bijwerken
-    showToParseWarning(errors, storingen.length);
-    statusEl.textContent = `${storingen.length} storingen verwerkt voor week ${week}` + (errors.length ? `, ${errors.length} regels niet herkend` : '');
-    textarea.value = '';
-  });
-
-  document.getElementById('to-clear-all-btn').addEventListener('click', async () => {
-    if (!confirm('Alle opgeslagen weken (te onderzoeken storingen) verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
-    await clearToSnapshots();
-    state.toSnapshots = [];
-    setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true);
-    if (state.snapshots.length > 0) renderDashboardFromState(); // cross-bak badges bijwerken
-  });
-
-  document.getElementById('add-meetdienst-btn').addEventListener('click', async () => {
-    const input = document.getElementById('new-meetdienst-input');
-    const val = input.value.trim();
-    if (!val) return;
-    if (!state.meetdienstNamen.includes(val)) state.meetdienstNamen.push(val);
-    await saveNameList(MEETDIENST_LIST_KEY, state.meetdienstNamen);
-    input.value = '';
-    renderToDashboardFromState();
-  });
-
-  document.getElementById('add-handoff-btn').addEventListener('click', async () => {
-    const input = document.getElementById('new-handoff-input');
-    const val = input.value.trim();
-    if (!val) return;
-    if (!state.handoffNamen.includes(val)) state.handoffNamen.push(val);
-    await saveNameList(HANDOFF_LIST_KEY, state.handoffNamen);
-    input.value = '';
-    renderToDashboardFromState();
-  });
-
-  document.getElementById('to-table-all').addEventListener('click', e => {
-    const th = e.target.closest('th[data-key]');
-    if (!th) return;
-    if (state.toSortState.key === th.dataset.key) state.toSortState.dir *= -1;
-    else { state.toSortState.key = th.dataset.key; state.toSortState.dir = 1; }
-    const latest = state.toSnapshots[state.toSnapshots.length - 1];
-    if (latest) {
-      const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoekenFull(s)));
-      renderToTableAll(filterToByActive(classified));
-    }
-  });
-
-  document.getElementById('to-table-search').addEventListener('input', e => {
-    state.toSearchQuery = e.target.value;
-    const latest = state.toSnapshots[state.toSnapshots.length - 1];
-    if (latest) {
-      const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyTeOnderzoekenFull(s)));
-      renderToTableAll(filterToByActive(classified));
-    }
-  });
-
-  document.getElementById('plan-process-btn').addEventListener('click', async () => {
-    const textarea = document.getElementById('plan-paste-input');
-    const raw = textarea.value;
-    const statusEl = document.getElementById('plan-process-status');
-    const week = document.getElementById('plan-week-date').value;
-    if (!raw.trim()) { statusEl.textContent = 'Plak eerst tekst.'; return; }
-    if (!week) { statusEl.textContent = 'Kies een weekdatum.'; return; }
-
-    const { storingen, errors } = parseText(raw);
-    if (storingen.length === 0) {
-      statusEl.textContent = 'Geen storingen herkend — controleer het formaat hieronder.';
-      showPlanParseWarning(errors, 0);
-      return;
-    }
-
-    const snaps = await loadPlanSnapshots();
-    const snapshot = { week, savedAt: new Date().toISOString(), storingen };
-    snaps.push(snapshot);
-    try {
-      await savePlanSnapshots(snaps);
-    } catch (err) {
-      statusEl.textContent = err.message;
-      return;
-    }
-    state.planSnapshots = snaps;
-
-    renderPlanDashboardFromState();
-    if (state.snapshots.length > 0) renderDashboardFromState(); // klikbare OV-tegels bijwerken
-    showPlanParseWarning(errors, storingen.length);
-    statusEl.textContent = `${storingen.length} storingen verwerkt voor week ${week}` + (errors.length ? `, ${errors.length} regels niet herkend` : '');
-    textarea.value = '';
-  });
-
-  document.getElementById('plan-clear-all-btn').addEventListener('click', async () => {
-    if (!confirm('Alle opgeslagen weken (klaar voor inplannen) verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
-    await clearPlanSnapshots();
-    state.planSnapshots = [];
-    setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', true);
-    if (state.snapshots.length > 0) renderDashboardFromState(); // klikbare OV-tegels bijwerken
-  });
-
-  document.getElementById('add-klaarzetter-btn').addEventListener('click', async () => {
-    const input = document.getElementById('new-klaarzetter-input');
-    const val = input.value.trim();
-    if (!val) return;
-    if (!state.planNamen.includes(val)) state.planNamen.push(val);
-    await saveNameList(PLAN_NAMES_KEY, state.planNamen);
-    input.value = '';
-    renderPlanDashboardFromState();
-  });
-
-  document.getElementById('plan-table-all').addEventListener('click', e => {
-    const th = e.target.closest('th[data-key]');
-    if (!th) return;
-    if (state.planSortState.key === th.dataset.key) state.planSortState.dir *= -1;
-    else { state.planSortState.key = th.dataset.key; state.planSortState.dir = 1; }
-    const latest = state.planSnapshots[state.planSnapshots.length - 1];
-    if (latest) {
-      const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyKlaarVoorInplannenFull(s)));
-      renderPlanTableAll(filterPlanByActive(classified));
-    }
-  });
-
-  document.getElementById('plan-table-search').addEventListener('input', e => {
-    state.planSearchQuery = e.target.value;
-    const latest = state.planSnapshots[state.planSnapshots.length - 1];
-    if (latest) {
-      const classified = latest.storingen.map(s => Object.assign({ storing: s }, classifyKlaarVoorInplannenFull(s)));
-      renderPlanTableAll(filterPlanByActive(classified));
     }
   });
 }
 
 // Echte tabbladen: precies één paneel zichtbaar tegelijk, in plaats van één
-// lange scrollpagina. Onthoudt de laatst gekozen tab binnen dit tabblad
-// (sessionStorage) zodat een herlaad niet steeds terug naar Data springt.
-// Twee onafhankelijke niveaus: het hoofdmenu (Invoer/Data/Instellingen) en,
-// binnen Data, een submenu (OV NUSsen/Te onderzoeken/Klaar voor inplannen).
+// lange scrollpagina. Onthoudt de laatst gekozen tab (sessionStorage) zodat
+// een herlaad niet steeds terug naar Data springt.
 const TAB_SESSION_KEY = 'nusdash_active_tab';
 function switchTab(tab) {
   document.querySelectorAll('.tab-panel').forEach(p => {
@@ -3025,27 +2172,6 @@ function setupTabNav() {
   switchTab(initial);
 }
 
-const SUBTAB_SESSION_KEY = 'nusdash_active_subtab';
-function switchSubtab(tab) {
-  document.querySelectorAll('.subtab-panel').forEach(p => {
-    p.classList.toggle('hidden', p.dataset.subtabPanel !== tab);
-  });
-  document.querySelectorAll('.subtab-btn').forEach(b => {
-    const active = b.dataset.subtab === tab;
-    b.classList.toggle('active', active);
-    b.setAttribute('aria-selected', active ? 'true' : 'false');
-  });
-  try { sessionStorage.setItem(SUBTAB_SESSION_KEY, tab); } catch (e) { /* privénavigatie o.i.d. */ }
-}
-function setupSubtabNav() {
-  document.querySelectorAll('.subtab-btn').forEach(btn => {
-    btn.addEventListener('click', () => switchSubtab(btn.dataset.subtab));
-  });
-  let initial = 'ov';
-  try { initial = sessionStorage.getItem(SUBTAB_SESSION_KEY) || 'ov'; } catch (e) { /* privénavigatie o.i.d. */ }
-  switchSubtab(initial);
-}
-
 function applyStaticExportData() {
   document.body.classList.add('static-export');
   const bannerEl = document.getElementById('static-export-banner');
@@ -3055,21 +2181,11 @@ function applyStaticExportData() {
 
   state.snapshots = STATIC_DATA.ovSnapshots || [];
   state.typeWhitelist = STATIC_DATA.typeWhitelist || [];
-  state.toSnapshots = STATIC_DATA.teOnderzoekenSnapshots || [];
-  state.meetdienstNamen = STATIC_DATA.meetdienstNamen || [];
-  state.handoffNamen = STATIC_DATA.handoffNamen || [];
-  state.wvStatus = STATIC_DATA.wvStatus || {};
-  state.planSnapshots = STATIC_DATA.klaarVoorInplannenSnapshots || [];
-  state.planNamen = STATIC_DATA.klaarzetterNamen || [];
   state.ovBlockStatus = STATIC_DATA.ovBlockStatus || {};
   state.bijnaVerlopenThreshold = STATIC_DATA.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD;
 
   if (state.snapshots.length > 0) renderDashboardFromState();
   else setDashboardEmpty('dashboard', 'dashboard-empty', true);
-  if (state.toSnapshots.length > 0) renderToDashboardFromState();
-  else setDashboardEmpty('to-dashboard', 'to-dashboard-empty', true);
-  if (state.planSnapshots.length > 0) renderPlanDashboardFromState();
-  else setDashboardEmpty('plan-dashboard', 'plan-dashboard-empty', true);
 
   // Instellingen en Invoer hebben niets te doen in een bekijk-alleen export:
   // geen back-up, geen type-filter, geen naamlijsten, en niets om te plakken.
@@ -3081,8 +2197,6 @@ function applyStaticExportData() {
 
 async function init() {
   document.getElementById('week-date').value = new Date().toISOString().slice(0, 10);
-  document.getElementById('to-week-date').value = new Date().toISOString().slice(0, 10);
-  document.getElementById('plan-week-date').value = new Date().toISOString().slice(0, 10);
   wireEvents();
   if (isStaticExport) applyStaticExportData();
   else await reloadAllStateAndRender();
@@ -3091,7 +2205,6 @@ async function init() {
   document.getElementById('sharepoint-library-name').value = state.sharePointConfig.libraryName;
   document.getElementById('sharepoint-enabled-checkbox').checked = state.sharePointConfig.enabled;
   setupTabNav();
-  setupSubtabNav();
 }
 
 document.addEventListener('DOMContentLoaded', init);

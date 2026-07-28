@@ -32,7 +32,7 @@
       <span class="panel-icon">✏️</span>
       <div>
         <h2>Invoer</h2>
-        <p>Plak hier elke week de drie lijsten uit de Instandhoudingsapp — de Data-pagina wordt automatisch bijgewerkt.</p>
+        <p>Plak hier elke week de lijst uit de Instandhoudingsapp — de Data-pagina wordt automatisch bijgewerkt. Gebied en status kun je apart plakken (elk in hun eigen weergave in de Instandhoudingsapp); ze worden automatisch samengevoegd.</p>
       </div>
     </div>
 
@@ -48,32 +48,6 @@
       </div>
       <div id="parse-warning" class="warning-box hidden"></div>
     </section>
-
-    <section class="card" id="to-input-card">
-      <h2>🔍 Te onderzoeken storingen — nieuwe week verwerken</h2>
-      <p class="muted small">Plak hieronder de volledige lijst uit de "te onderzoeken"-bak van de Instandhoudingsapp. Dit is een filter óver de OV NUS-lijst: alleen ordernummers die daar ook in staan tellen mee.</p>
-      <textarea id="to-paste-input" rows="10" placeholder="Plak hier de volledige pagina met te onderzoeken storingen…"></textarea>
-      <div class="input-row">
-        <label for="to-week-date">Weekdatum</label>
-        <input type="date" id="to-week-date">
-        <button id="to-process-btn" class="btn-primary">Verwerken &amp; opslaan als deze week</button>
-        <span id="to-process-status" class="muted small"></span>
-      </div>
-      <div id="to-parse-warning" class="warning-box hidden"></div>
-    </section>
-
-    <section class="card" id="plan-input-card">
-      <h2>📅 Klaar voor inplannen — nieuwe week verwerken</h2>
-      <p class="muted small">Plak hieronder de volledige lijst uit de "klaar voor inplannen"-bak van de Instandhoudingsapp. Ook dit is een filter óver de OV NUS-lijst.</p>
-      <textarea id="plan-paste-input" rows="10" placeholder="Plak hier de volledige pagina met klaar-voor-inplannen storingen…"></textarea>
-      <div class="input-row">
-        <label for="plan-week-date">Weekdatum</label>
-        <input type="date" id="plan-week-date">
-        <button id="plan-process-btn" class="btn-primary">Verwerken &amp; opslaan als deze week</button>
-        <span id="plan-process-status" class="muted small"></span>
-      </div>
-      <div id="plan-parse-warning" class="warning-box hidden"></div>
-    </section>
   </section>
 
   <section class="tab-panel" id="section-data" data-tab-panel="data" role="tabpanel" aria-labelledby="tab-btn-data" tabindex="0">
@@ -85,13 +59,6 @@
       </div>
     </div>
 
-    <nav class="subtab-nav" role="tablist" aria-label="Databronnen">
-      <button class="subtab-btn active" id="subtab-btn-ov" data-subtab="ov" role="tab" aria-selected="true" aria-controls="subsection-ov">💡 OV NUSsen</button>
-      <button class="subtab-btn" id="subtab-btn-to" data-subtab="to" role="tab" aria-selected="false" aria-controls="subsection-to">🔍 Te onderzoeken</button>
-      <button class="subtab-btn" id="subtab-btn-plan" data-subtab="plan" role="tab" aria-selected="false" aria-controls="subsection-plan">📅 Klaar voor inplannen</button>
-    </nav>
-
-    <section class="subtab-panel" id="subsection-ov" data-subtab-panel="ov" role="tabpanel" aria-labelledby="subtab-btn-ov" tabindex="0">
       <section class="card empty-state-card hidden" id="dashboard-empty">
         <p class="empty-state-icon">💡</p>
         <h3>Nog geen data voor OV NUSsen</h3>
@@ -193,85 +160,6 @@
         </details>
 
       </section>
-    </section>
-
-    <section class="subtab-panel hidden" id="subsection-to" data-subtab-panel="to" role="tabpanel" aria-labelledby="subtab-btn-to" tabindex="0">
-      <section class="card empty-state-card hidden" id="to-dashboard-empty">
-        <p class="empty-state-icon">🔍</p>
-        <h3>Nog geen data voor Te onderzoeken</h3>
-        <p class="muted small">Plak de eerstvolgende export op de Invoer-pagina om dit dashboard te vullen.</p>
-        <button class="btn-primary" data-goto-invoer="to-paste-input">Naar Invoer →</button>
-      </section>
-      <section id="to-dashboard" class="hidden">
-
-        <div class="filter-tabs" id="to-filter-tabs"></div>
-
-        <section class="stat-row" id="to-stat-tiles"></section>
-
-        <details class="card details-card">
-          <summary>🙈 Genegeerd deze week <span id="to-ignored-count" class="badge"></span></summary>
-          <p class="muted small">Storingen die niet voor onze werkvoorbereiders zijn (andere monteur, geen overdracht naar ons, of niet gevonden in de OV NUS-lijst).</p>
-          <div id="to-ignored"></div>
-        </details>
-
-        <section class="card" id="to-full-table-card">
-          <div class="card-header">
-            <h2>📋 Volledige lijst — relevante te onderzoeken storingen</h2>
-            <input type="search" id="to-table-search" class="table-search" placeholder="Zoek op order of adres…">
-          </div>
-          <div id="to-table-all" class="table-scroll"></div>
-        </section>
-
-        <details class="card details-card" id="to-weeks-card">
-          <summary>🗓️ Opgeslagen weken</summary>
-          <div class="card-header details-body-header">
-            <span></span>
-            <button class="btn-link danger" id="to-clear-all-btn">Wis alle opgeslagen data</button>
-          </div>
-          <div id="to-weeks-list"></div>
-        </details>
-
-      </section>
-    </section>
-
-    <section class="subtab-panel hidden" id="subsection-plan" data-subtab-panel="plan" role="tabpanel" aria-labelledby="subtab-btn-plan" tabindex="0">
-      <section class="card empty-state-card hidden" id="plan-dashboard-empty">
-        <p class="empty-state-icon">📅</p>
-        <h3>Nog geen data voor Klaar voor inplannen</h3>
-        <p class="muted small">Plak de eerstvolgende export op de Invoer-pagina om dit dashboard te vullen.</p>
-        <button class="btn-primary" data-goto-invoer="plan-paste-input">Naar Invoer →</button>
-      </section>
-      <section id="plan-dashboard" class="hidden">
-
-        <div class="filter-tabs" id="plan-filter-tabs"></div>
-
-        <section class="stat-row" id="plan-stat-tiles"></section>
-
-        <details class="card details-card">
-          <summary>🙈 Genegeerd deze week <span id="plan-ignored-count" class="badge"></span></summary>
-          <p class="muted small">Storingen die geen klaarzetter als 1e naam hebben, of niet gevonden zijn in de OV NUS-lijst.</p>
-          <div id="plan-ignored"></div>
-        </details>
-
-        <section class="card" id="plan-full-table-card">
-          <div class="card-header">
-            <h2>📋 Volledige lijst — klaar voor inplannen</h2>
-            <input type="search" id="plan-table-search" class="table-search" placeholder="Zoek op order of adres…">
-          </div>
-          <div id="plan-table-all" class="table-scroll"></div>
-        </section>
-
-        <details class="card details-card" id="plan-weeks-card">
-          <summary>🗓️ Opgeslagen weken</summary>
-          <div class="card-header details-body-header">
-            <span></span>
-            <button class="btn-link danger" id="plan-clear-all-btn">Wis alle opgeslagen data</button>
-          </div>
-          <div id="plan-weeks-list"></div>
-        </details>
-
-      </section>
-    </section>
 
   </section>
 
@@ -280,13 +168,13 @@
       <span class="panel-icon">⚙️</span>
       <div>
         <h2>Instellingen</h2>
-        <p>Back-up, type-filter en naamlijsten — dingen die je niet elke week hoeft aan te passen.</p>
+        <p>Back-up en type-filter — dingen die je niet elke week hoeft aan te passen.</p>
       </div>
     </div>
 
     <section class="card" id="backup-card">
       <h2>💾 Back-up</h2>
-      <p class="muted small">Download een back-upbestand met alle opgeslagen weken en instellingen (alle bakken), of herstel een eerder gedownload back-upbestand.</p>
+      <p class="muted small">Download een back-upbestand met alle opgeslagen weken en instellingen, of herstel een eerder gedownload back-upbestand.</p>
       <div class="input-row">
         <button id="export-backup-btn" class="btn-primary">Exporteer back-up</button>
         <button id="import-backup-btn" class="btn-link">Importeer back-up…</button>
@@ -298,7 +186,7 @@
 
     <section class="card" id="cleanup-card">
       <h2>🧹 Opschonen</h2>
-      <p class="muted small">Verwijdert WV-status en blokkade-redenen (Rezap/Naar Aanleg) van orders die niet meer voorkomen in de meest recente week van geen van de 3 bakken. Weekgegevens zelf blijven altijd bewaard.</p>
+      <p class="muted small">Verwijdert blokkade-redenen (Aannemerij/Naar Aanleg/Uitvoerder/Onderzoek loopt) van orders die niet meer voorkomen in de meest recente week. Weekgegevens zelf blijven altijd bewaard.</p>
       <div class="input-row">
         <button id="cleanup-btn" class="btn-link">Oude statusdata opschonen…</button>
         <span id="cleanup-status" class="muted small"></span>
@@ -307,7 +195,7 @@
 
     <section class="card" id="static-export-card">
       <h2>🤝 Delen met je team</h2>
-      <p class="muted small">Genereert één zelfstandig dashboard-bestand met de actuele week erin gebakken. Zet dit in een gedeelde werkmap — teamleden dubbelklikken het gewoon open en kunnen filteren, sorteren en de lijsten bekijken, zonder dat ze iets van deze applicatie hoeven te snappen. Bewerken (WV-status, nieuwe week verwerken) kan alleen in jouw eigen dashboard.</p>
+      <p class="muted small">Genereert één zelfstandig dashboard-bestand met de actuele week erin gebakken. Zet dit in een gedeelde werkmap — teamleden dubbelklikken het gewoon open en kunnen filteren, sorteren en de lijsten bekijken, zonder dat ze iets van deze applicatie hoeven te snappen. Bewerken (blokkade-reden, nieuwe week verwerken) kan alleen in jouw eigen dashboard.</p>
       <div class="input-row">
         <button id="export-static-btn" class="btn-primary">Exporteer interactief dashboard</button>
         <span id="export-static-status" class="muted small"></span>
@@ -316,7 +204,7 @@
 
     <section class="card" id="sharepoint-card">
       <h2>🔗 Gedeelde status via SharePoint</h2>
-      <p class="muted small">Optioneel: laat blokkade-reden (OV NUSsen) en WV-status (Te onderzoeken) delen met collega's, in plaats van alleen lokaal op deze computer. Er hoeft niets aangemaakt te worden op de SharePoint-site — dit gebruikt gewoon de standaardbibliotheek "Gedeelde documenten" die elke site al heeft. Vul alleen de site-URL in en open het dashboard vanaf die site (niet als lokaal bestand). Weekgegevens (het plakken/verwerken) blijven altijd lokaal, ook met dit aan.</p>
+      <p class="muted small">Optioneel: laat de blokkade-reden delen met collega's, in plaats van alleen lokaal op deze computer. Er hoeft niets aangemaakt te worden op de SharePoint-site — dit gebruikt gewoon de standaardbibliotheek "Gedeelde documenten" die elke site al heeft. Vul alleen de site-URL in en open het dashboard vanaf die site (niet als lokaal bestand). Weekgegevens (het plakken/verwerken) blijven altijd lokaal, ook met dit aan.</p>
       <div class="input-row">
         <label for="sharepoint-site-url" class="small">Site-URL</label>
         <input type="text" id="sharepoint-site-url" placeholder="https://jouwtenant.sharepoint.com/sites/JouwSite" style="flex:1;min-width:280px;">
@@ -354,40 +242,6 @@
       <div class="input-row">
         <input type="text" id="new-type-input" placeholder="Nieuw type handmatig toevoegen…">
         <button id="add-type-btn" class="btn-link">Toevoegen</button>
-      </div>
-    </section>
-
-    <section class="card" id="to-names-card">
-      <h2>👥 Naamlijsten — te onderzoeken storingen</h2>
-      <p class="muted small">Bij 1 naam telt een storing alleen mee als het een meetdienst-collega is. Bij 2 namen telt hij alleen mee als de 2e naam een overdracht-naam is (dan is 'm overgedragen aan de werkvoorbereiders).</p>
-      <div>
-        <strong class="small">Meetdienst-collega's</strong>
-        <div id="meetdienst-list"></div>
-        <div class="input-row">
-          <input type="text" id="new-meetdienst-input" placeholder="Naam toevoegen…">
-          <button id="add-meetdienst-btn" class="btn-link">Toevoegen</button>
-        </div>
-      </div>
-      <div style="margin-top:16px;">
-        <strong class="small">Overdracht-namen (2e naam)</strong>
-        <div id="handoff-list"></div>
-        <div class="input-row">
-          <input type="text" id="new-handoff-input" placeholder="Naam toevoegen…">
-          <button id="add-handoff-btn" class="btn-link">Toevoegen</button>
-        </div>
-      </div>
-    </section>
-
-    <section class="card" id="plan-names-card">
-      <h2>👥 Naamlijst — klaar voor inplannen</h2>
-      <p class="muted small">Er staan hier altijd 2 namen. Een storing telt alleen mee als de 1e naam (wie 'm heeft klaargezet) hieronder staat.</p>
-      <div>
-        <strong class="small">Klaarzetters</strong>
-        <div id="klaarzetter-list"></div>
-        <div class="input-row">
-          <input type="text" id="new-klaarzetter-input" placeholder="Naam toevoegen…">
-          <button id="add-klaarzetter-btn" class="btn-link">Toevoegen</button>
-        </div>
       </div>
     </section>
 

@@ -128,14 +128,8 @@ summary:focus-visible, [tabindex]:focus-visible {
 /* Bekijk-alleen export voor teamleden: geen invoer, geen instellingen,
    geen data-beheer — alleen filteren/sorteren/klikken door bestaande data. */
 .static-export #input-card,
-.static-export #to-input-card,
-.static-export #plan-input-card,
 .static-export #ov-weeks-card,
-.static-export #to-weeks-card,
-.static-export #plan-weeks-card,
-.static-export #dashboard-empty,
-.static-export #to-dashboard-empty,
-.static-export #plan-dashboard-empty { display: none; }
+.static-export #dashboard-empty { display: none; }
 
 .tab-nav {
   position: relative;
@@ -164,41 +158,6 @@ summary:focus-visible, [tabindex]:focus-visible {
 .tab-btn.active { background: #fff; color: var(--series-1); box-shadow: 0 2px 10px rgba(0,0,0,0.18); }
 .tab-btn[data-tab="data"].active { color: var(--series-2); }
 .tab-btn[data-tab="settings"].active { color: var(--text-secondary); }
-
-/* Submenu binnen Data: OV NUSsen / Te onderzoeken / Klaar voor inplannen. */
-.subtab-nav {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.subtab-btn {
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  color: var(--text-secondary);
-  font-weight: 700;
-  font-size: 0.85rem;
-  padding: 8px 16px;
-  border-radius: 999px;
-  transition: background-color var(--ease), color var(--ease), border-color var(--ease), box-shadow var(--ease);
-}
-.subtab-btn:hover { background: var(--gridline); }
-.subtab-btn.active {
-  background: var(--series-1);
-  border-color: var(--series-1);
-  color: #fff;
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--series-1) 18%, transparent);
-}
-.subtab-btn[data-subtab="to"].active {
-  background: var(--series-2);
-  border-color: var(--series-2);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--series-2) 18%, transparent);
-}
-.subtab-btn[data-subtab="plan"].active {
-  background: var(--series-3);
-  border-color: var(--series-3);
-  color: #3a2c00;
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--series-3) 22%, transparent);
-}
 
 .hero-wave {
   position: relative;
@@ -278,7 +237,7 @@ code {
   color: var(--text-primary);
 }
 
-textarea#paste-input, textarea#to-paste-input, textarea#plan-paste-input {
+textarea#paste-input {
   width: 100%;
   font-family: ui-monospace, monospace;
   font-size: 0.85rem;
@@ -290,7 +249,7 @@ textarea#paste-input, textarea#to-paste-input, textarea#plan-paste-input {
   resize: vertical;
   transition: border-color var(--ease);
 }
-textarea#paste-input:focus, textarea#to-paste-input:focus, textarea#plan-paste-input:focus { border-color: var(--series-1); }
+textarea#paste-input:focus { border-color: var(--series-1); }
 
 .input-row {
   display: flex;
@@ -460,20 +419,6 @@ button {
   margin-left: 4px;
 }
 
-/* Signaleert dat een ordernummer ook (of nog) in de andere bak voorkomt —
-   kleur volgt het accent van de bak waar het ordernummer óók in staat. */
-.cross-bucket-badge {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.68rem;
-  font-weight: 700;
-  white-space: nowrap;
-  background: color-mix(in srgb, var(--cb-color) 15%, transparent);
-  color: var(--cb-color);
-  border-radius: 999px;
-  padding: 1px 8px;
-}
-
 .mutations-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -629,7 +574,6 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .ov-status-planning       { background: color-mix(in srgb, var(--series-1) 60%, transparent); color: #fff; }
 .ov-status-uitvoering     { background: var(--series-1); color: #fff; }
 
-.wv-status-cell,
 .ov-block-cell {
   display: flex;
   flex-direction: column;
@@ -640,8 +584,6 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
-.wv-status-cell select,
-.wv-status-cell input[type="text"],
 .ov-block-cell select,
 .ov-block-cell input[type="text"] {
   font-family: inherit;
