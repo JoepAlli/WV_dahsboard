@@ -54,6 +54,15 @@ const MAX_MIDDLE_LINES = 12; // veiligheidsgrens tegen een ontbrekende "Nog X da
 // (die altijd kleine letters/spaties bevat).
 const GEBIEDSCODE_RE = /^[A-Z]+[0-9]+[A-Z]*$/;
 
+// De Instandhoudingsapp heeft ook een "status"-weergave die, op precies dezelfde
+// plek als de gebiedscode, één van deze 5 stadia toont i.p.v. het gebied — nooit
+// allebei tegelijk. Om toch beide te kennen wordt de andere waarde bij het
+// verwerken teruggehaald uit de vorige keer dat 'm wél bekend was (zie
+// enrichWithCarriedForwardFields), zodat je gebied en status bij elkaar ziet ook
+// al kwamen ze uit twee losse plakacties.
+const OV_STATUS_ORDER = ['Nieuw', 'In onderzoek', 'In voorbereiding', 'Planning', 'In uitvoering'];
+const OV_STATUS_RE = /^(Nieuw|In onderzoek|In voorbereiding|Planning|In uitvoering)$/;
+
 // Titel-/tellingregels zoals "24 Te controleren onderzoeken" bovenaan een paste:
 // beginnen met een getal + spatie + tekst. Ordernummers zijn puur cijfers (geen
 // spatie), dus dit kan nooit een ordernummer raken.
@@ -163,12 +172,17 @@ function parseText(raw) {
   const errors = [];
   let i = 0;
   let currentGebiedscode = null;
+  let currentOvStatus = null;
   while (i < lines.length) {
-    // Combineer beide skip-checks in één lus: een gebiedscode kan vlak na een
-    // titel-/tellingregel staan (of andersom), dus we blijven controleren tot
-    // geen van beide patronen meer matcht.
-    while (i < lines.length && (GEBIEDSCODE_RE.test(lines[i]) || COUNT_HEADER_RE.test(lines[i]))) {
+    // Combineer alle skip-checks in één lus: een gebiedscode/status kan vlak na
+    // een titel-/tellingregel staan (of andersom), dus we blijven controleren tot
+    // geen van de patronen meer matcht. Gebiedscode en status staan nooit
+    // tegelijk in dezelfde paste (zie OV_STATUS_RE hierboven), maar allebei
+    // blijven ook los van elkaar "sticky" gelden tot de volgende regel van dat
+    // type verschijnt.
+    while (i < lines.length && (GEBIEDSCODE_RE.test(lines[i]) || OV_STATUS_RE.test(lines[i]) || COUNT_HEADER_RE.test(lines[i]))) {
       if (GEBIEDSCODE_RE.test(lines[i])) currentGebiedscode = lines[i];
+      else if (OV_STATUS_RE.test(lines[i])) currentOvStatus = lines[i];
       i++;
     }
     if (i >= lines.length) break;
@@ -176,6 +190,7 @@ function parseText(raw) {
     try {
       const { storing, next } = parseOneEntry(lines, i);
       storing.gebiedscode = currentGebiedscode;
+      storing.ovStatus = currentOvStatus;
       storingen.push(storing);
       i = next;
     } catch (e) {
@@ -806,6 +821,32 @@ function classifyKlaarVoorInplannenFull(s) {
 // classifyKlaarVoorInplannenFull). Deze sets worden gebruikt om dat
 // ordernummer terug te vinden vanuit de andere kant, bv. voor de badges en
 // klikbare tegels op de OV NUS-tabel.
+// Bouwt, in één keer over alle bestaande OV-snapshots (nieuwste eerst), een
+// opzoektabel van de laatst bekende gebiedscode/status per ordernummer. Wordt
+// gebruikt om net-verwerkte storingen aan te vullen met de waarde die deze
+// paste zelf niet had (zie OV_STATUS_RE hierboven): een status-weergave-paste
+// mist de gebiedscode, een gewone paste mist de status — allebei blijven ze
+// zo bekend totdat een nieuwere paste een andere waarde meebrengt.
+function buildLastKnownOvFieldMaps(snapshots) {
+  const sorted = snapshots.slice().sort((a, b) => b.week.localeCompare(a.week) || b.savedAt.localeCompare(a.savedAt));
+  const gebiedscodeByOrder = {};
+  const statusByOrder = {};
+  sorted.forEach(sn => {
+    sn.storingen.forEach(s => {
+      if (s.gebiedscode && !(s.order in gebiedscodeByOrder)) gebiedscodeByOrder[s.order] = s.gebiedscode;
+      if (s.ovStatus && !(s.order in statusByOrder)) statusByOrder[s.order] = s.ovStatus;
+    });
+  });
+  return { gebiedscodeByOrder, statusByOrder };
+}
+function enrichWithCarriedForwardOvFields(storingen, priorSnapshots) {
+  const { gebiedscodeByOrder, statusByOrder } = buildLastKnownOvFieldMaps(priorSnapshots);
+  storingen.forEach(s => {
+    if (!s.gebiedscode && gebiedscodeByOrder[s.order]) s.gebiedscode = gebiedscodeByOrder[s.order];
+    if (!s.ovStatus && statusByOrder[s.order]) s.ovStatus = statusByOrder[s.order];
+  });
+}
+
 function latestOvOrderSet() {
   if (state.snapshots.length === 0) return new Set();
   const latest = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week)).pop();
@@ -1087,49 +1128,51 @@ function needsFollowUp(s) { return isActionableOverdue(s) || isActionableExpired
 // Elke klikbare OV NUS-tegel heeft een filterKey met een titel en een test-
 // functie die bepaalt welke storingen erachter zitten — gebruikt door zowel
 // de tegel zelf als door renderStatDetail() voor de uitklap-lijst.
+// De 5 workflow-stadia (OV_STATUS_ORDER) vervangen de oude "In onderzoek"/
+// "Klaar voor inplannen"-kruisverwijzingstegels: die waren een gok op basis van
+// of een order ook in de andere bak voorkwam, dit is de échte status uit de
+// Instandhoudingsapp zelf.
+const OV_STATUS_FILTER_KEYS = { 'Nieuw': 'statusNieuw', 'In onderzoek': 'statusOnderzoek', 'In voorbereiding': 'statusVoorbereiding', 'Planning': 'statusPlanning', 'In uitvoering': 'statusUitvoering' };
 function statTileFilters() {
-  const onderzoekSet = latestRelevantToOrderSet();
-  const planSet = latestRelevantPlanOrderSet();
-  return {
+  const filters = {
     known: { title: 'Verlopen — uitvoering gepland', test: s => s.overdue && !!s.executionDate && !isExpiredExecutionDate(s) && !isOvBlocked(s) },
     verlopenDatum: { title: 'Uitvoeringsdatum verstreken', test: s => isActionableExpiredDate(s) },
     unknown: { title: 'Verlopen — uitvoering onbekend', test: s => isActionableOverdue(s) },
     bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' && !isOvBlocked(s) },
-    onderzoek: { title: 'In onderzoek (te controleren)', test: s => onderzoekSet.has(s.order) && !isOvBlocked(s) },
-    inplannen: { title: 'Klaar voor inplannen', test: s => planSet.has(s.order) && !isOvBlocked(s) },
     geblokkeerd: { title: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt)', test: s => isOvBlocked(s) },
   };
+  OV_STATUS_ORDER.forEach(status => {
+    filters[OV_STATUS_FILTER_KEYS[status]] = { title: `Status: ${status}`, test: s => s.ovStatus === status && !isOvBlocked(s) };
+  });
+  return filters;
 }
+
+const OV_STATUS_ICONS = { 'Nieuw': '🆕', 'In onderzoek': '🔍', 'In voorbereiding': '🧰', 'Planning': '🗓️', 'In uitvoering': '🚧' };
 
 function renderStatTiles(current, mutations) {
   const el = document.getElementById('stat-tiles');
   const total = current.length;
   const filters = statTileFilters();
-  const overdueKnown = current.filter(filters.known.test).length;
   const expiredDateCount = current.filter(filters.verlopenDatum.test).length;
   const overdueUnknown = current.filter(filters.unknown.test).length;
-  const bijnaVerlopenCount = current.filter(filters.bijnaVerlopen.test).length;
-  const onderzoekCount = current.filter(filters.onderzoek.test).length;
-  const inplannenCount = current.filter(filters.inplannen.test).length;
   const geblokkeerdCount = current.filter(filters.geblokkeerd.test).length;
   const tiles = [
     { key: 'totaal', icon: '📋', label: 'Totaal open', value: total, scrollTarget: 'ov-full-table-card' },
-    { key: 'nieuw', icon: '🆕', label: 'Nieuw binnengekomen', value: mutations.hasPrevious ? mutations.nieuw.length : '—',
-      note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week', scrollTarget: 'mutations-in' },
-    { key: 'afgesloten', icon: '✅', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
-      note: mutations.hasPrevious ? 'sinds vorige week' : 'nog geen vorige week', scrollTarget: 'mutations-out' },
-    { key: 'bijnaVerlopen', icon: '⏳', label: 'Bijna verlopen', value: bijnaVerlopenCount, deltaClass: bijnaVerlopenCount > 0 ? 'bad' : 'good',
-      note: bijnaVerlopenCount > 0 ? `nog 1-${state.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD} dagen — zie Aandacht deze week` : 'geen', scrollTarget: 'attention-card' },
-    { key: 'known', icon: '📅', label: 'Verlopen — uitvoering gepland', value: overdueKnown, deltaClass: overdueKnown > 0 ? 'bad' : 'good',
-      note: overdueKnown > 0 ? 'gepland, nog te gebeuren' : 'geen', filterKey: 'known' },
+  ];
+  OV_STATUS_ORDER.forEach(status => {
+    const filterKey = OV_STATUS_FILTER_KEYS[status];
+    const count = current.filter(filters[filterKey].test).length;
+    tiles.push({ key: filterKey, icon: OV_STATUS_ICONS[status], label: status, value: count, filterKey });
+  });
+  tiles.push(
     { key: 'verlopenDatum', icon: '⏰', label: 'Uitvoeringsdatum verstreken', value: expiredDateCount, deltaClass: expiredDateCount > 0 ? 'bad' : 'good',
       note: expiredDateCount > 0 ? 'geplande datum is zelf ook al voorbij — zie Aandacht deze week' : 'geen', alert: expiredDateCount > 0, scrollTarget: 'attention-card' },
     { key: 'unknown', icon: '⛔', label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
       note: overdueUnknown > 0 ? 'nog niets ingepland — zie Aandacht deze week' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
-    { key: 'onderzoek', icon: '🔍', label: 'In onderzoek', value: onderzoekCount, note: 'te controleren door meetdienst', filterKey: 'onderzoek' },
-    { key: 'inplannen', icon: '🗓️', label: 'Klaar voor inplannen', value: inplannenCount, note: 'kan ingepland worden', filterKey: 'inplannen' },
+    { key: 'afgesloten', icon: '✅', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
+      note: mutations.hasPrevious ? 'sinds vorige update' : 'nog geen vorige update', scrollTarget: 'mutations-out' },
     { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
-  ];
+  );
   el.innerHTML = tiles.map(t => {
     const clickable = (t.filterKey || t.scrollTarget) ? ' stat-tile-clickable' : '';
     const selected = t.filterKey && state.statDetailFilter === t.filterKey ? ' stat-tile-selected' : '';
@@ -1228,7 +1271,7 @@ function renderStatDetail(current, mutations) {
   const body = list.length === 0
     ? '<p class="empty-note">Geen storingen in deze lijst.</p>'
     : `<div class="table-scroll"><table><thead><tr>
-        <th>Order</th><th>Regio</th><th>Adres</th><th class="num">Dagen</th><th>Open sinds</th><th>Type</th><th>Uitvoering</th>${showBlock ? '<th>Blokkade</th>' : ''}
+        <th>Order</th><th>Regio</th><th>Gebied</th><th>Status</th><th>Adres</th><th class="num">Dagen</th><th>Open sinds</th><th>Type</th><th>Uitvoering</th>${showBlock ? '<th>Blokkade</th>' : ''}
       </tr></thead><tbody>${list.map(s => {
         const block = ovBlockStatusOf(s.order);
         const blockCell = `
@@ -1244,6 +1287,8 @@ function renderStatDetail(current, mutations) {
         return `<tr>
         <td>${esc(s.order)}</td>
         <td>${esc(regioGroupLabel(regioGroupOf(s)))}</td>
+        <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
+        <td>${ovStatusPillHtml(s)}</td>
         <td>${esc(s.city)} — ${esc(s.street)}, ${esc(s.postcode)}</td>
         <td class="num">${renderDaysPill(s)}</td>
         <td>${firstSeenMap[s.order] ? esc(firstSeenMap[s.order]) : '—'}</td>
@@ -1355,7 +1400,7 @@ function renderAttentionList(current, allVisible) {
   }
 
   container.innerHTML = `<table><thead><tr>
-      <th>Categorie</th><th>Order</th><th>Regio</th><th>Adres</th><th class="num">Dagen</th><th>Open sinds</th><th>Type</th><th>Uitvoering</th>${isStaticExport ? '' : '<th>Blokkade</th>'}
+      <th>Categorie</th><th>Order</th><th>Regio</th><th>Gebied</th><th>Status</th><th>Adres</th><th class="num">Dagen</th><th>Open sinds</th><th>Type</th><th>Uitvoering</th>${isStaticExport ? '' : '<th>Blokkade</th>'}
     </tr></thead><tbody>${items.map(({ s, cat }) => {
       const block = ovBlockStatusOf(s.order);
       const blockCell = isStaticExport ? '' : `<td class="ov-block-cell">
@@ -1373,6 +1418,8 @@ function renderAttentionList(current, allVisible) {
         <td><span class="status-pill ${cat.statusClass}">${esc(cat.label)}</span></td>
         <td>${esc(s.order)}</td>
         <td>${esc(regioGroupLabel(regioGroupOf(s)))}</td>
+        <td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>
+        <td>${ovStatusPillHtml(s)}</td>
         <td>${esc(s.city)} — ${esc(s.street)}, ${esc(s.postcode)}</td>
         <td class="num">${renderDaysPill(s)}</td>
         <td>${firstSeenMap[s.order] ? esc(firstSeenMap[s.order]) : '—'}</td>
@@ -1692,15 +1739,23 @@ function ovBlockCellHtml(s) {
         <option value="rezap" ${block.reason === 'rezap' ? 'selected' : ''}>Aannemerij</option>
         <option value="aanleg" ${block.reason === 'aanleg' ? 'selected' : ''}>Naar Aanleg</option>
         <option value="uitvoerder" ${block.reason === 'uitvoerder' ? 'selected' : ''}>Uitvoerder</option>
+        <option value="onderzoek" ${block.reason === 'onderzoek' ? 'selected' : ''}>Onderzoek loopt</option>
       </select>
       ${block.reason ? `<input type="text" class="ov-block-note" data-order="${esc(s.order)}" placeholder="Toelichting (optioneel)" value="${esc(block.note || '')}">` : ''}
       ${blockSinceHtml(s.order)}`;
+}
+
+const OV_STATUS_SLUGS = { 'Nieuw': 'nieuw', 'In onderzoek': 'onderzoek', 'In voorbereiding': 'voorbereiding', 'Planning': 'planning', 'In uitvoering': 'uitvoering' };
+function ovStatusPillHtml(s) {
+  if (!s.ovStatus) return '<span class="muted small">—</span>';
+  return `<span class="ov-status-pill ov-status-${OV_STATUS_SLUGS[s.ovStatus] || 'onbekend'}">${esc(s.ovStatus)}</span>`;
 }
 
 function buildOvColumns(toOrderSet, planOrderSet) {
   return [
     { key: 'regioGroup', label: 'Regio', cell: s => `<td>${esc(regioGroupLabel(s.regioGroup))}</td>` },
     { key: 'gebiedscode', label: 'Gebied', cell: s => `<td>${s.gebiedscode ? esc(s.gebiedscode) : '—'}</td>` },
+    { key: 'ovStatus', label: 'Status', cell: s => `<td>${ovStatusPillHtml(s)}</td>` },
     { key: 'city', label: 'Plaats', cell: s => `<td>${esc(s.city)}</td>` },
     { key: 'street', label: 'Adres', cell: s => `<td>${esc(s.street)}, ${esc(s.postcode)}</td>` },
     { key: 'order', label: 'Order', cell: s => `<td>${esc(s.order)} ${crossBucketBadge(s.order, toOrderSet, 'ook in te onderzoeken-bak', '--series-2')} ${crossBucketBadge(s.order, planOrderSet, 'klaar voor inplannen', '--series-3')}</td>` },
@@ -2333,10 +2388,11 @@ function buildWeekSummaryText() {
     `Verlopen — uitvoering gepland: ${count('known')}`,
     `Uitvoeringsdatum verstreken: ${count('verlopenDatum')}`,
     `Verlopen — uitvoering onbekend: ${count('unknown')}`,
-    `In onderzoek: ${count('onderzoek')}`,
-    `Klaar voor inplannen: ${count('inplannen')}`,
-    `Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt): ${count('geblokkeerd')}`,
   );
+  OV_STATUS_ORDER.forEach(status => {
+    lines.push(`Status ${status}: ${count(OV_STATUS_FILTER_KEYS[status])}`);
+  });
+  lines.push(`Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt): ${count('geblokkeerd')}`);
   return lines.join('\n');
 }
 
@@ -2530,6 +2586,7 @@ function wireEvents() {
     // doorlooptijd altijd de vergelijking met je vórige update, niet met
     // gisteren, ook als je vandaag al eerder bijgewerkt hebt.
     const snaps = await loadSnapshots();
+    enrichWithCarriedForwardOvFields(storingen, snaps);
     const snapshot = { week, savedAt: new Date().toISOString(), storingen };
     snaps.push(snapshot);
     try {

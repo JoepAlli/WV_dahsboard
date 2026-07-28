@@ -610,6 +610,25 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
    critical) om de twee met een oogopslag uit elkaar te houden. */
 .status-pill-expired-date { box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-serious) 55%, transparent); }
 
+/* Workflow-status uit de Instandhoudingsapp (Nieuw → In uitvoering) — een
+   oplopende reeks in de OV NUS-merkkleur (series-1), niet de urgentie-kleuren
+   hierboven: dit is een fase in het proces, geen ernst-signaal. */
+.ov-status-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.ov-status-nieuw          { background: color-mix(in srgb, var(--series-1) 12%, transparent); }
+.ov-status-onderzoek      { background: color-mix(in srgb, var(--series-1) 28%, transparent); }
+.ov-status-voorbereiding  { background: color-mix(in srgb, var(--series-1) 44%, transparent); }
+.ov-status-planning       { background: color-mix(in srgb, var(--series-1) 60%, transparent); color: #fff; }
+.ov-status-uitvoering     { background: var(--series-1); color: #fff; }
+
 .wv-status-cell,
 .ov-block-cell {
   display: flex;
