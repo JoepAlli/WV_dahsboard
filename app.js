@@ -61,7 +61,15 @@ const GEBIEDSCODE_RE = /^[A-Z]+[0-9]+[A-Z]*$/;
 // enrichWithCarriedForwardFields), zodat je gebied en status bij elkaar ziet ook
 // al kwamen ze uit twee losse plakacties.
 const OV_STATUS_ORDER = ['Nieuw', 'In onderzoek', 'In voorbereiding', 'Planning', 'In uitvoering'];
-const OV_STATUS_RE = /^(Nieuw|In onderzoek|In voorbereiding|Planning|In uitvoering)$/;
+// Case-insensitief: de Instandhoudingsapp schrijft dit soms met net andere
+// hoofdletters (bv. "In Uitvoering" i.p.v. "In uitvoering"). Herkenning mag
+// daar niet op struikelen — normalizeOvStatus hieronder zet elke match terug
+// naar de canonieke schrijfwijze uit OV_STATUS_ORDER, zodat kleuren/tegels/
+// filters (die exact op die schrijfwijze vergelijken) altijd blijven werken.
+const OV_STATUS_RE = /^(Nieuw|In onderzoek|In voorbereiding|Planning|In uitvoering)$/i;
+function normalizeOvStatus(raw) {
+  return OV_STATUS_ORDER.find(s => s.toLowerCase() === raw.toLowerCase()) || raw;
+}
 
 // Titel-/tellingregels zoals "24 Te controleren onderzoeken" bovenaan een paste:
 // beginnen met een getal + spatie + tekst. Ordernummers zijn puur cijfers (geen
@@ -174,7 +182,7 @@ function parseText(raw) {
     // type verschijnt.
     while (i < lines.length && (GEBIEDSCODE_RE.test(lines[i]) || OV_STATUS_RE.test(lines[i]) || COUNT_HEADER_RE.test(lines[i]))) {
       if (GEBIEDSCODE_RE.test(lines[i])) currentGebiedscode = lines[i];
-      else if (OV_STATUS_RE.test(lines[i])) currentOvStatus = lines[i];
+      else if (OV_STATUS_RE.test(lines[i])) currentOvStatus = normalizeOvStatus(lines[i]);
       i++;
     }
     if (i >= lines.length) break;
