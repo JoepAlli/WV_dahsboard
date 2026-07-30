@@ -60,13 +60,13 @@ const GEBIEDSCODE_RE = /^[A-Z]+[0-9]+[A-Z]*$/;
 // verwerken teruggehaald uit de vorige keer dat 'm wél bekend was (zie
 // enrichWithCarriedForwardFields), zodat je gebied en status bij elkaar ziet ook
 // al kwamen ze uit twee losse plakacties.
-const OV_STATUS_ORDER = ['Nieuw', 'In onderzoek', 'In voorbereiding', 'Planning', 'In uitvoering'];
+const OV_STATUS_ORDER = ['Nieuw', 'In onderzoek', 'Onderzoek controleren', 'In voorbereiding', 'Planning', 'In uitvoering'];
 // Case-insensitief: de Instandhoudingsapp schrijft dit soms met net andere
 // hoofdletters (bv. "In Uitvoering" i.p.v. "In uitvoering"). Herkenning mag
 // daar niet op struikelen — normalizeOvStatus hieronder zet elke match terug
 // naar de canonieke schrijfwijze uit OV_STATUS_ORDER, zodat kleuren/tegels/
 // filters (die exact op die schrijfwijze vergelijken) altijd blijven werken.
-const OV_STATUS_RE = /^(Nieuw|In onderzoek|In voorbereiding|Planning|In uitvoering)$/i;
+const OV_STATUS_RE = /^(Nieuw|In onderzoek|Onderzoek controleren|In voorbereiding|Planning|In uitvoering)$/i;
 function normalizeOvStatus(raw) {
   return OV_STATUS_ORDER.find(s => s.toLowerCase() === raw.toLowerCase()) || raw;
 }
@@ -888,11 +888,11 @@ function needsFollowUp(s) { return isActionableOverdue(s) || isActionableExpired
 // Elke klikbare OV NUS-tegel heeft een filterKey met een titel en een test-
 // functie die bepaalt welke storingen erachter zitten — gebruikt door zowel
 // de tegel zelf als door renderStatDetail() voor de uitklap-lijst.
-// De 5 workflow-stadia (OV_STATUS_ORDER) vervangen de oude "In onderzoek"/
+// De workflow-stadia (OV_STATUS_ORDER) vervangen de oude "In onderzoek"/
 // "Klaar voor inplannen"-kruisverwijzingstegels: die waren een gok op basis van
 // of een order ook in de andere bak voorkwam, dit is de échte status uit de
 // Instandhoudingsapp zelf.
-const OV_STATUS_FILTER_KEYS = { 'Nieuw': 'statusNieuw', 'In onderzoek': 'statusOnderzoek', 'In voorbereiding': 'statusVoorbereiding', 'Planning': 'statusPlanning', 'In uitvoering': 'statusUitvoering' };
+const OV_STATUS_FILTER_KEYS = { 'Nieuw': 'statusNieuw', 'In onderzoek': 'statusOnderzoek', 'Onderzoek controleren': 'statusOnderzoekControleren', 'In voorbereiding': 'statusVoorbereiding', 'Planning': 'statusPlanning', 'In uitvoering': 'statusUitvoering' };
 function statTileFilters() {
   const filters = {
     known: { title: 'Verlopen — uitvoering gepland', test: s => s.overdue && !!s.executionDate && !isExpiredExecutionDate(s) && !isOvBlocked(s) },
@@ -907,7 +907,7 @@ function statTileFilters() {
   return filters;
 }
 
-const OV_STATUS_ICONS = { 'Nieuw': '🆕', 'In onderzoek': '🔍', 'In voorbereiding': '🧰', 'Planning': '🗓️', 'In uitvoering': '🚧' };
+const OV_STATUS_ICONS = { 'Nieuw': '🆕', 'In onderzoek': '🔍', 'Onderzoek controleren': '🧐', 'In voorbereiding': '🧰', 'Planning': '🗓️', 'In uitvoering': '🚧' };
 
 // Elke OV-tegel is nu klikbaar en toont dan (in #overdue-detail) een verloop-
 // grafiekje van hoe die tegel's waarde zich ontwikkelt over alle opgeslagen
@@ -1597,7 +1597,7 @@ function ovBlockCellHtml(s) {
       ${blockSinceHtml(s.order)}`;
 }
 
-const OV_STATUS_SLUGS = { 'Nieuw': 'nieuw', 'In onderzoek': 'onderzoek', 'In voorbereiding': 'voorbereiding', 'Planning': 'planning', 'In uitvoering': 'uitvoering' };
+const OV_STATUS_SLUGS = { 'Nieuw': 'nieuw', 'In onderzoek': 'onderzoek', 'Onderzoek controleren': 'onderzoek-controleren', 'In voorbereiding': 'voorbereiding', 'Planning': 'planning', 'In uitvoering': 'uitvoering' };
 function ovStatusPillHtml(s) {
   if (!s.ovStatus) return '<span class="muted small">—</span>';
   return `<span class="ov-status-pill ov-status-${OV_STATUS_SLUGS[s.ovStatus] || 'onbekend'}">${esc(s.ovStatus)}</span>`;

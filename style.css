@@ -568,11 +568,12 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   white-space: nowrap;
   color: var(--text-primary);
 }
-.ov-status-nieuw          { background: color-mix(in srgb, var(--series-1) 12%, transparent); }
-.ov-status-onderzoek      { background: color-mix(in srgb, var(--series-1) 28%, transparent); }
-.ov-status-voorbereiding  { background: color-mix(in srgb, var(--series-1) 44%, transparent); }
-.ov-status-planning       { background: color-mix(in srgb, var(--series-1) 60%, transparent); color: #fff; }
-.ov-status-uitvoering     { background: var(--series-1); color: #fff; }
+.ov-status-nieuw                   { background: color-mix(in srgb, var(--series-1) 10%, transparent); }
+.ov-status-onderzoek               { background: color-mix(in srgb, var(--series-1) 22%, transparent); }
+.ov-status-onderzoek-controleren   { background: color-mix(in srgb, var(--series-1) 34%, transparent); }
+.ov-status-voorbereiding           { background: color-mix(in srgb, var(--series-1) 46%, transparent); }
+.ov-status-planning                { background: color-mix(in srgb, var(--series-1) 62%, transparent); color: #fff; }
+.ov-status-uitvoering              { background: var(--series-1); color: #fff; }
 
 .ov-block-cell {
   display: flex;
