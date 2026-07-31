@@ -1401,6 +1401,45 @@ function renderDoorlooptijdCard() {
     ${trendHtml}`;
 }
 
+/* ---------- Rendering: gebied → plaatsen overzicht ---------- */
+
+// Puur naslagwerk: over alle ooit verwerkte OV-weken heen, welke plaatsen
+// onder welke gebiedscode zijn voorgekomen (en hoe vaak). Bewust los van het
+// actieve type-/regiofilter en van "alleen de nieuwste week" — dit gaat over
+// de structuur van de gebiedscodes zelf, niet over wat er deze week toevallig
+// open staat.
+function buildGebiedPlaatsenMap() {
+  const map = {};
+  state.snapshots.forEach(sn => {
+    sn.storingen.forEach(s => {
+      if (!s.gebiedscode) return;
+      const plaats = s.city || 'Onbekend';
+      if (!map[s.gebiedscode]) map[s.gebiedscode] = {};
+      map[s.gebiedscode][plaats] = (map[s.gebiedscode][plaats] || 0) + 1;
+    });
+  });
+  return map;
+}
+
+function renderGebiedPlaatsenCard() {
+  const container = document.getElementById('gebied-plaatsen-body');
+  if (!container) return;
+  const map = buildGebiedPlaatsenMap();
+  const gebiedscodes = Object.keys(map).sort();
+  if (gebiedscodes.length === 0) {
+    container.innerHTML = '<p class="empty-note">Nog geen gebiedscodes bekend — deze verschijnen zodra je een paste met gebiedscodes verwerkt.</p>';
+    return;
+  }
+  const rows = gebiedscodes.map(code => {
+    const plaatsen = Object.entries(map[code]).sort((a, b) => b[1] - a[1]);
+    const plaatsenHtml = plaatsen
+      .map(([plaats, count]) => `<span class="type-chip">${esc(plaats)} <span class="muted small">(${count})</span></span>`)
+      .join(' ');
+    return `<tr><td>${esc(code)}</td><td>${plaatsenHtml}</td></tr>`;
+  }).join('');
+  container.innerHTML = `<div class="table-scroll"><table><thead><tr><th>Gebiedscode</th><th>Plaatsen</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
 /* ---------- Rendering: regio chart ---------- */
 
 function renderRegioChart(current) {
@@ -1848,6 +1887,7 @@ function renderDashboardFromState() {
   renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
   renderTrendChart(snaps); // idem, filtert zelf op state.activeFilter
   renderMutationTables(mutations);
+  renderGebiedPlaatsenCard();
   renderTableAll(latestFiltered);
   renderWeeksList();
   updateStorageUsage();
