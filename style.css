@@ -176,7 +176,7 @@ summary:focus-visible, [tabindex]:focus-visible {
 }
 
 .app-topbar {
-  padding: 22px clamp(16px, 3vw, 40px) 0;
+  padding: 26px clamp(16px, 3vw, 40px) 4px;
   max-width: var(--content-max-width);
   width: 100%;
   margin: 0 auto;
@@ -199,10 +199,10 @@ summary:focus-visible, [tabindex]:focus-visible {
 .static-export #dashboard-empty { display: none; }
 
 main {
-  padding: 14px clamp(16px, 3vw, 40px) 56px;
+  padding: 22px clamp(16px, 3vw, 40px) 64px;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 30px;
   max-width: var(--content-max-width);
   width: 100%;
   min-width: 0;
@@ -258,10 +258,10 @@ code {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 22px clamp(16px, 3vw, 26px);
+  padding: 26px clamp(18px, 3vw, 32px);
   box-shadow: var(--shadow-card);
 }
-.card h2 { margin: 0 0 6px; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.005em; }
+.card h2 { margin: 0 0 9px; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.005em; }
 .card-header {
   display: flex;
   align-items: baseline;
@@ -321,8 +321,8 @@ textarea#paste-input:focus { border-color: var(--series-1); }
 .input-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 12px;
+  gap: 12px;
+  margin-top: 14px;
   flex-wrap: wrap;
 }
 .input-row label { font-size: 0.85rem; color: var(--text-secondary); font-weight: 600; }
@@ -383,7 +383,7 @@ button {
 .stat-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
+  gap: 16px;
 }
 .stat-tile {
   position: relative;
@@ -391,7 +391,7 @@ button {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 18px 18px 16px;
+  padding: 22px 20px 20px;
   box-shadow: var(--shadow-card);
   transition: box-shadow var(--ease), transform var(--ease);
 }
@@ -485,14 +485,14 @@ button {
 .mutations-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 20px;
+  gap: 26px;
 }
-.mutations-grid h3 { font-size: 0.95rem; margin-bottom: 6px; font-weight: 700; }
+.mutations-grid h3 { font-size: 0.95rem; margin-bottom: 10px; font-weight: 700; }
 
 .charts-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
-  gap: 22px;
+  gap: 26px;
 }
 
 table {
@@ -502,7 +502,7 @@ table {
 }
 table th, table td {
   text-align: left;
-  padding: 9px 10px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--gridline);
 }
 table th {
@@ -799,7 +799,7 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 0;
+  padding: 11px 0;
   border-bottom: 1px solid var(--gridline);
   font-size: 0.85rem;
   gap: 12px;
@@ -823,9 +823,9 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .panel-banner {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 18px;
   border-radius: var(--radius-lg);
-  padding: 20px 24px;
+  padding: 24px 28px;
   color: #fff;
   box-shadow: var(--shadow-card);
 }
@@ -887,6 +887,6 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .details-toggle-body {
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  margin-top: 18px;
+  gap: 26px;
+  margin-top: 22px;
 }
