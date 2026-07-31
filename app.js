@@ -947,6 +947,42 @@ function ovTileTrendSeries(key) {
   }));
 }
 
+// Rond een waarde af tot een "nette" stap (1/2/5 × een macht van 10) — het
+// klassieke "nice numbers"-algoritme voor as-schaalverdeling.
+function niceNumber(range, round) {
+  if (range <= 0) return 1;
+  const exponent = Math.floor(Math.log10(range));
+  const fraction = range / Math.pow(10, exponent);
+  let niceFraction;
+  if (round) {
+    if (fraction < 1.5) niceFraction = 1;
+    else if (fraction < 3) niceFraction = 2;
+    else if (fraction < 7) niceFraction = 5;
+    else niceFraction = 10;
+  } else {
+    if (fraction <= 1) niceFraction = 1;
+    else if (fraction <= 2) niceFraction = 2;
+    else if (fraction <= 5) niceFraction = 5;
+    else niceFraction = 10;
+  }
+  return niceFraction * Math.pow(10, exponent);
+}
+// Bepaalt een leesbare as-range die niet per se bij 0 begint, maar bij een
+// ronde waarde net onder de laagst gemeten waarde — zodat schommelingen in een
+// reeks die hoog blijft liggen (bv. steeds tussen 63 en 84) zichtbaar blijven
+// i.p.v. samengeperst tegen de bovenkant van een 0-tot-max-as. Dit mag alleen
+// bij lijn-grafieken (positie codeert de waarde): een staafgrafiek (bv.
+// renderRegioChart) moet wél bij 0 beginnen, anders vervormt de balklengte zelf.
+function niceAxisRange(minVal, maxVal, targetTicks) {
+  if (minVal === maxVal) { minVal -= 1; maxVal += 1; }
+  const range = niceNumber(maxVal - minVal, false);
+  const step = niceNumber(range / targetTicks, true);
+  const min = Math.max(0, Math.floor(minVal / step) * step);
+  const max = Math.ceil(maxVal / step) * step;
+  const ticks = Math.round((max - min) / step);
+  return { min, max, step, ticks };
+}
+
 // Compacte lijn-grafiek voor in het detailpaneel — zelfde opzet als de grote
 // "Trend over tijd"-grafiek, maar één lijn en zonder tabel-toggle (dat blijft
 // voorbehouden aan de hoofdgrafiek).
@@ -958,17 +994,18 @@ function tileTrendChartHtml(points) {
   const plotW = Math.max(240, points.length * 46);
   const chartW = leftPad + plotW + rightPad;
   const chartH = topPad + plotH + bottomPad;
-  const maxVal = Math.max(1, ...points.map(p => p.value));
-  const niceMax = Math.ceil(maxVal / 4) * 4 || 4;
-  const scaleY = plotH / niceMax;
+  const values = points.map(p => p.value);
+  const { min: axisMin, max: axisMax, step, ticks } = niceAxisRange(Math.min(...values), Math.max(1, ...values), 4);
+  const scaleY = plotH / (axisMax - axisMin);
   const stepX = plotW / (points.length - 1);
+  const y = v => topPad + plotH - (v - axisMin) * scaleY;
 
   let gridSvg = '';
-  for (let g = 0; g <= 4; g++) {
-    const val = (niceMax / 4) * g;
-    const y = topPad + plotH - val * scaleY;
-    gridSvg += `<line class="grid-line" x1="${leftPad}" x2="${leftPad + plotW}" y1="${y}" y2="${y}" />`;
-    gridSvg += `<text x="${leftPad - 8}" y="${y + 3}" text-anchor="end">${Math.round(val)}</text>`;
+  for (let g = 0; g <= ticks; g++) {
+    const val = axisMin + step * g;
+    const gy = y(val);
+    gridSvg += `<line class="grid-line" x1="${leftPad}" x2="${leftPad + plotW}" y1="${gy}" y2="${gy}" />`;
+    gridSvg += `<text x="${leftPad - 8}" y="${gy + 3}" text-anchor="end">${Math.round(val)}</text>`;
   }
   // Meerdere updates op dezelfde dag -> label met tijd i.p.v. alleen datum,
   // anders staan er dubbele/onleesbare labels onder elkaar.
@@ -977,9 +1014,9 @@ function tileTrendChartHtml(points) {
   const xLabel = p => dateCounts[p.week] > 1 ? fmtDate(p.savedAt).split(', ')[1] : p.week.slice(5);
   const xLabels = points.map((p, i) => `<text x="${leftPad + i * stepX}" y="${topPad + plotH + 18}" text-anchor="middle">${esc(xLabel(p))}</text>`).join('');
 
-  const linePts = points.map((p, i) => `${leftPad + i * stepX},${topPad + plotH - p.value * scaleY}`).join(' ');
+  const linePts = points.map((p, i) => `${leftPad + i * stepX},${y(p.value)}`).join(' ');
   const markers = points.map((p, i) => {
-    const cx = leftPad + i * stepX, cy = topPad + plotH - p.value * scaleY;
+    const cx = leftPad + i * stepX, cy = y(p.value);
     return `<circle class="tile-trend-pt" data-label="${esc(fmtDate(p.savedAt))}" data-val="${p.value}" cx="${cx}" cy="${cy}" r="3.5" fill="var(--series-1)" />`;
   }).join('');
 
@@ -1466,17 +1503,18 @@ function renderTrendChart(snapshots) {
   const plotW = Math.max(360, snapshots.length * 70);
   const chartW = leftPad + plotW + rightPad;
   const chartH = topPad + plotH + bottomPad;
-  const maxVal = Math.max(1, ...regios.flatMap(r => series[r]));
-  const niceMax = Math.ceil(maxVal / 5) * 5 || 5;
-  const scaleY = plotH / niceMax;
+  const allValues = regios.flatMap(r => series[r]);
+  const { min: axisMin, max: axisMax, step, ticks } = niceAxisRange(Math.min(...allValues), Math.max(1, ...allValues), 5);
+  const scaleY = plotH / (axisMax - axisMin);
   const stepX = snapshots.length > 1 ? plotW / (snapshots.length - 1) : 0;
+  const y = v => topPad + plotH - (v - axisMin) * scaleY;
 
   let gridSvg = '';
-  for (let g = 0; g <= 5; g++) {
-    const val = (niceMax / 5) * g;
-    const y = topPad + plotH - val * scaleY;
-    gridSvg += `<line class="grid-line" x1="${leftPad}" x2="${leftPad + plotW}" y1="${y}" y2="${y}" />`;
-    gridSvg += `<text x="${leftPad - 8}" y="${y + 3}" text-anchor="end">${Math.round(val)}</text>`;
+  for (let g = 0; g <= ticks; g++) {
+    const val = axisMin + step * g;
+    const gy = y(val);
+    gridSvg += `<line class="grid-line" x1="${leftPad}" x2="${leftPad + plotW}" y1="${gy}" y2="${gy}" />`;
+    gridSvg += `<text x="${leftPad - 8}" y="${gy + 3}" text-anchor="end">${Math.round(val)}</text>`;
   }
   let xLabels = snapshots.map((sn, wi) => `<text x="${leftPad + wi * stepX}" y="${topPad + plotH + 20}" text-anchor="middle">${esc(sn.week.slice(5))}</text>`).join('');
 
@@ -1484,14 +1522,14 @@ function renderTrendChart(snapshots) {
   let markers = '';
   regios.forEach(r => {
     const color = REGIO_GROUP_COLOR[r];
-    const pts = series[r].map((v, wi) => `${leftPad + wi * stepX},${topPad + plotH - v * scaleY}`).join(' ');
+    const pts = series[r].map((v, wi) => `${leftPad + wi * stepX},${y(v)}`).join(' ');
     lines += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />`;
     series[r].forEach((v, wi) => {
-      const cx = leftPad + wi * stepX, cy = topPad + plotH - v * scaleY;
+      const cx = leftPad + wi * stepX, cy = y(v);
       markers += `<circle class="pt" data-regio="${esc(regioGroupLabel(r))}" data-week="${esc(snapshots[wi].week)}" data-val="${v}" cx="${cx}" cy="${cy}" r="4" fill="${color}" />`;
     });
     const lastX = leftPad + (series[r].length - 1) * stepX;
-    const lastY = topPad + plotH - series[r][series[r].length - 1] * scaleY;
+    const lastY = y(series[r][series[r].length - 1]);
     lines += `<text x="${lastX + 8}" y="${lastY + 4}" style="fill:${color};font-weight:600;">${esc(regioGroupLabel(r))}</text>`;
   });
 
