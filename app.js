@@ -1430,14 +1430,29 @@ function renderGebiedPlaatsenCard() {
     container.innerHTML = '<p class="empty-note">Nog geen gebiedscodes bekend — deze verschijnen zodra je een paste met gebiedscodes verwerkt.</p>';
     return;
   }
-  const rows = gebiedscodes.map(code => {
-    const plaatsen = Object.entries(map[code]).sort((a, b) => b[1] - a[1]);
-    const plaatsenHtml = plaatsen
-      .map(([plaats, count]) => `<span class="type-chip">${esc(plaats)} <span class="muted small">(${count})</span></span>`)
-      .join(' ');
-    return `<tr><td>${esc(code)}</td><td>${plaatsenHtml}</td></tr>`;
-  }).join('');
-  container.innerHTML = `<div class="table-scroll"><table><thead><tr><th>Gebiedscode</th><th>Plaatsen</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  // Zelfde regio-indeling (Haarlem/Leiden) als de rest van de app (filter-
+  // tabs, regio-grafiek) — gebaseerd op de gebiedscode zelf (regioGroupOf),
+  // dus een gebiedscode kan hier nooit in "Overig" vallen (dat geldt alleen
+  // voor storingen zónder gebiedscode, die hierboven al zijn overgeslagen).
+  const byRegio = {};
+  gebiedscodes.forEach(code => {
+    const regio = regioGroupOf({ gebiedscode: code });
+    (byRegio[regio] = byRegio[regio] || []).push(code);
+  });
+  const regios = sortByGroupOrder(Object.keys(byRegio));
+  container.innerHTML = `<div class="mutations-grid">${regios.map(regio => {
+    const rows = byRegio[regio].map(code => {
+      const plaatsen = Object.entries(map[code]).sort((a, b) => b[1] - a[1]);
+      const plaatsenHtml = plaatsen
+        .map(([plaats, count]) => `<span class="type-chip">${esc(plaats)} <span class="muted small">(${count})</span></span>`)
+        .join(' ');
+      return `<tr><td>${esc(code)}</td><td>${plaatsenHtml}</td></tr>`;
+    }).join('');
+    return `<div>
+        <h3>${esc(regioGroupLabel(regio))}</h3>
+        <div class="table-scroll"><table><thead><tr><th>Gebiedscode</th><th>Plaatsen</th></tr></thead><tbody>${rows}</tbody></table></div>
+      </div>`;
+  }).join('')}</div>`;
 }
 
 /* ---------- Rendering: regio chart ---------- */
