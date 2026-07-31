@@ -2193,10 +2193,17 @@ function wireEvents() {
 }
 
 // Echte tabbladen: precies één paneel zichtbaar tegelijk, in plaats van één
-// lange scrollpagina. Onthoudt de laatst gekozen tab (sessionStorage) zodat
-// een herlaad niet steeds terug naar Data springt.
-const TAB_SESSION_KEY = 'nusdash_active_tab';
-function switchTab(tab) {
+// lange scrollpagina. De hash in de adresbalk (#/invoer, #/data,
+// #/instellingen) is de bron van waarheid — dat geeft "gratis" een werkende
+// terug-knop en een herlaad die op hetzelfde tabblad blijft staan, zonder een
+// eigen sessionStorage-bijhoudmechanisme nodig te hebben.
+const TAB_HASH_ROUTES = { invoer: '#/invoer', data: '#/data', settings: '#/instellingen' };
+const HASH_TO_TAB = { '#/invoer': 'invoer', '#/data': 'data', '#/instellingen': 'settings' };
+
+// Past alleen de zichtbare panelen/knoppen aan — geen hash-manipulatie hier,
+// zodat dit ook veilig als reactie op een hashchange-event aangeroepen kan
+// worden zonder een tweede navigatie te triggeren.
+function applyTab(tab) {
   document.querySelectorAll('.tab-panel').forEach(p => {
     p.classList.toggle('hidden', p.dataset.tabPanel !== tab);
   });
@@ -2205,17 +2212,33 @@ function switchTab(tab) {
     b.classList.toggle('active', active);
     b.setAttribute('aria-selected', active ? 'true' : 'false');
   });
-  try { sessionStorage.setItem(TAB_SESSION_KEY, tab); } catch (e) { /* privénavigatie o.i.d. */ }
+}
+
+// Aangeroepen bij een klik op een navigatie-knop: past het paneel meteen
+// (synchroon) toe — anders zou een aanroeper die er direct op vertrouwt dat
+// het doelpaneel al zichtbaar is (bv. scrollIntoView/focus op "Naar Invoer")
+// nog een fractie te vroeg komen, omdat een hash-wijziging pas ASYNCHROON een
+// hashchange-event vuurt — en werkt daarna de hash bij voor de terug-knop.
+function switchTab(tab) {
+  applyTab(tab);
+  const hash = TAB_HASH_ROUTES[tab] || TAB_HASH_ROUTES.data;
+  if (location.hash !== hash) location.hash = hash;
+}
+
+// Aangeroepen bij laden en bij elke hashchange (terug/vooruit-knop, handmatig
+// aangepaste of gedeelde link). Onbekende of (in de bekijk-alleen export)
+// verborgen tabbladen vallen terug op "data".
+function resolveTabFromHash() {
+  const tab = HASH_TO_TAB[location.hash] || 'data';
+  const btn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+  applyTab((!btn || btn.classList.contains('hidden')) ? 'data' : tab);
 }
 function setupTabNav() {
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
-  let initial = 'data';
-  try { initial = sessionStorage.getItem(TAB_SESSION_KEY) || 'data'; } catch (e) { /* privénavigatie o.i.d. */ }
-  const initialBtn = document.querySelector(`.tab-btn[data-tab="${initial}"]`);
-  if (!initialBtn || initialBtn.classList.contains('hidden')) initial = 'data';
-  switchTab(initial);
+  window.addEventListener('hashchange', resolveTabFromHash);
+  resolveTabFromHash();
 }
 
 function applyStaticExportData() {
