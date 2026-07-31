@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NUS Dashboard — Weekoverzicht</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <h1>NUS Dashboard <span class="hero-sub">— niet-urgente storingen</span></h1>
+    <p class="hero-tagline">Tijdelijk lokaal dashboard. Alle data blijft in je browser (IndexedDB) — er wordt niets verzonden.</p>
+    <p id="static-export-banner" class="hero-tagline static-export-banner hidden"></p>
+    <nav class="tab-nav" role="tablist" aria-label="Onderdelen">
+      <button class="tab-btn" id="tab-btn-invoer" data-tab="invoer" role="tab" aria-selected="false" aria-controls="section-invoer">✏️ Invoer</button>
+      <button class="tab-btn active" id="tab-btn-data" data-tab="data" role="tab" aria-selected="true" aria-controls="section-data">📊 Data</button>
+      <button class="tab-btn" id="tab-btn-settings" data-tab="settings" role="tab" aria-selected="false" aria-controls="section-settings">⚙️ Instellingen</button>
+    </nav>
+  </div>
+  <svg class="hero-wave" viewBox="0 0 1440 60" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0,32 C240,58 480,4 720,22 C960,40 1200,10 1440,28 L1440,60 L0,60 Z" fill="var(--page-plane)"></path>
+  </svg>
+</header>
+
+<main>
+
+  <section class="tab-panel hidden" id="section-invoer" data-tab-panel="invoer" role="tabpanel" aria-labelledby="tab-btn-invoer" tabindex="0">
+    <div class="panel-banner panel-banner-invoer">
+      <span class="panel-icon">✏️</span>
+      <div>
+        <h2>Invoer</h2>
+        <p>Plak hier elke week de lijst uit de Instandhoudingsapp — de Data-pagina wordt automatisch bijgewerkt. Gebied en status kun je apart plakken (elk in hun eigen weergave in de Instandhoudingsapp); ze worden automatisch samengevoegd.</p>
+      </div>
+    </div>
+
+    <section class="card" id="input-card">
+      <h2>💡 OV NUSsen — nieuwe week verwerken</h2>
+      <p class="muted small">Plak hieronder de volledige lijst van open storingen zoals gekopieerd uit de Instandhoudingsapp.</p>
+      <textarea id="paste-input" rows="10" placeholder="Plak hier de volledige pagina met open storingen…"></textarea>
+      <div class="input-row">
+        <label for="week-date">Weekdatum</label>
+        <input type="date" id="week-date">
+        <button id="process-btn" class="btn-primary">Verwerken &amp; opslaan als deze week</button>
+        <span id="process-status" class="muted small"></span>
+      </div>
+      <div id="parse-warning" class="warning-box hidden"></div>
+    </section>
+  </section>
+
+  <section class="tab-panel" id="section-data" data-tab-panel="data" role="tabpanel" aria-labelledby="tab-btn-data" tabindex="0">
+    <div class="panel-banner panel-banner-data">
+      <span class="panel-icon">📊</span>
+      <div>
+        <h2>Data</h2>
+        <p>Alles wat verwerkt is, in één overzicht — gebruik de knoppen hieronder om te wisselen.</p>
+      </div>
+    </div>
+
+      <section class="card empty-state-card hidden" id="dashboard-empty">
+        <p class="empty-state-icon">💡</p>
+        <h3>Nog geen data voor OV NUSsen</h3>
+        <p class="muted small">Plak de eerstvolgende export op de Invoer-pagina om dit dashboard te vullen.</p>
+        <button class="btn-primary" data-goto-invoer="paste-input">Naar Invoer →</button>
+      </section>
+      <section id="dashboard" class="hidden">
+
+        <div id="week-summary-banner"></div>
+
+        <div class="ov-toolbar">
+          <div class="filter-tabs" id="filter-tabs"></div>
+          <button id="copy-summary-btn" class="btn-link">📋 Kopieer weekoverzicht</button>
+        </div>
+
+        <section class="stat-row" id="stat-tiles"></section>
+
+        <section class="card hidden" id="overdue-detail"></section>
+
+        <section class="card" id="attention-card">
+          <div class="card-header">
+            <h2>⚡ Aandacht deze week <span id="attention-count" class="badge"></span></h2>
+            <button id="copy-attention-btn" class="btn-link">📋 Kopieer order + categorie</button>
+          </div>
+          <p class="muted small">Alle openstaande storingen die om actie vragen — bijna verlopen, verlopen zonder plan, of met een verstreken uitvoeringsdatum — op één plek, gesorteerd op urgentie.</p>
+          <div id="attention-list" class="table-scroll"></div>
+        </section>
+
+        <details class="details-card details-toggle">
+          <summary>📊 Trends, grafieken &amp; mutaties bekijken</summary>
+          <div class="details-toggle-body">
+            <section class="card">
+              <div class="card-header">
+                <h2>⏱️ Doorlooptijd</h2>
+              </div>
+              <div id="doorlooptijd-card-body"></div>
+            </section>
+
+            <div class="charts-grid">
+              <section class="card">
+                <div class="card-header">
+                  <h2>🗺️ Open storingen per regio</h2>
+                  <button class="btn-link toggle-table" data-target="regio-chart">Toon als tabel</button>
+                </div>
+                <div id="regio-chart"></div>
+              </section>
+
+              <section class="card">
+                <div class="card-header">
+                  <h2>📈 Trend over tijd</h2>
+                  <button class="btn-link toggle-table" data-target="trend-chart">Toon als tabel</button>
+                </div>
+                <div id="trend-chart"></div>
+              </section>
+            </div>
+
+            <section class="card">
+              <h2>🔄 Mutaties deze week</h2>
+              <div class="mutations-grid">
+                <div id="mutations-in">
+                  <h3>Nieuw binnengekomen <span id="count-in" class="badge"></span></h3>
+                  <div id="table-in"></div>
+                </div>
+                <div id="mutations-out">
+                  <h3>Afgesloten / uitgegaan <span id="count-out" class="badge"></span></h3>
+                  <div id="table-out"></div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </details>
+
+        <section class="card" id="ov-full-table-card">
+          <div class="card-header">
+            <h2>📋 Volledige lijst — open storingen</h2>
+            <input type="search" id="table-search" class="table-search" placeholder="Zoek op order of adres…">
+          </div>
+          <div id="ov-bulk-bar" class="bulk-bar hidden">
+            <span id="ov-bulk-count" class="muted small"></span>
+            <select id="ov-bulk-reason">
+              <option value="rezap">Aannemerij</option>
+              <option value="aanleg">Naar Aanleg</option>
+              <option value="uitvoerder">Uitvoerder</option>
+              <option value="onderzoek">Onderzoek loopt</option>
+            </select>
+            <button id="ov-bulk-apply-btn" class="btn-primary">Toepassen op selectie</button>
+            <button id="ov-bulk-clear-btn" class="btn-link">Selectie wissen</button>
+          </div>
+          <div id="table-all" class="table-scroll"></div>
+        </section>
+
+        <details class="card details-card" id="ov-weeks-card">
+          <summary>🗓️ Opgeslagen weken</summary>
+          <div class="card-header details-body-header">
+            <span></span>
+            <button class="btn-link danger" id="clear-all-btn">Wis alle opgeslagen data</button>
+          </div>
+          <div id="weeks-list"></div>
+        </details>
+
+      </section>
+
+  </section>
+
+  <section class="tab-panel hidden" id="section-settings" data-tab-panel="settings" role="tabpanel" aria-labelledby="tab-btn-settings" tabindex="0">
+    <div class="panel-banner panel-banner-settings">
+      <span class="panel-icon">⚙️</span>
+      <div>
+        <h2>Instellingen</h2>
+        <p>Back-up en type-filter — dingen die je niet elke week hoeft aan te passen.</p>
+      </div>
+    </div>
+
+    <section class="card" id="backup-card">
+      <h2>💾 Back-up</h2>
+      <p class="muted small">Download een back-upbestand met alle opgeslagen weken en instellingen, of herstel een eerder gedownload back-upbestand.</p>
+      <div class="input-row">
+        <button id="export-backup-btn" class="btn-primary">Exporteer back-up</button>
+        <button id="import-backup-btn" class="btn-link">Importeer back-up…</button>
+        <input type="file" id="import-backup-input" accept="application/json" class="hidden">
+        <span id="backup-status" class="muted small"></span>
+      </div>
+      <div id="storage-usage" class="muted small"></div>
+    </section>
+
+    <section class="card" id="cleanup-card">
+      <h2>🧹 Opschonen</h2>
+      <p class="muted small">Verwijdert blokkade-redenen (Aannemerij/Naar Aanleg/Uitvoerder/Onderzoek loopt) van orders die niet meer voorkomen in de meest recente week. Weekgegevens zelf blijven altijd bewaard.</p>
+      <div class="input-row">
+        <button id="cleanup-btn" class="btn-link">Oude statusdata opschonen…</button>
+        <span id="cleanup-status" class="muted small"></span>
+      </div>
+    </section>
+
+    <section class="card" id="static-export-card">
+      <h2>🤝 Delen met je team</h2>
+      <p class="muted small">Genereert één zelfstandig dashboard-bestand met de actuele week erin gebakken. Zet dit in een gedeelde werkmap — teamleden dubbelklikken het gewoon open en kunnen filteren, sorteren en de lijsten bekijken, zonder dat ze iets van deze applicatie hoeven te snappen. Bewerken (blokkade-reden, nieuwe week verwerken) kan alleen in jouw eigen dashboard.</p>
+      <div class="input-row">
+        <button id="export-static-btn" class="btn-primary">Exporteer interactief dashboard</button>
+        <span id="export-static-status" class="muted small"></span>
+      </div>
+    </section>
+
+    <section class="card" id="sharepoint-card">
+      <h2>🔗 Gedeelde status via SharePoint</h2>
+      <p class="muted small">Optioneel: laat de blokkade-reden delen met collega's, in plaats van alleen lokaal op deze computer. Er hoeft niets aangemaakt te worden op de SharePoint-site — dit gebruikt gewoon de standaardbibliotheek "Gedeelde documenten" die elke site al heeft. Vul alleen de site-URL in en open het dashboard vanaf die site (niet als lokaal bestand). Weekgegevens (het plakken/verwerken) blijven altijd lokaal, ook met dit aan.</p>
+      <div class="input-row">
+        <label for="sharepoint-site-url" class="small">Site-URL</label>
+        <input type="text" id="sharepoint-site-url" placeholder="https://jouwtenant.sharepoint.com/sites/JouwSite" style="flex:1;min-width:280px;">
+      </div>
+      <div class="input-row">
+        <label for="sharepoint-library-name" class="small">Bibliotheeknaam (optioneel)</label>
+        <input type="text" id="sharepoint-library-name" placeholder="Shared Documents" style="width:200px;">
+      </div>
+      <div class="input-row">
+        <label for="sharepoint-enabled-checkbox" class="small">
+          <input type="checkbox" id="sharepoint-enabled-checkbox">
+          Gedeelde status inschakelen
+        </label>
+        <button id="sharepoint-test-btn" class="btn-link">Test verbinding</button>
+        <button id="sharepoint-save-btn" class="btn-primary">Opslaan</button>
+        <span id="sharepoint-status" class="muted small"></span>
+      </div>
+    </section>
+
+    <section class="card" id="bijna-verlopen-card">
+      <h2>⏳ Drempel "Bijna verlopen" — OV NUSsen</h2>
+      <p class="muted small">Storingen met nog dit aantal dagen (of minder) over tot de streefdatum tellen mee als "Bijna verlopen" — geldt voor de tegel, "Aandacht deze week" en de kleur in de tabel.</p>
+      <div class="input-row">
+        <label for="bijna-verlopen-threshold-input" class="small">Nog</label>
+        <input type="number" id="bijna-verlopen-threshold-input" min="1" max="14" style="width:70px;">
+        <label for="bijna-verlopen-threshold-input" class="small">dagen of minder</label>
+        <span id="bijna-verlopen-threshold-status" class="muted small"></span>
+      </div>
+    </section>
+
+    <section class="card" id="type-filter-card">
+      <h2>🏷️ Type-filter — OV NUSsen</h2>
+      <p class="muted small">Alleen storingen met een type hieronder tellen mee in het OV NUSsen-dashboard.</p>
+      <div id="type-whitelist"></div>
+      <div class="input-row">
+        <input type="text" id="new-type-input" placeholder="Nieuw type handmatig toevoegen…">
+        <button id="add-type-btn" class="btn-link">Toevoegen</button>
+      </div>
+    </section>
+
+  </section>
+
+</main>
+
+<div id="tooltip" class="tooltip hidden"></div>
+<div id="toast-container" class="toast-container" aria-live="assertive" aria-atomic="true"></div>
+
+<script src="export-template.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
