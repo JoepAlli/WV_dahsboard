@@ -2237,8 +2237,8 @@ function wireEvents() {
 // #/instellingen) is de bron van waarheid — dat geeft "gratis" een werkende
 // terug-knop en een herlaad die op hetzelfde tabblad blijft staan, zonder een
 // eigen sessionStorage-bijhoudmechanisme nodig te hebben.
-const TAB_HASH_ROUTES = { invoer: '#/invoer', data: '#/data', settings: '#/instellingen' };
-const HASH_TO_TAB = { '#/invoer': 'invoer', '#/data': 'data', '#/instellingen': 'settings' };
+const TAB_HASH_ROUTES = { invoer: '#/invoer', data: '#/data', gebieden: '#/gebieden', settings: '#/instellingen' };
+const HASH_TO_TAB = { '#/invoer': 'invoer', '#/data': 'data', '#/gebieden': 'gebieden', '#/instellingen': 'settings' };
 
 // Past alleen de zichtbare panelen/knoppen aan — geen hash-manipulatie hier,
 // zodat dit ook veilig als reactie op een hashchange-event aangeroepen kan

@@ -21,6 +21,9 @@
     <button class="tab-btn active" id="tab-btn-data" data-tab="data" role="tab" aria-selected="true" aria-controls="section-data">
       <span class="nav-icon" aria-hidden="true">📊</span><span class="nav-label">Data</span>
     </button>
+    <button class="tab-btn" id="tab-btn-gebieden" data-tab="gebieden" role="tab" aria-selected="false" aria-controls="section-gebieden">
+      <span class="nav-icon" aria-hidden="true">🗺️</span><span class="nav-label">Gebieden</span>
+    </button>
     <button class="tab-btn" id="tab-btn-settings" data-tab="settings" role="tab" aria-selected="false" aria-controls="section-settings">
       <span class="nav-icon" aria-hidden="true">⚙️</span><span class="nav-label">Instellingen</span>
     </button>
@@ -135,12 +138,6 @@
                 </div>
               </div>
             </section>
-
-            <section class="card">
-              <h2>🗺️ Gebied → plaatsen</h2>
-              <p class="muted small">Welke plaatsen tot nu toe onder welke gebiedscode zijn voorgekomen, opgebouwd uit alle verwerkte weken tot nu toe.</p>
-              <div id="gebied-plaatsen-body"></div>
-            </section>
           </div>
         </details>
 
@@ -174,6 +171,20 @@
 
       </section>
 
+  </section>
+
+  <section class="tab-panel hidden" id="section-gebieden" data-tab-panel="gebieden" role="tabpanel" aria-labelledby="tab-btn-gebieden" tabindex="0">
+    <div class="panel-banner panel-banner-gebieden">
+      <span class="panel-icon">🗺️</span>
+      <div>
+        <h2>Gebieden</h2>
+        <p>Welke plaatsen tot nu toe onder welke gebiedscode zijn voorgekomen, opgebouwd uit alle verwerkte weken tot nu toe.</p>
+      </div>
+    </div>
+
+    <section class="card">
+      <div id="gebied-plaatsen-body"></div>
+    </section>
   </section>
 
   <section class="tab-panel hidden" id="section-settings" data-tab-panel="settings" role="tabpanel" aria-labelledby="tab-btn-settings" tabindex="0">

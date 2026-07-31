@@ -843,6 +843,7 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 }
 .panel-banner-invoer { background: linear-gradient(135deg, var(--brand-primary) 0%, var(--brand-primary-dark) 140%); }
 .panel-banner-data { background: linear-gradient(135deg, var(--brand-primary-dark) 0%, #2c3f14 140%); }
+.panel-banner-gebieden { background: linear-gradient(135deg, var(--series-2) 0%, color-mix(in srgb, var(--series-2) 55%, var(--brand-primary-dark)) 140%); }
 .panel-banner-settings { background: linear-gradient(135deg, #6b6b65 0%, #3a3a35 140%); }
 
 /* "Opgeslagen weken" / "Genegeerd deze week" staan standaard ingeklapt
