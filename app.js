@@ -1515,13 +1515,22 @@ function renderGebiedPlaatsenCard() {
 }
 
 // Alleen deze 4 WV'ers zijn relevant genoeg om apart te volgen — andere
-// namen worden genegeerd. Matcht ongeacht hoofd-/kleine letters in de
-// brontekst, toont altijd deze nette schrijfwijze.
-const RELEVANT_WV_NAMEN = ['Conor', 'Patricia', 'Dulani', 'Jarda'];
+// namen worden genegeerd. De brontekst bevat volledige namen (bv. "Jarda C.
+// Duyff", "Patricia Winkels", "Dulani G.M. Polman"), dus matcht op het eerste
+// woord van de naamregel. "Conor" komt in de brontekst voor als "C. D.
+// Loughman" (geen letterlijke "Conor"), dus die matcht op de achternaam.
+// Matcht ongeacht hoofd-/kleine letters, toont altijd deze nette schrijfwijze.
+const WV_NAAM_MATCHERS = [
+  { naam: 'Jarda', re: /^jarda\b/i },
+  { naam: 'Patricia', re: /^patricia\b/i },
+  { naam: 'Dulani', re: /^dulani\b/i },
+  { naam: 'Conor', re: /\bloughman\b/i },
+];
 function normalizeWvNaam(raw) {
   if (!raw) return null;
-  const trimmed = raw.trim().toLowerCase();
-  return RELEVANT_WV_NAMEN.find(n => n.toLowerCase() === trimmed) || null;
+  const trimmed = raw.trim();
+  const match = WV_NAAM_MATCHERS.find(m => m.re.test(trimmed));
+  return match ? match.naam : null;
 }
 // Kijkt naar alle naamregels van een storing (s.names), niet alleen de 1e —
 // een storing heeft niet altijd 2 namen (dan blijft s.wvNaam leeg terwijl de
