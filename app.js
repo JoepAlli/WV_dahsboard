@@ -1514,63 +1514,59 @@ function renderGebiedPlaatsenCard() {
   renderFullTable(container, sorted, GEBIED_STATS_COLUMNS, state.gebiedSortState);
 }
 
-// Zelfde opzet als buildGebiedPlaatsenStats hierboven, maar gegroepeerd per
-// (WV'er, gebiedscode) i.p.v. per (gebiedscode, plaats) — bedoeld om te
-// kunnen zien of een WV'er zijn storingen gelijkmatig over de gebieden
-// verdeelt of juist structureel meer/minder in een bepaald gebied laat
-// liggen. wvNaam komt alleen mee als de paste van die week toevallig 2
-// naamregels had (zie parseOneEntry) — storingen zonder bekende WV'er tellen
-// hier dus niet mee, ook al doen ze dat wel in het gewone Gebieden-overzicht.
-function buildWvGebiedStats() {
+// Alleen deze 4 WV'ers zijn relevant genoeg om apart te volgen — andere
+// namen die toevallig als 1e naam in een paste staan (bv. een meetdienst-
+// collega of iemand anders) worden genegeerd. Matcht ongeacht hoofd-/
+// kleine letters in de brontekst, toont altijd deze nette schrijfwijze.
+const RELEVANT_WV_NAMEN = ['Conor', 'Patricia', 'Dulani', 'Jarda'];
+function normalizeWvNaam(raw) {
+  if (!raw) return null;
+  const trimmed = raw.trim().toLowerCase();
+  return RELEVANT_WV_NAMEN.find(n => n.toLowerCase() === trimmed) || null;
+}
+
+// Per relevante WV'er: hoeveel unieke storingen ooit gezien (Set, dus een
+// storing die meerdere weken openstaat telt maar één keer) en de gemiddelde
+// doorlooptijd (van eerst gezien tot niet meer aanwezig — zelfde aanpak als
+// resolvedDurations()/buildGebiedPlaatsenStats(), nu gegroepeerd per
+// persoon). Geen gebiedsuitsplitsing: de indeling wie welk gebied doet ligt
+// al vast (Dulani/Patricia = Haarlem, Conor = Leiden), dus dat voegt hier
+// niets toe.
+function buildWvStats() {
   const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week) || a.savedAt.localeCompare(b.savedAt));
   const stats = {};
-  const ensure = (wvNaam, gebiedscode) => {
-    const k = wvNaam + '|||' + gebiedscode;
-    if (!stats[k]) stats[k] = { wvNaam, gebiedscode, orders: new Set(), doorlooptijden: [], nuOpen: 0, geblokkeerd: 0, actieNodig: 0 };
-    return stats[k];
+  const ensure = (naam) => {
+    if (!stats[naam]) stats[naam] = { wvNaam: naam, orders: new Set(), doorlooptijden: [] };
+    return stats[naam];
   };
-  const firstSeen = {}; // order -> { week, wvNaam, gebiedscode }
+  const firstSeen = {}; // order -> { week, wvNaam }
   snaps.forEach((sn, i) => {
     const curOrders = new Set();
     sn.storingen.forEach(s => {
-      if (!s.wvNaam || !s.gebiedscode) return;
+      const naam = normalizeWvNaam(s.wvNaam);
+      if (!naam) return;
       curOrders.add(s.order);
-      ensure(s.wvNaam, s.gebiedscode).orders.add(s.order);
-      if (!(s.order in firstSeen)) firstSeen[s.order] = { week: sn.week, wvNaam: s.wvNaam, gebiedscode: s.gebiedscode };
+      ensure(naam).orders.add(s.order);
+      if (!(s.order in firstSeen)) firstSeen[s.order] = { week: sn.week, wvNaam: naam };
     });
     if (i > 0) {
       snaps[i - 1].storingen.forEach(s => {
-        if (!s.wvNaam || !s.gebiedscode || curOrders.has(s.order)) return;
+        const naam = normalizeWvNaam(s.wvNaam);
+        if (!naam || curOrders.has(s.order)) return;
         const fs = firstSeen[s.order];
         if (!fs) return;
         const days = Math.round((new Date(sn.week) - new Date(fs.week)) / 86400000);
-        if (days >= 0) ensure(fs.wvNaam, fs.gebiedscode).doorlooptijden.push(days);
+        if (days >= 0) ensure(fs.wvNaam).doorlooptijden.push(days);
       });
     }
   });
-  const latest = snaps[snaps.length - 1];
-  if (latest) {
-    const filters = statTileFilters();
-    latest.storingen.forEach(s => {
-      if (!s.wvNaam || !s.gebiedscode) return;
-      const entry = ensure(s.wvNaam, s.gebiedscode);
-      entry.nuOpen++;
-      if (isOvBlocked(s)) entry.geblokkeerd++;
-      if (filters.unknown.test(s) || filters.verlopenDatum.test(s) || filters.bijnaVerlopen.test(s)) entry.actieNodig++;
-    });
-  }
   return Object.values(stats);
 }
 
-const WV_GEBIED_STATS_COLUMNS = [
+const WV_STATS_COLUMNS = [
   { key: 'wvNaam', label: "WV'er", cell: r => `<td>${esc(r.wvNaam)}</td>` },
-  { key: 'regio', label: 'Regio', cell: r => `<td>${esc(regioGroupLabel(r.regio))}</td>` },
-  { key: 'gebiedscode', label: 'Gebiedscode', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
-  { key: 'totaal', label: 'Totaal ooit', num: true, cell: r => `<td class="num">${r.totaal}</td>` },
-  { key: 'nuOpen', label: 'Nu open', num: true, cell: r => `<td class="num">${r.nuOpen}</td>` },
+  { key: 'totaal', label: 'Totaal aantal storingen', num: true, cell: r => `<td class="num">${r.totaal}</td>` },
   { key: 'doorlooptijd', label: 'Gem. doorlooptijd', num: true, cell: r => `<td class="num">${r.doorlooptijd == null ? '—' : r.doorlooptijd.toFixed(1) + ' dgn'}</td>` },
-  { key: 'geblokkeerd', label: 'Geblokkeerd nu', num: true, cell: r => `<td class="num">${r.geblokkeerd}</td>` },
-  { key: 'actieNodig', label: 'Actie nodig nu', num: true, cell: r => `<td class="num">${r.actieNodig}</td>` },
 ];
 
 function renderWvGebiedCard() {
@@ -1582,25 +1578,20 @@ function renderWvGebiedCard() {
   // #wv-gebied-card), maar dit zorgt ervoor dat de namen sowieso nooit in de
   // HTML terechtkomen, ongeacht CSS.
   if (isStaticExport) { container.innerHTML = ''; return; }
-  const stats = buildWvGebiedStats();
+  const stats = buildWvStats();
   if (stats.length === 0) {
-    container.innerHTML = '<p class="empty-note">Nog geen storingen met zowel een bekende WV\'er als een gebiedscode — dit vult zich zodra een paste 2 naamregels bevat.</p>';
+    container.innerHTML = '<p class="empty-note">Nog geen storingen gevonden met Conor, Patricia, Dulani of Jarda als WV\'er.</p>';
     return;
   }
   const rows = stats
     .map(s => ({
       wvNaam: s.wvNaam,
-      gebiedscode: s.gebiedscode,
-      regio: regioGroupOf({ gebiedscode: s.gebiedscode }),
       totaal: s.orders.size,
-      nuOpen: s.nuOpen,
-      geblokkeerd: s.geblokkeerd,
-      actieNodig: s.actieNodig,
       doorlooptijd: s.doorlooptijden.length ? s.doorlooptijden.reduce((a, b) => a + b, 0) / s.doorlooptijden.length : null,
     }))
-    .sort((a, b) => a.wvNaam.localeCompare(b.wvNaam) || a.gebiedscode.localeCompare(b.gebiedscode));
+    .sort((a, b) => a.wvNaam.localeCompare(b.wvNaam));
   const sorted = sortByState(rows, state.wvSortState);
-  renderFullTable(container, sorted, WV_GEBIED_STATS_COLUMNS, state.wvSortState);
+  renderFullTable(container, sorted, WV_STATS_COLUMNS, state.wvSortState);
 }
 
 /* ---------- Rendering: regio chart ---------- */
