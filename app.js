@@ -1515,14 +1515,25 @@ function renderGebiedPlaatsenCard() {
 }
 
 // Alleen deze 4 WV'ers zijn relevant genoeg om apart te volgen — andere
-// namen die toevallig als 1e naam in een paste staan (bv. een meetdienst-
-// collega of iemand anders) worden genegeerd. Matcht ongeacht hoofd-/
-// kleine letters in de brontekst, toont altijd deze nette schrijfwijze.
+// namen worden genegeerd. Matcht ongeacht hoofd-/kleine letters in de
+// brontekst, toont altijd deze nette schrijfwijze.
 const RELEVANT_WV_NAMEN = ['Conor', 'Patricia', 'Dulani', 'Jarda'];
 function normalizeWvNaam(raw) {
   if (!raw) return null;
   const trimmed = raw.trim().toLowerCase();
   return RELEVANT_WV_NAMEN.find(n => n.toLowerCase() === trimmed) || null;
+}
+// Kijkt naar alle naamregels van een storing (s.names), niet alleen de 1e —
+// een storing heeft niet altijd 2 namen (dan blijft s.wvNaam leeg terwijl de
+// relevante naam wél als enige naamregel aanwezig is) en de positie van de
+// WV'er-naam is niet gegarandeerd altijd dezelfde. Zo mist deze telling geen
+// storingen puur omdat de naam op een andere plek staat dan verwacht.
+function findRelevantWvNaam(s) {
+  for (const raw of s.names || []) {
+    const naam = normalizeWvNaam(raw);
+    if (naam) return naam;
+  }
+  return null;
 }
 
 // Per relevante WV'er: hoeveel unieke storingen ooit gezien (Set, dus een
@@ -1543,7 +1554,7 @@ function buildWvStats() {
   snaps.forEach((sn, i) => {
     const curOrders = new Set();
     sn.storingen.forEach(s => {
-      const naam = normalizeWvNaam(s.wvNaam);
+      const naam = findRelevantWvNaam(s);
       if (!naam) return;
       curOrders.add(s.order);
       ensure(naam).orders.add(s.order);
@@ -1551,7 +1562,7 @@ function buildWvStats() {
     });
     if (i > 0) {
       snaps[i - 1].storingen.forEach(s => {
-        const naam = normalizeWvNaam(s.wvNaam);
+        const naam = findRelevantWvNaam(s);
         if (!naam || curOrders.has(s.order)) return;
         const fs = firstSeen[s.order];
         if (!fs) return;
@@ -1580,7 +1591,7 @@ function renderWvGebiedCard() {
   if (isStaticExport) { container.innerHTML = ''; return; }
   const stats = buildWvStats();
   if (stats.length === 0) {
-    container.innerHTML = '<p class="empty-note">Nog geen storingen gevonden met Conor, Patricia, Dulani of Jarda als WV\'er.</p>';
+    container.innerHTML = '<p class="empty-note">Nog geen storingen gevonden voor de gevolgde WV\'ers.</p>';
     return;
   }
   const rows = stats
