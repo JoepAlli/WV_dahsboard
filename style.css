@@ -196,7 +196,8 @@ summary:focus-visible, [tabindex]:focus-visible {
    geen data-beheer — alleen filteren/sorteren/klikken door bestaande data. */
 .static-export #input-card,
 .static-export #ov-weeks-card,
-.static-export #dashboard-empty { display: none; }
+.static-export #dashboard-empty,
+.static-export #wv-gebied-card { display: none; }
 
 main {
   padding: 22px clamp(16px, 3vw, 40px) 64px;
