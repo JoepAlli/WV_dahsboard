@@ -904,6 +904,22 @@ function statTileFilters() {
   OV_STATUS_ORDER.forEach(status => {
     filters[OV_STATUS_FILTER_KEYS[status]] = { title: `Status: ${status}`, test: s => s.ovStatus === status && !isOvBlocked(s) };
   });
+  // "Nieuw" telt bewust NIET de zelf-gerapporteerde status van de Instand-
+  // houdingsapp: een storing die meteen wordt opgepakt kan al bij de eerste
+  // keer zien "In onderzoek" tonen, ook al is 'm vandaag pas binnengekomen —
+  // dan geeft de status-telling een scheef beeld van de instroom. In plaats
+  // daarvan: écht nieuw als het ordernummer nog nooit eerder is gezien, d.w.z.
+  // de eerst-gezien-week (zie firstSeenWeekMap, ook gebruikt voor "Open
+  // sinds") is gelijk aan de nieuwste verwerkte week. Meerdere updates op
+  // dezelfde dag delen dezelfde week-datum, dus dit ververst per dag, niet
+  // per status-wissel binnen die dag.
+  const firstSeenMap = firstSeenWeekMap();
+  const sortedSnaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  const latestWeek = sortedSnaps.length ? sortedSnaps[sortedSnaps.length - 1].week : null;
+  filters[OV_STATUS_FILTER_KEYS['Nieuw']] = {
+    title: 'Nieuw binnengekomen (nog niet eerder gezien)',
+    test: s => firstSeenMap[s.order] === latestWeek && !isOvBlocked(s),
+  };
   return filters;
 }
 
@@ -923,6 +939,7 @@ const OV_TILE_TITLES = {
   geblokkeerd: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt)',
 };
 OV_STATUS_ORDER.forEach(status => { OV_TILE_TITLES[OV_STATUS_FILTER_KEYS[status]] = `Status: ${status}`; });
+OV_TILE_TITLES[OV_STATUS_FILTER_KEYS['Nieuw']] = 'Nieuw binnengekomen (nog niet eerder gezien)';
 
 // Berekent het verloop van één tegel over alle opgeslagen OV-momenten heen,
 // mét de actieve regiotab (net als de tegel zelf). "afgesloten" is een
@@ -1938,7 +1955,8 @@ function buildWeekSummaryText() {
     `Verlopen — uitvoering onbekend: ${count('unknown')}`,
   );
   OV_STATUS_ORDER.forEach(status => {
-    lines.push(`Status ${status}: ${count(OV_STATUS_FILTER_KEYS[status])}`);
+    const label = status === 'Nieuw' ? 'Nog niet eerder gezien (écht nieuw)' : `Status ${status}`;
+    lines.push(`${label}: ${count(OV_STATUS_FILTER_KEYS[status])}`);
   });
   lines.push(`Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt): ${count('geblokkeerd')}`);
   return lines.join('\n');
