@@ -742,6 +742,7 @@ const state = {
   typeWhitelist: [],
   activeFilter: 'Totaal',
   sortState: { key: 'daysLeft', dir: 1 },
+  gebiedSortState: { key: 'regio', dir: 1 },
   regioViewMode: 'chart',
   trendViewMode: 'chart',
   statDetailFilter: null,
@@ -1420,63 +1421,96 @@ function renderDoorlooptijdCard() {
 
 /* ---------- Rendering: gebied → plaatsen overzicht ---------- */
 
-// Puur naslagwerk: over alle ooit verwerkte OV-weken heen, welke plaatsen
-// onder welke gebiedscode zijn voorgekomen (en hoe vaak). Bewust los van het
-// actieve type-/regiofilter en van "alleen de nieuwste week" — dit gaat over
-// de structuur van de gebiedscodes zelf, niet over wat er deze week toevallig
-// open staat.
-// gebiedscode -> plaats -> Set van ordernummers die daar ooit zijn gezien.
-// Een Set (i.p.v. een simpele teller) zodat een storing die meerdere weken
-// achter elkaar openstaat en dus in meerdere momentopnamen voorkomt maar één
-// keer meetelt, niet één keer per week waarin 'm nog open stond.
-function buildGebiedPlaatsenMap() {
-  const map = {};
-  state.snapshots.forEach(sn => {
+// Per (gebiedscode, plaats)-combinatie een klein dashboard op zich, bedoeld
+// om structurele probleemplekken op te sporen — niet alleen "waar komt veel
+// vandaan", maar ook "waar blijft het structureel liggen":
+// - totaal: unieke storingen ooit gezien (Set, dus een storing die meerdere
+//   weken blijft openstaan telt maar één keer).
+// - nuOpen/geblokkeerd/actieNodig: momentopname van de nieuwste week —
+//   "actieNodig" is exact dezelfde definitie als "Aandacht deze week"
+//   (bijna verlopen / verlopen zonder plan / uitvoeringsdatum verstreken).
+// - doorlooptijden: voor elke storing die ooit uit de (gefilterde) lijst
+//   verdween, de tijd tussen eerst gezien en verdwijnen — toegeschreven aan
+//   het gebied/plaats waar 'm het EERST gezien werd (zelfde aanpak als
+//   resolvedDurations(), maar dan per gebied/plaats i.p.v. per regiofilter).
+//   Een plek met weinig storingen die stelselmatig lang blijven liggen is
+//   een groter probleem dan een drukke plek die snel wordt opgelost — vandaar
+//   dat dit los van "totaal" wordt getoond.
+function buildGebiedPlaatsenStats() {
+  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week) || a.savedAt.localeCompare(b.savedAt));
+  const stats = {};
+  const ensure = (gebiedscode, plaats) => {
+    const k = gebiedscode + '|||' + plaats;
+    if (!stats[k]) stats[k] = { gebiedscode, plaats, orders: new Set(), doorlooptijden: [], nuOpen: 0, geblokkeerd: 0, actieNodig: 0 };
+    return stats[k];
+  };
+  const firstSeen = {}; // order -> { week, gebiedscode, plaats }
+  snaps.forEach((sn, i) => {
+    const curOrders = new Set();
     sn.storingen.forEach(s => {
       if (!s.gebiedscode) return;
       const plaats = s.city || 'Onbekend';
-      if (!map[s.gebiedscode]) map[s.gebiedscode] = {};
-      if (!map[s.gebiedscode][plaats]) map[s.gebiedscode][plaats] = new Set();
-      map[s.gebiedscode][plaats].add(s.order);
+      curOrders.add(s.order);
+      ensure(s.gebiedscode, plaats).orders.add(s.order);
+      if (!(s.order in firstSeen)) firstSeen[s.order] = { week: sn.week, gebiedscode: s.gebiedscode, plaats };
     });
+    if (i > 0) {
+      snaps[i - 1].storingen.forEach(s => {
+        if (!s.gebiedscode || curOrders.has(s.order)) return;
+        const fs = firstSeen[s.order];
+        if (!fs) return;
+        const days = Math.round((new Date(sn.week) - new Date(fs.week)) / 86400000);
+        if (days >= 0) ensure(fs.gebiedscode, fs.plaats).doorlooptijden.push(days);
+      });
+    }
   });
-  return map;
+  const latest = snaps[snaps.length - 1];
+  if (latest) {
+    const filters = statTileFilters();
+    latest.storingen.forEach(s => {
+      if (!s.gebiedscode) return;
+      const entry = ensure(s.gebiedscode, s.city || 'Onbekend');
+      entry.nuOpen++;
+      if (isOvBlocked(s)) entry.geblokkeerd++;
+      if (filters.unknown.test(s) || filters.verlopenDatum.test(s) || filters.bijnaVerlopen.test(s)) entry.actieNodig++;
+    });
+  }
+  return Object.values(stats);
 }
+
+const GEBIED_STATS_COLUMNS = [
+  { key: 'regio', label: 'Regio', cell: r => `<td>${esc(regioGroupLabel(r.regio))}</td>` },
+  { key: 'gebiedscode', label: 'Gebiedscode', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
+  { key: 'plaats', label: 'Plaats', cell: r => `<td>${esc(r.plaats)}</td>` },
+  { key: 'totaal', label: 'Totaal ooit', num: true, cell: r => `<td class="num">${r.totaal}</td>` },
+  { key: 'nuOpen', label: 'Nu open', num: true, cell: r => `<td class="num">${r.nuOpen}</td>` },
+  { key: 'doorlooptijd', label: 'Gem. doorlooptijd', num: true, cell: r => `<td class="num">${r.doorlooptijd == null ? '—' : r.doorlooptijd.toFixed(1) + ' dgn'}</td>` },
+  { key: 'geblokkeerd', label: 'Geblokkeerd nu', num: true, cell: r => `<td class="num">${r.geblokkeerd}</td>` },
+  { key: 'actieNodig', label: 'Actie nodig nu', num: true, cell: r => `<td class="num">${r.actieNodig}</td>` },
+];
 
 function renderGebiedPlaatsenCard() {
   const container = document.getElementById('gebied-plaatsen-body');
   if (!container) return;
-  const map = buildGebiedPlaatsenMap();
-  const gebiedscodes = Object.keys(map).sort();
-  if (gebiedscodes.length === 0) {
+  const stats = buildGebiedPlaatsenStats();
+  if (stats.length === 0) {
     container.innerHTML = '<p class="empty-note">Nog geen gebiedscodes bekend — deze verschijnen zodra je een paste met gebiedscodes verwerkt.</p>';
     return;
   }
-  // Zelfde regio-indeling (Haarlem/Leiden) als de rest van de app (filter-
-  // tabs, regio-grafiek) — gebaseerd op de gebiedscode zelf (regioGroupOf),
-  // dus een gebiedscode kan hier nooit in "Overig" vallen (dat geldt alleen
-  // voor storingen zónder gebiedscode, die hierboven al zijn overgeslagen).
-  const byRegio = {};
-  gebiedscodes.forEach(code => {
-    const regio = regioGroupOf({ gebiedscode: code });
-    (byRegio[regio] = byRegio[regio] || []).push(code);
-  });
-  const regios = sortByGroupOrder(Object.keys(byRegio));
-  container.innerHTML = `<div class="mutations-grid">${regios.map(regio => {
-    const rows = byRegio[regio].map(code => {
-      const plaatsen = Object.entries(map[code])
-        .map(([plaats, orders]) => [plaats, orders.size])
-        .sort((a, b) => b[1] - a[1]);
-      const plaatsenHtml = plaatsen
-        .map(([plaats, count]) => `<span class="type-chip">${esc(plaats)} <span class="muted small">(${count})</span></span>`)
-        .join(' ');
-      return `<tr><td>${esc(code)}</td><td>${plaatsenHtml}</td></tr>`;
-    }).join('');
-    return `<div>
-        <h3>${esc(regioGroupLabel(regio))}</h3>
-        <div class="table-scroll"><table><thead><tr><th>Gebiedscode</th><th>Plaatsen</th></tr></thead><tbody>${rows}</tbody></table></div>
-      </div>`;
-  }).join('')}</div>`;
+  const rows = stats
+    .map(s => ({
+      gebiedscode: s.gebiedscode,
+      plaats: s.plaats,
+      regio: regioGroupOf({ gebiedscode: s.gebiedscode }),
+      totaal: s.orders.size,
+      nuOpen: s.nuOpen,
+      geblokkeerd: s.geblokkeerd,
+      actieNodig: s.actieNodig,
+      doorlooptijd: s.doorlooptijden.length ? s.doorlooptijden.reduce((a, b) => a + b, 0) / s.doorlooptijden.length : null,
+    }))
+    .sort((a, b) => a.gebiedscode.localeCompare(b.gebiedscode) || a.plaats.localeCompare(b.plaats));
+  const sorted = sortByState(rows, state.gebiedSortState);
+  renderFullTable(container, sorted, GEBIED_STATS_COLUMNS, state.gebiedSortState);
 }
 
 /* ---------- Rendering: regio chart ---------- */
@@ -2192,6 +2226,14 @@ function wireEvents() {
     state.searchQuery = e.target.value;
     const latest = state.snapshots[state.snapshots.length - 1];
     if (latest) renderTableAll(filterByActive(typeFiltered(latest.storingen)));
+  });
+
+  document.getElementById('gebied-plaatsen-body').addEventListener('click', e => {
+    const th = e.target.closest('th[data-key]');
+    if (!th) return;
+    if (state.gebiedSortState.key === th.dataset.key) state.gebiedSortState.dir *= -1;
+    else { state.gebiedSortState.key = th.dataset.key; state.gebiedSortState.dir = 1; }
+    renderGebiedPlaatsenCard();
   });
 
   document.getElementById('ov-bulk-apply-btn').addEventListener('click', async () => {
