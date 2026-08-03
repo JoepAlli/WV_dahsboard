@@ -1425,6 +1425,10 @@ function renderDoorlooptijdCard() {
 // actieve type-/regiofilter en van "alleen de nieuwste week" — dit gaat over
 // de structuur van de gebiedscodes zelf, niet over wat er deze week toevallig
 // open staat.
+// gebiedscode -> plaats -> Set van ordernummers die daar ooit zijn gezien.
+// Een Set (i.p.v. een simpele teller) zodat een storing die meerdere weken
+// achter elkaar openstaat en dus in meerdere momentopnamen voorkomt maar één
+// keer meetelt, niet één keer per week waarin 'm nog open stond.
 function buildGebiedPlaatsenMap() {
   const map = {};
   state.snapshots.forEach(sn => {
@@ -1432,7 +1436,8 @@ function buildGebiedPlaatsenMap() {
       if (!s.gebiedscode) return;
       const plaats = s.city || 'Onbekend';
       if (!map[s.gebiedscode]) map[s.gebiedscode] = {};
-      map[s.gebiedscode][plaats] = (map[s.gebiedscode][plaats] || 0) + 1;
+      if (!map[s.gebiedscode][plaats]) map[s.gebiedscode][plaats] = new Set();
+      map[s.gebiedscode][plaats].add(s.order);
     });
   });
   return map;
@@ -1459,7 +1464,9 @@ function renderGebiedPlaatsenCard() {
   const regios = sortByGroupOrder(Object.keys(byRegio));
   container.innerHTML = `<div class="mutations-grid">${regios.map(regio => {
     const rows = byRegio[regio].map(code => {
-      const plaatsen = Object.entries(map[code]).sort((a, b) => b[1] - a[1]);
+      const plaatsen = Object.entries(map[code])
+        .map(([plaats, orders]) => [plaats, orders.size])
+        .sort((a, b) => b[1] - a[1]);
       const plaatsenHtml = plaatsen
         .map(([plaats, count]) => `<span class="type-chip">${esc(plaats)} <span class="muted small">(${count})</span></span>`)
         .join(' ');
