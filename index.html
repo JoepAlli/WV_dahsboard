@@ -24,6 +24,9 @@
     <button class="tab-btn" id="tab-btn-gebieden" data-tab="gebieden" role="tab" aria-selected="false" aria-controls="section-gebieden">
       <span class="nav-icon" aria-hidden="true">🗺️</span><span class="nav-label">Gebieden</span>
     </button>
+    <button class="tab-btn" id="tab-btn-prognose" data-tab="prognose" role="tab" aria-selected="false" aria-controls="section-prognose">
+      <span class="nav-icon" aria-hidden="true">🔮</span><span class="nav-label">Prognose</span>
+    </button>
     <button class="tab-btn" id="tab-btn-settings" data-tab="settings" role="tab" aria-selected="false" aria-controls="section-settings">
       <span class="nav-icon" aria-hidden="true">⚙️</span><span class="nav-label">Instellingen</span>
     </button>
@@ -184,6 +187,34 @@
 
     <section class="card">
       <div id="gebied-plaatsen-body" class="table-scroll"></div>
+    </section>
+  </section>
+
+  <section class="tab-panel hidden" id="section-prognose" data-tab-panel="prognose" role="tabpanel" aria-labelledby="tab-btn-prognose" tabindex="0">
+    <div class="panel-banner panel-banner-prognose">
+      <span class="panel-icon">🔮</span>
+      <div>
+        <h2>Prognose</h2>
+        <p>Vooruitkijken in plaats van terugkijken: wat komt er de komende weken op je af, hoeveel storingen moet je per week afsluiten om niet achterop te raken, en welke storingen blijven stilstaan zonder dat ze al verlopen zijn.</p>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>📅 Verloopkalender</h2>
+      <p class="muted small">Op basis van de resterende dagen per storing: hoeveel storingen hun uiterste datum bereiken in de komende weken, als er niets gebeurt. Dit is geen schatting maar een aftelling — de aantallen liggen vast. Gesplitst naar wel of geen uitvoeringsdatum, want een storing zonder plan is het echte risico.</p>
+      <div id="verloopkalender-body"></div>
+    </section>
+
+    <section class="card">
+      <h2>⚖️ Benodigd tempo</h2>
+      <p class="muted small">Hoeveel storingen er gemiddeld per week bijkomen tegenover hoeveel je er afsluit, en wat dat betekent voor de voorraad.</p>
+      <div id="tempo-body"></div>
+    </section>
+
+    <section class="card">
+      <h2>🐢 Stagnatiesignaal</h2>
+      <p class="muted small">Storingen die veel langer in dezelfde status staan dan gebruikelijk voor die status. Deze vallen vaak buiten "Aandacht deze week" omdat ze formeel nog op tijd zijn — terwijl ze in de praktijk stilstaan.</p>
+      <div id="stagnatie-body" class="table-scroll"></div>
     </section>
   </section>
 

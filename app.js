@@ -744,6 +744,7 @@ const state = {
   sortState: { key: 'daysLeft', dir: 1 },
   gebiedSortState: { key: 'regio', dir: 1 },
   wvSortState: { key: 'wvNaam', dir: 1 },
+  stagnatieSortState: { key: 'ratio', dir: -1 },
   regioViewMode: 'chart',
   trendViewMode: 'chart',
   statDetailFilter: null,
@@ -1614,6 +1615,335 @@ function renderWvGebiedCard() {
   renderFullTable(container, sorted, WV_STATS_COLUMNS, state.wvSortState);
 }
 
+/* ---------- Prognose: verloopkalender ---------- */
+
+// De verloopkalender is bewust géén voorspelling: daysLeft is een aftelling
+// die al vastligt, dus "over 2 weken verlopen er 14" is een zekerheid zolang
+// er niets gebeurt. Dat maakt 'm bruikbaar om capaciteit op te plannen, in
+// tegenstelling tot een trendprojectie die altijd een slag om de arm houdt.
+//
+// De splitsing wel/geen uitvoeringsdatum is het punt van deze kaart: een
+// storing die volgende week verloopt maar een geplande uitvoeringsdatum heeft
+// is een heel ander soort werk dan eentje zonder plan. Geblokkeerde storingen
+// worden apart geteld omdat daar per definitie iemand anders aan zet is —
+// ze tellen niet mee als "zonder plan", want dan zou de actielijst vervuilen
+// met werk waar je deze week niets aan kunt doen.
+const VERLOOP_BUCKETS = [
+  { key: 'verlopen', label: 'Al verlopen', short: 'Verlopen', test: d => d < 0 },
+  { key: 'week0', label: 'Deze week', short: 'Deze week', test: d => d >= 0 && d < 7 },
+  { key: 'week1', label: 'Volgende week', short: '+1 week', test: d => d >= 7 && d < 14 },
+  { key: 'week2', label: 'Over 2 weken', short: '+2 weken', test: d => d >= 14 && d < 21 },
+  { key: 'week3', label: 'Over 3 weken', short: '+3 weken', test: d => d >= 21 && d < 28 },
+  { key: 'later', label: 'Over 4 weken of later', short: 'Later', test: d => d >= 28 },
+];
+
+// Drie elkaar uitsluitende categorieën, in oplopende urgentie voor jou als
+// aanstuurder: geblokkeerd (iemand anders aan zet), gepland (datum staat er,
+// datum is nog niet verstreken), zonder plan (niemand heeft het opgepakt).
+function verloopCategorieOf(s) {
+  if (isOvBlocked(s)) return 'geblokkeerd';
+  if (s.executionDate && !isExpiredExecutionDate(s)) return 'gepland';
+  return 'zonderPlan';
+}
+// Stapelvolgorde is bewust rood → grijs → groen: rood en groen zijn onder
+// rood-groenblindheid nauwelijks te scheiden (ΔE 5.5 deutan), dus het neutrale
+// grijs staat ertussen zodat geen enkel aangrenzend paar op kleur alleen hoeft
+// te worden onderscheiden (gecontroleerd met scripts/validate_palette.js uit de
+// dataviz-skill: CVD-scheiding slaagt in zowel licht als donker). Grijs voor
+// "geblokkeerd" klopt ook inhoudelijk: dat werk ligt bij iemand anders, dus het
+// hoort niet mee te schreeuwen om aandacht.
+const VERLOOP_CATS = [
+  { key: 'zonderPlan', label: 'Zonder plan', color: 'var(--status-critical)' },
+  { key: 'geblokkeerd', label: 'Geblokkeerd', color: 'var(--series-other)' },
+  { key: 'gepland', label: 'Gepland', color: 'var(--status-good)' },
+];
+
+function buildVerloopkalender(current) {
+  return VERLOOP_BUCKETS.map(b => {
+    const bucket = { key: b.key, label: b.label, short: b.short, zonderPlan: 0, gepland: 0, geblokkeerd: 0, total: 0 };
+    current.forEach(s => {
+      if (typeof s.daysLeft !== 'number' || !b.test(s.daysLeft)) return;
+      bucket[verloopCategorieOf(s)]++;
+      bucket.total++;
+    });
+    return bucket;
+  });
+}
+
+function renderVerloopkalender(current) {
+  const container = document.getElementById('verloopkalender-body');
+  if (!container) return;
+  const buckets = buildVerloopkalender(current);
+  if (buckets.every(b => b.total === 0)) {
+    container.innerHTML = '<p class="empty-note">Geen open storingen om vooruit te kijken.</p>';
+    return;
+  }
+
+  const barW = 46, gap = 30, leftPad = 40, topPad = 16, plotH = 190, bottomPad = 38;
+  const chartW = Math.max(420, buckets.length * (barW + gap) + leftPad);
+  const chartH = topPad + plotH + bottomPad;
+  const maxTotal = Math.max(...buckets.map(b => b.total), 1);
+  const niceMax = Math.ceil(maxTotal / 5) * 5 || 5;
+  const scale = plotH / niceMax;
+
+  let gridSvg = '';
+  for (let g = 0; g <= 5; g++) {
+    const val = (niceMax / 5) * g;
+    const y = topPad + plotH - val * scale;
+    gridSvg += `<line class="grid-line" x1="${leftPad}" x2="${chartW}" y1="${y}" y2="${y}" />`;
+    gridSvg += `<text x="${leftPad - 8}" y="${y + 3}" text-anchor="end">${Math.round(val)}</text>`;
+  }
+
+  let bars = '';
+  buckets.forEach((b, idx) => {
+    const x = leftPad + idx * (barW + gap) + gap / 2;
+    let yCursor = topPad + plotH;
+    VERLOOP_CATS.forEach(cat => {
+      const val = b[cat.key];
+      if (val <= 0) return;
+      const h = val * scale;
+      const yTop = yCursor - h;
+      bars += `<rect class="seg" data-bucket="${esc(b.label)}" data-cat="${esc(cat.label)}" data-count="${val}"
+        x="${x}" y="${yTop + 1}" width="${barW}" height="${Math.max(h - 2, 0)}" rx="3"
+        fill="${cat.color}" />`;
+      yCursor = yTop;
+    });
+    bars += `<text x="${x + barW / 2}" y="${topPad + plotH + 20}" text-anchor="middle">${esc(b.short)}</text>`;
+    if (b.total > 0) {
+      bars += `<text x="${x + barW / 2}" y="${topPad + plotH - b.total * scale - 6}" text-anchor="middle" style="fill:var(--text-primary);font-weight:600;">${b.total}</text>`;
+    }
+  });
+
+  // De koptekst vat de kalender samen in de zin waar je iets aan hebt: wat
+  // komt er de komende twee weken aan, en hoeveel daarvan heeft nog geen plan.
+  const komende2 = buckets.filter(b => b.key === 'week0' || b.key === 'week1');
+  const komendTotal = komende2.reduce((sum, b) => sum + b.total, 0);
+  const komendZonderPlan = komende2.reduce((sum, b) => sum + b.zonderPlan, 0);
+
+  container.innerHTML = `
+    <p class="prognose-headline">Komende 2 weken ${komendTotal === 1 ? 'bereikt' : 'bereiken'} <strong>${komendTotal}</strong> storing${komendTotal === 1 ? '' : 'en'} ${komendTotal === 1 ? 'zijn' : 'hun'} uiterste datum, waarvan <strong class="${komendZonderPlan > 0 ? 'prognose-bad' : ''}">${komendZonderPlan}</strong> zonder uitvoeringsdatum.</p>
+    <svg class="chart-svg" viewBox="0 0 ${chartW} ${chartH}" width="100%" height="${chartH}">
+      <line class="axis-line" x1="${leftPad}" x2="${leftPad}" y1="${topPad}" y2="${topPad + plotH}" />
+      ${gridSvg}
+      ${bars}
+    </svg>
+    <div class="legend">
+      ${VERLOOP_CATS.map(c => `<span class="legend-item"><span class="legend-swatch" style="background:${c.color}"></span>${esc(c.label)}</span>`).join('')}
+    </div>`;
+
+  container.querySelectorAll('.seg').forEach(rect => {
+    rect.addEventListener('mouseenter', e => showTooltip(e, `<strong>${esc(rect.dataset.bucket)}</strong><br>${esc(rect.dataset.cat)}: ${rect.dataset.count}`));
+    rect.addEventListener('mousemove', moveTooltip);
+    rect.addEventListener('mouseleave', hideTooltip);
+  });
+}
+
+/* ---------- Prognose: benodigd tempo ---------- */
+
+// Instroom/uitstroom per week-overgang, over de laatste TEMPO_WEEKS overgangen.
+// Bewust een kort venster: het tempo van een half jaar geleden zegt weinig over
+// wat je nu moet halen, en een lang gemiddelde verbergt juist de omslag die je
+// wilt zien. Alles loopt via dezelfde zichtbaarheidsfilters als de rest van het
+// dashboard, zodat de aantallen aansluiten bij wat je in de tabellen ziet.
+const TEMPO_WEEKS = 8;
+
+function buildTempoStats() {
+  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  const visibleOf = (list) => filterByActive(typeFiltered(list));
+  if (snaps.length < 2) return null;
+
+  const transitions = [];
+  for (let i = 1; i < snaps.length; i++) {
+    const prevOrders = new Set(visibleOf(snaps[i - 1].storingen).map(s => s.order));
+    const curOrders = new Set(visibleOf(snaps[i].storingen).map(s => s.order));
+    let instroom = 0, uitstroom = 0;
+    curOrders.forEach(o => { if (!prevOrders.has(o)) instroom++; });
+    prevOrders.forEach(o => { if (!curOrders.has(o)) uitstroom++; });
+    transitions.push({ week: snaps[i].week, instroom, uitstroom, open: curOrders.size });
+  }
+
+  const recent = transitions.slice(-TEMPO_WEEKS);
+  const avg = (list, key) => list.reduce((sum, t) => sum + t[key], 0) / list.length;
+  const avgIn = avg(recent, 'instroom');
+  const avgUit = avg(recent, 'uitstroom');
+  const open = visibleOf(snaps[snaps.length - 1].storingen).length;
+
+  return { transitions: recent, avgIn, avgUit, open, netto: avgIn - avgUit, weken: recent.length };
+}
+
+function renderTempoCard() {
+  const container = document.getElementById('tempo-body');
+  if (!container) return;
+  const t = buildTempoStats();
+  if (!t) {
+    container.innerHTML = '<p class="empty-note">Verwerk minstens twee weken om instroom en uitstroom te kunnen vergelijken.</p>';
+    return;
+  }
+
+  // Het netto-getal is de kern: positief = de voorraad groeit, en dan is
+  // "hoeveel extra per week" een concreter stuurgetal dan een percentage.
+  const groeit = t.netto > 0.05;
+  const krimpt = t.netto < -0.05;
+  const tekort = Math.abs(t.netto);
+
+  let oordeel;
+  if (groeit) {
+    const over8 = Math.round(t.open + t.netto * 8);
+    oordeel = `<p class="prognose-headline">Je loopt <strong class="prognose-bad">${tekort.toFixed(1)} storing${tekort.toFixed(1) === '1.0' ? '' : 'en'} per week achter</strong>. Blijft dit zo, dan staan er over 8 weken ongeveer <strong>${over8}</strong> open in plaats van ${t.open}.</p>`;
+  } else if (krimpt) {
+    const wekenLeeg = t.open / tekort;
+    const extra = wekenLeeg <= 52 ? ` Bij dit tempo is de huidige voorraad over ongeveer ${Math.round(wekenLeeg)} weken weggewerkt.` : '';
+    oordeel = `<p class="prognose-headline">Je werkt de voorraad in: <strong class="prognose-good">${tekort.toFixed(1)} storing${tekort.toFixed(1) === '1.0' ? '' : 'en'} per week minder</strong> dan er bijkomen.${extra}</p>`;
+  } else {
+    oordeel = `<p class="prognose-headline">Instroom en uitstroom zijn <strong>in evenwicht</strong> — de voorraad blijft rond de ${t.open} storingen hangen.</p>`;
+  }
+
+  const rows = t.transitions.map(tr => {
+    const netto = tr.instroom - tr.uitstroom;
+    const nettoCls = netto > 0 ? 'prognose-bad' : netto < 0 ? 'prognose-good' : '';
+    return `<tr><td>${esc(tr.week)}</td><td class="num">${tr.instroom}</td><td class="num">${tr.uitstroom}</td><td class="num ${nettoCls}">${netto > 0 ? '+' : ''}${netto}</td><td class="num">${tr.open}</td></tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    ${oordeel}
+    <div class="tempo-grid">
+      <div class="tempo-stat"><div class="label">Gem. instroom</div><div class="value">${t.avgIn.toFixed(1)}</div><div class="muted small">per week</div></div>
+      <div class="tempo-stat"><div class="label">Gem. uitstroom</div><div class="value">${t.avgUit.toFixed(1)}</div><div class="muted small">per week</div></div>
+      <div class="tempo-stat"><div class="label">Benodigd tempo</div><div class="value">${Math.ceil(t.avgIn)}</div><div class="muted small">per week om vlak te blijven</div></div>
+      <div class="tempo-stat"><div class="label">Nu open</div><div class="value">${t.open}</div><div class="muted small">storingen</div></div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Week</th><th class="num">In</th><th class="num">Uit</th><th class="num">Netto</th><th class="num">Open na afloop</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="muted small">Gebaseerd op de laatste ${t.weken} week-overgang${t.weken === 1 ? '' : 'en'}. "Uit" betekent dat een storing niet meer in de lijst stond — dat kan opgelost zijn, maar ook geannuleerd of overgedragen; dat onderscheid legt de tool nu niet vast.</p>`;
+}
+
+/* ---------- Prognose: stagnatiesignaal ---------- */
+
+// Hoeveel weken staat een storing al onafgebroken in dezelfde OV-status? Dat
+// is iets anders dan leeftijd: een storing die netjes doorstroomt van Nieuw
+// naar In onderzoek naar Planning is oud maar gezond. Eentje die al tien weken
+// op "In onderzoek" staat, staat stil — ook als de uiterste datum nog ver weg
+// ligt, waardoor 'ie nergens anders in het dashboard opvalt.
+//
+// De referentie is de mediaan per status, niet één vaste drempel: "In
+// voorbereiding" duurt van nature langer dan "Nieuw", dus een vaste drempel
+// zou de ene status overspoelen en de andere nooit raken. De mediaan is
+// bovendien ongevoelig voor een handvol extreem lang liggende gevallen, die
+// een gemiddelde juist zo optrekken dat er niets meer opvalt.
+const STAGNATIE_MIN_WEKEN = 3;   // onder de 3 weken is "stilstand" ruis
+const STAGNATIE_RATIO = 2;       // pas melden vanaf 2x de mediaan van die status
+
+function buildStatusDuurStats() {
+  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  const visibleOf = (list) => filterByActive(typeFiltered(list));
+  // Per order: sinds welke week staat 'ie onafgebroken op de huidige status.
+  const lopend = {};
+  // Per status: alle afgeronde "hoe lang stond het hierop"-metingen, in weken.
+  const afgerond = {};
+
+  snaps.forEach((sn, idx) => {
+    const seen = new Set();
+    visibleOf(sn.storingen).forEach(s => {
+      if (!s.ovStatus) return;
+      seen.add(s.order);
+      const cur = lopend[s.order];
+      if (!cur) {
+        lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx };
+      } else if (cur.status !== s.ovStatus) {
+        const weken = Math.round((new Date(sn.week) - new Date(cur.sinds)) / (7 * 86400000));
+        if (weken >= 0) (afgerond[cur.status] = afgerond[cur.status] || []).push(weken);
+        lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx };
+      }
+    });
+    // Verdwenen storingen sluiten hun lopende status-periode af: ook dát is
+    // een meting van hoe lang die status normaal duurt.
+    Object.keys(lopend).forEach(order => {
+      if (seen.has(order) || lopend[order].index >= idx) return;
+      const cur = lopend[order];
+      const weken = Math.round((new Date(sn.week) - new Date(cur.sinds)) / (7 * 86400000));
+      if (weken >= 0) (afgerond[cur.status] = afgerond[cur.status] || []).push(weken);
+      delete lopend[order];
+    });
+  });
+
+  const median = (arr) => {
+    const a = arr.slice().sort((x, y) => x - y);
+    const mid = Math.floor(a.length / 2);
+    return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+  };
+  const medianen = {};
+  Object.keys(afgerond).forEach(st => { if (afgerond[st].length >= 3) medianen[st] = median(afgerond[st]); });
+  return { lopend, medianen };
+}
+
+function buildStagnatieRows() {
+  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  if (snaps.length < 2) return [];
+  const latest = snaps[snaps.length - 1];
+  const { lopend, medianen } = buildStatusDuurStats();
+
+  const rows = [];
+  filterByActive(typeFiltered(latest.storingen)).forEach(s => {
+    const cur = lopend[s.order];
+    if (!cur || !s.ovStatus) return;
+    const weken = Math.round((new Date(latest.week) - new Date(cur.sinds)) / (7 * 86400000));
+    if (weken < STAGNATIE_MIN_WEKEN) return;
+    // Zonder genoeg historie voor deze status valt er niets te vergelijken;
+    // dan gebruiken we de minimumdrempel als referentie, zodat de kaart ook
+    // in de eerste maanden al iets zinnigs laat zien in plaats van leeg te zijn.
+    const mediaan = medianen[s.ovStatus] != null ? medianen[s.ovStatus] : null;
+    const referentie = mediaan != null ? Math.max(mediaan, 1) : STAGNATIE_MIN_WEKEN;
+    const ratio = weken / referentie;
+    if (mediaan != null ? ratio < STAGNATIE_RATIO : weken < STAGNATIE_MIN_WEKEN * 2) return;
+    rows.push({
+      order: s.order,
+      plaats: s.city || 'Onbekend',
+      gebiedscode: s.gebiedscode || '—',
+      ovStatus: s.ovStatus,
+      weken,
+      mediaan,
+      ratio,
+      geblokkeerd: isOvBlocked(s),
+      daysLeft: typeof s.daysLeft === 'number' ? s.daysLeft : null,
+    });
+  });
+  return rows;
+}
+
+const STAGNATIE_COLUMNS = [
+  { key: 'order', label: 'Order', cell: r => `<td>${esc(r.order)}</td>` },
+  { key: 'plaats', label: 'Plaats', cell: r => `<td>${esc(r.plaats)}</td>` },
+  { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
+  { key: 'ovStatus', label: 'Status', cell: r => `<td>${esc(r.ovStatus)}</td>` },
+  { key: 'weken', label: 'Weken in status', num: true, cell: r => `<td class="num">${r.weken}</td>` },
+  { key: 'mediaan', label: 'Normaal', num: true, cell: r => `<td class="num">${r.mediaan == null ? '—' : r.mediaan.toFixed(1) + ' wk'}</td>` },
+  { key: 'ratio', label: 'Verhouding', num: true, cell: r => `<td class="num prognose-bad">${r.ratio.toFixed(1)}×</td>` },
+  { key: 'daysLeft', label: 'Dagen over', num: true, cell: r => `<td class="num">${r.daysLeft == null ? '—' : r.daysLeft}</td>` },
+  { key: 'geblokkeerd', label: 'Geblokkeerd', cell: r => `<td>${r.geblokkeerd ? '🚧 ja' : '—'}</td>` },
+];
+
+function renderStagnatieCard() {
+  const container = document.getElementById('stagnatie-body');
+  if (!container) return;
+  const rows = buildStagnatieRows();
+  if (rows.length === 0) {
+    container.innerHTML = '<p class="empty-note">Geen stilstaande storingen gevonden — of er is nog te weinig historie om "normaal" te bepalen. Deze kaart wordt scherper naarmate er meer weken zijn verwerkt.</p>';
+    return;
+  }
+  const sorted = sortByState(rows, state.stagnatieSortState);
+  renderFullTable(container, sorted, STAGNATIE_COLUMNS, state.stagnatieSortState);
+}
+
+function renderPrognose(current) {
+  renderVerloopkalender(current);
+  renderTempoCard();
+  renderStagnatieCard();
+}
+
 /* ---------- Rendering: regio chart ---------- */
 
 function renderRegioChart(current) {
@@ -2063,6 +2393,7 @@ function renderDashboardFromState() {
   renderMutationTables(mutations);
   renderGebiedPlaatsenCard();
   renderWvGebiedCard();
+  renderPrognose(latestFiltered);
   renderTableAll(latestFiltered);
   renderWeeksList();
   updateStorageUsage();
@@ -2346,6 +2677,14 @@ function wireEvents() {
     renderWvGebiedCard();
   });
 
+  document.getElementById('stagnatie-body').addEventListener('click', e => {
+    const th = e.target.closest('th[data-key]');
+    if (!th) return;
+    if (state.stagnatieSortState.key === th.dataset.key) state.stagnatieSortState.dir *= -1;
+    else { state.stagnatieSortState.key = th.dataset.key; state.stagnatieSortState.dir = 1; }
+    renderStagnatieCard();
+  });
+
   document.getElementById('ov-bulk-apply-btn').addEventListener('click', async () => {
     if (state.ovBulkSelected.size === 0) return;
     const reason = document.getElementById('ov-bulk-reason').value;
@@ -2429,8 +2768,8 @@ function wireEvents() {
 // #/instellingen) is de bron van waarheid — dat geeft "gratis" een werkende
 // terug-knop en een herlaad die op hetzelfde tabblad blijft staan, zonder een
 // eigen sessionStorage-bijhoudmechanisme nodig te hebben.
-const TAB_HASH_ROUTES = { invoer: '#/invoer', data: '#/data', gebieden: '#/gebieden', settings: '#/instellingen' };
-const HASH_TO_TAB = { '#/invoer': 'invoer', '#/data': 'data', '#/gebieden': 'gebieden', '#/instellingen': 'settings' };
+const TAB_HASH_ROUTES = { invoer: '#/invoer', data: '#/data', gebieden: '#/gebieden', prognose: '#/prognose', settings: '#/instellingen' };
+const HASH_TO_TAB = { '#/invoer': 'invoer', '#/data': 'data', '#/gebieden': 'gebieden', '#/prognose': 'prognose', '#/instellingen': 'settings' };
 
 // Past alleen de zichtbare panelen/knoppen aan — geen hash-manipulatie hier,
 // zodat dit ook veilig als reactie op een hashchange-event aangeroepen kan
