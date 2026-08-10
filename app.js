@@ -716,12 +716,12 @@ function renderDaysPill(s) {
 }
 
 function computeMutations(current, previous) {
-  if (!previous) return { nieuw: [], uitgegaan: [], hasPrevious: false };
+  if (!previous) return { nieuw: [], uitgegaan: [], hasPrevious: false, vorigeDag: null };
   const curOrders = new Set(current.map(s => s.order));
   const prevOrders = new Set(previous.storingen.map(s => s.order));
   const nieuw = current.filter(s => !prevOrders.has(s.order));
   const uitgegaan = previous.storingen.filter(s => !curOrders.has(s.order));
-  return { nieuw, uitgegaan, hasPrevious: true };
+  return { nieuw, uitgegaan, hasPrevious: true, vorigeDag: previous.week || null };
 }
 
 function fmtDate(iso) {
@@ -953,7 +953,7 @@ OV_TILE_TITLES[OV_STATUS_FILTER_KEYS['Nieuw']] = 'Nieuw binnengekomen (nog niet 
 // uitzondering: dat is een verschil tússen opeenvolgende momenten (wat is
 // verdwenen), geen standenmeting op één moment, dus dat telt per paar.
 function ovTileTrendSeries(key) {
-  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week) || a.savedAt.localeCompare(b.savedAt));
+  const snaps = chronoSnapshots();
   if (key === 'afgesloten') {
     const points = [];
     for (let i = 1; i < snaps.length; i++) {
@@ -1075,7 +1075,7 @@ function renderStatTiles(current, mutations) {
     { key: 'unknown', icon: '⛔', label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
       note: overdueUnknown > 0 ? 'nog niets ingepland — zie Aandacht deze week' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
     { key: 'afgesloten', icon: '✅', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
-      note: mutations.hasPrevious ? 'sinds vorige update' : 'nog geen vorige update', scrollTarget: 'mutations-out' },
+      note: mutations.hasPrevious ? `sinds ${mutations.vorigeDag || 'de vorige update'}` : 'nog geen eerdere dag', scrollTarget: 'mutations-out' },
     { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
   );
   // Elke tegel is nu klikbaar: altijd voor het verloop-grafiekje in het
@@ -1150,7 +1150,7 @@ function renderWeekSummaryBanner(current, mutations) {
     text = `<strong>${attentionCount}</strong> van de <strong>${total}</strong> open ${total === 1 ? 'storing' : 'storingen'} ${attentionCount === 1 ? 'vraagt' : 'vragen'} deze week om actie — zie "Aandacht deze week" hieronder.`;
   }
   if (mutations.hasPrevious) {
-    text += ` Sinds vorige week: <strong>${mutations.nieuw.length}</strong> nieuw binnengekomen, <strong>${mutations.uitgegaan.length}</strong> afgesloten.`;
+    text += ` Sinds ${mutations.vorigeDag ? esc(mutations.vorigeDag) : 'de vorige update'}: <strong>${mutations.nieuw.length}</strong> nieuw binnengekomen, <strong>${mutations.uitgegaan.length}</strong> opgelost.`;
   }
 
   el.className = `week-summary-banner week-summary-${mood}`;
@@ -1381,7 +1381,7 @@ function renderAttentionList(current, allVisible) {
 // achterstand structureel groeit of krimpt, los van de wekelijkse
 // momentopname.
 function resolvedDurations() {
-  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  const snaps = chronoSnapshots();
   const visibleOf = (list) => filterByActive(typeFiltered(list));
   const firstSeen = {};
   const results = [];
@@ -1443,7 +1443,7 @@ function renderDoorlooptijdCard() {
 //   een groter probleem dan een drukke plek die snel wordt opgelost — vandaar
 //   dat dit los van "totaal" wordt getoond.
 function buildGebiedPlaatsenStats() {
-  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week) || a.savedAt.localeCompare(b.savedAt));
+  const snaps = chronoSnapshots();
   const stats = {};
   const ensure = (gebiedscode, plaats) => {
     const k = gebiedscode + '|||' + plaats;
@@ -1558,7 +1558,7 @@ function findRelevantWvNaam(s) {
 // al vast (Dulani/Patricia = Haarlem, Conor = Leiden), dus dat voegt hier
 // niets toe.
 function buildWvStats() {
-  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week) || a.savedAt.localeCompare(b.savedAt));
+  const snaps = chronoSnapshots();
   const stats = {};
   const ensure = (naam) => {
     if (!stats[naam]) stats[naam] = { wvNaam: naam, orders: new Set(), doorlooptijden: [] };
@@ -2513,8 +2513,8 @@ function renderMutationTables(mutations) {
   document.getElementById('count-in').textContent = mutations.hasPrevious ? mutations.nieuw.length : '—';
   document.getElementById('count-out').textContent = mutations.hasPrevious ? mutations.uitgegaan.length : '—';
   if (!mutations.hasPrevious) {
-    document.getElementById('table-in').innerHTML = '<p class="empty-note">Nog geen vorige week om mee te vergelijken.</p>';
-    document.getElementById('table-out').innerHTML = '<p class="empty-note">Nog geen vorige week om mee te vergelijken.</p>';
+    document.getElementById('table-in').innerHTML = '<p class="empty-note">Nog geen eerdere dag om mee te vergelijken.</p>';
+    document.getElementById('table-out').innerHTML = '<p class="empty-note">Nog geen eerdere dag om mee te vergelijken.</p>';
     return;
   }
   document.getElementById('table-in').innerHTML = miniTable(mutations.nieuw);
@@ -2775,8 +2775,14 @@ function renderDashboardFromState() {
   const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
   state.snapshots = snaps;
   if (snaps.length === 0) { setDashboardEmpty('dashboard', 'dashboard-empty', true); return; }
-  const latest = snaps[snaps.length - 1];
-  const previous = snaps.length > 1 ? snaps[snaps.length - 2] : null;
+  // "Wat is er veranderd" vergelijkt met de vorige DAG, niet met de vorige
+  // plakactie. Er staan meestal twee plakacties op één dag (de gebieds- en de
+  // statusweergave zijn twee blikken op dezelfde lijst); vergelijken met de
+  // vorige plakactie zou dan de ene weergave met de andere vergelijken en
+  // stelselmatig nul mutaties opleveren.
+  const perDag = chronoSnapshots(snaps);
+  const latest = perDag[perDag.length - 1];
+  const previous = perDag.length > 1 ? perDag[perDag.length - 2] : null;
 
   const latestVisible = typeFiltered(latest.storingen);
   const previousVisible = previous ? typeFiltered(previous.storingen) : null;
@@ -2785,7 +2791,7 @@ function renderDashboardFromState() {
   renderFilterTabs(latestVisible);
 
   const latestFiltered = filterByActive(latestVisible);
-  const previousFiltered = previousVisible ? { storingen: filterByActive(previousVisible) } : null;
+  const previousFiltered = previousVisible ? { storingen: filterByActive(previousVisible), week: previous.week } : null;
   const mutations = computeMutations(latestFiltered, previousFiltered);
 
   setDashboardEmpty('dashboard', 'dashboard-empty', false);
@@ -2794,7 +2800,7 @@ function renderDashboardFromState() {
   renderAttentionList(latestFiltered, latestVisible);
   renderDoorlooptijdCard();
   renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
-  renderTrendChart(snaps); // idem, filtert zelf op state.activeFilter
+  renderTrendChart(perDag); // idem, filtert zelf op state.activeFilter
   renderMutationTables(mutations);
   renderGebiedPlaatsenCard();
   renderWvGebiedCard();
@@ -2810,12 +2816,12 @@ function renderDashboardFromState() {
 // actief staat, zodat het gedeelde overzicht altijd het complete plaatje is.
 function buildWeekSummaryText() {
   if (state.snapshots.length === 0) return 'Nog geen gegevens verwerkt.';
-  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  const snaps = chronoSnapshots();
   const latest = snaps[snaps.length - 1];
   const previous = snaps.length > 1 ? snaps[snaps.length - 2] : null;
   const latestVisible = typeFiltered(latest.storingen);
   const previousVisible = previous ? typeFiltered(previous.storingen) : null;
-  const mutations = computeMutations(latestVisible, previousVisible ? { storingen: previousVisible } : null);
+  const mutations = computeMutations(latestVisible, previousVisible ? { storingen: previousVisible, week: previous.week } : null);
   const filters = statTileFilters();
   const count = key => latestVisible.filter(filters[key].test).length;
 
@@ -2825,8 +2831,8 @@ function buildWeekSummaryText() {
     `Totaal open: ${latestVisible.length}`,
   ];
   if (mutations.hasPrevious) {
-    lines.push(`Nieuw binnengekomen: ${mutations.nieuw.length}`);
-    lines.push(`Afgesloten / uitgegaan: ${mutations.uitgegaan.length}`);
+    lines.push(`Nieuw binnengekomen sinds ${mutations.vorigeDag || 'de vorige update'}: ${mutations.nieuw.length}`);
+    lines.push(`Opgelost sinds ${mutations.vorigeDag || 'de vorige update'}: ${mutations.uitgegaan.length}`);
   }
   lines.push(
     `Bijna verlopen: ${count('bijnaVerlopen')}`,
@@ -3047,7 +3053,7 @@ function wireEvents() {
       } else if (target === 'trend-chart') {
         state.trendViewMode = state.trendViewMode === 'chart' ? 'table' : 'chart';
         btn.textContent = state.trendViewMode === 'chart' ? 'Toon als tabel' : 'Toon als grafiek';
-        renderTrendChart(state.snapshots);
+        renderTrendChart(chronoSnapshots());
       }
     });
   });
