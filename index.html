@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NUS Dashboard — Weekoverzicht</title>
+<title>NUS Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -48,18 +48,18 @@
       <span class="panel-icon">✏️</span>
       <div>
         <h2>Invoer</h2>
-        <p>Plak hier elke week de lijst uit de Instandhoudingsapp — de Data-pagina wordt automatisch bijgewerkt. Gebied en status kun je apart plakken (elk in hun eigen weergave in de Instandhoudingsapp); ze worden automatisch samengevoegd.</p>
+        <p>Plak hier de lijst uit de Instandhoudingsapp — de Data-pagina wordt automatisch bijgewerkt. Gebied en status kun je apart plakken (elk in hun eigen weergave in de Instandhoudingsapp); ze worden automatisch samengevoegd.</p>
       </div>
     </div>
 
     <section class="card" id="input-card">
-      <h2>💡 OV NUSsen — nieuwe week verwerken</h2>
-      <p class="muted small">Plak hieronder de volledige lijst van open storingen zoals gekopieerd uit de Instandhoudingsapp.</p>
+      <h2>💡 OV NUSsen — nieuwe update verwerken</h2>
+      <p class="muted small">Plak hieronder de volledige lijst van open storingen zoals gekopieerd uit de Instandhoudingsapp. Meerdere plakacties op dezelfde datum gelden samen als één meetmoment.</p>
       <textarea id="paste-input" rows="10" placeholder="Plak hier de volledige pagina met open storingen…"></textarea>
       <div class="input-row">
-        <label for="week-date">Weekdatum</label>
+        <label for="week-date">Datum</label>
         <input type="date" id="week-date">
-        <button id="process-btn" class="btn-primary">Verwerken &amp; opslaan als deze week</button>
+        <button id="process-btn" class="btn-primary">Verwerken &amp; opslaan</button>
         <span id="process-status" class="muted small"></span>
       </div>
       <div id="parse-warning" class="warning-box hidden"></div>
@@ -87,7 +87,7 @@
 
         <div class="ov-toolbar">
           <div class="filter-tabs" id="filter-tabs"></div>
-          <button id="copy-summary-btn" class="btn-link">📋 Kopieer weekoverzicht</button>
+          <button id="copy-summary-btn" class="btn-link">📋 Kopieer overzicht</button>
         </div>
 
         <section class="stat-row" id="stat-tiles"></section>
@@ -96,7 +96,7 @@
 
         <section class="card" id="attention-card">
           <div class="card-header">
-            <h2>⚡ Aandacht deze week <span id="attention-count" class="badge"></span></h2>
+            <h2>⚡ Vraagt om actie <span id="attention-count" class="badge"></span></h2>
             <button id="copy-attention-btn" class="btn-link">📋 Kopieer order + categorie</button>
           </div>
           <p class="muted small">Alle openstaande storingen die om actie vragen — bijna verlopen, verlopen zonder plan, of met een verstreken uitvoeringsdatum — op één plek, gesorteerd op urgentie.</p>
@@ -132,7 +132,7 @@
             </div>
 
             <section class="card">
-              <h2>🔄 Mutaties deze week</h2>
+              <h2>🔄 Mutaties sinds de vorige dag</h2>
               <div class="mutations-grid">
                 <div id="mutations-in">
                   <h3>Nieuw binnengekomen <span id="count-in" class="badge"></span></h3>
@@ -167,7 +167,7 @@
         </section>
 
         <details class="card details-card" id="ov-weeks-card">
-          <summary>🗓️ Opgeslagen weken</summary>
+          <summary>🗓️ Opgeslagen updates</summary>
           <div class="card-header details-body-header">
             <span></span>
             <button class="btn-link danger" id="clear-all-btn">Wis alle opgeslagen data</button>
@@ -216,7 +216,7 @@
 
     <section class="card">
       <h2>🐢 Stagnatiesignaal</h2>
-      <p class="muted small">Storingen die veel langer in dezelfde status staan dan gebruikelijk voor die status. Deze vallen vaak buiten "Aandacht deze week" omdat ze formeel nog op tijd zijn — terwijl ze in de praktijk stilstaan.</p>
+      <p class="muted small">Storingen die veel langer in dezelfde status staan dan gebruikelijk voor die status. Deze vallen vaak buiten "Vraagt om actie" omdat ze formeel nog op tijd zijn — terwijl ze in de praktijk stilstaan.</p>
       <div id="stagnatie-body" class="table-scroll"></div>
     </section>
   </section>
@@ -314,7 +314,7 @@
 
     <section class="card" id="bijna-verlopen-card">
       <h2>⏳ Drempel "Bijna verlopen" — OV NUSsen</h2>
-      <p class="muted small">Storingen met nog dit aantal dagen (of minder) over tot de streefdatum tellen mee als "Bijna verlopen" — geldt voor de tegel, "Aandacht deze week" en de kleur in de tabel.</p>
+      <p class="muted small">Storingen met nog dit aantal dagen (of minder) over tot de streefdatum tellen mee als "Bijna verlopen" — geldt voor de tegel, "Vraagt om actie" en de kleur in de tabel.</p>
       <div class="input-row">
         <label for="bijna-verlopen-threshold-input" class="small">Nog</label>
         <input type="number" id="bijna-verlopen-threshold-input" min="1" max="14" style="width:70px;">

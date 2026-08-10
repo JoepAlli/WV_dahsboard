@@ -1071,9 +1071,9 @@ function renderStatTiles(current, mutations) {
   });
   tiles.push(
     { key: 'verlopenDatum', icon: '⏰', label: 'Uitvoeringsdatum verstreken', value: expiredDateCount, deltaClass: expiredDateCount > 0 ? 'bad' : 'good',
-      note: expiredDateCount > 0 ? 'geplande datum is zelf ook al voorbij — zie Aandacht deze week' : 'geen', alert: expiredDateCount > 0, scrollTarget: 'attention-card' },
+      note: expiredDateCount > 0 ? 'geplande datum is zelf ook al voorbij — zie Vraagt om actie' : 'geen', alert: expiredDateCount > 0, scrollTarget: 'attention-card' },
     { key: 'unknown', icon: '⛔', label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
-      note: overdueUnknown > 0 ? 'nog niets ingepland — zie Aandacht deze week' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
+      note: overdueUnknown > 0 ? 'nog niets ingepland — zie Vraagt om actie' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
     { key: 'afgesloten', icon: '✅', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
       note: mutations.hasPrevious ? `sinds ${mutations.vorigeDag || 'de vorige update'}` : 'nog geen eerdere dag', scrollTarget: 'mutations-out' },
     { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
@@ -1143,11 +1143,11 @@ function renderWeekSummaryBanner(current, mutations) {
   if (attentionCount === 0) {
     mood = 'good'; icon = '🎉';
     text = total > 0
-      ? `Niets vraagt deze week om actie — alle <strong>${total}</strong> open ${total === 1 ? 'storing ligt' : 'storingen liggen'} op schema.`
-      : 'Niets vraagt deze week om actie.';
+      ? `Niets vraagt nu om actie — alle <strong>${total}</strong> open ${total === 1 ? 'storing ligt' : 'storingen liggen'} op schema.`
+      : 'Niets vraagt nu om actie.';
   } else {
     mood = 'attention'; icon = '⚡';
-    text = `<strong>${attentionCount}</strong> van de <strong>${total}</strong> open ${total === 1 ? 'storing' : 'storingen'} ${attentionCount === 1 ? 'vraagt' : 'vragen'} deze week om actie — zie "Aandacht deze week" hieronder.`;
+    text = `<strong>${attentionCount}</strong> van de <strong>${total}</strong> open ${total === 1 ? 'storing' : 'storingen'} ${attentionCount === 1 ? 'vraagt' : 'vragen'} om actie — zie "Vraagt om actie" hieronder.`;
   }
   if (mutations.hasPrevious) {
     text += ` Sinds ${mutations.vorigeDag ? esc(mutations.vorigeDag) : 'de vorige update'}: <strong>${mutations.nieuw.length}</strong> nieuw binnengekomen, <strong>${mutations.uitgegaan.length}</strong> opgelost.`;
@@ -1320,7 +1320,7 @@ function renderAttentionList(current, allVisible) {
   container.dataset.copyText = items.map(({ s, cat }) => `${s.order}\t${cat.label}`).join('\n');
 
   if (items.length === 0) {
-    container.innerHTML = '<p class="all-clear"><span class="all-clear-icon" aria-hidden="true">🎉</span>Niets dat om actie vraagt deze week — goed bezig!</p>';
+    container.innerHTML = '<p class="all-clear"><span class="all-clear-icon" aria-hidden="true">🎉</span>Niets dat om actie vraagt — goed bezig!</p>';
     return;
   }
 
@@ -1656,11 +1656,11 @@ function dagenTussen(vanIso, totIso) {
 // met werk waar je deze week niets aan kunt doen.
 const VERLOOP_BUCKETS = [
   { key: 'verlopen', label: 'Al verlopen', short: 'Verlopen', test: d => d < 0 },
-  { key: 'week0', label: 'Deze week', short: 'Deze week', test: d => d >= 0 && d < 7 },
-  { key: 'week1', label: 'Volgende week', short: '+1 week', test: d => d >= 7 && d < 14 },
-  { key: 'week2', label: 'Over 2 weken', short: '+2 weken', test: d => d >= 14 && d < 21 },
-  { key: 'week3', label: 'Over 3 weken', short: '+3 weken', test: d => d >= 21 && d < 28 },
-  { key: 'later', label: 'Over 4 weken of later', short: 'Later', test: d => d >= 28 },
+  { key: 'week0', label: 'Binnen 7 dagen', short: '0–7 dgn', test: d => d >= 0 && d < 7 },
+  { key: 'week1', label: 'Over 7–14 dagen', short: '7–14 dgn', test: d => d >= 7 && d < 14 },
+  { key: 'week2', label: 'Over 14–21 dagen', short: '14–21 dgn', test: d => d >= 14 && d < 21 },
+  { key: 'week3', label: 'Over 21–28 dagen', short: '21–28 dgn', test: d => d >= 21 && d < 28 },
+  { key: 'later', label: 'Over 28 dagen of later', short: '28+ dgn', test: d => d >= 28 },
 ];
 
 // Drie elkaar uitsluitende categorieën, in oplopende urgentie voor jou als
@@ -1883,7 +1883,7 @@ function renderTempoCard() {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <p class="muted small">Gebaseerd op ${t.dagen} dag${t.dagen === 1 ? '' : 'en'} historie (${t.updates} update${t.updates === 1 ? '' : 's'}). Instroom en oplostempo worden omgerekend naar een weektempo, zodat de getallen niet verspringen als je een dag overslaat.</p>`;
+    <p class="muted small">Gebaseerd op ${t.dagen} dag${t.dagen === 1 ? '' : 'en'} historie. Instroom en oplostempo worden omgerekend naar een weektempo, zodat de getallen niet verspringen als je een dag overslaat.</p>`;
 }
 
 /* ---------- Prognose: stagnatiesignaal ---------- */
@@ -1896,10 +1896,12 @@ function renderTempoCard() {
 //
 // De referentie is de mediaan per status, niet één vaste drempel: "In
 // voorbereiding" duurt van nature langer dan "Nieuw", dus een vaste drempel
-// zou de ene status overspoelen en de andere nooit raken. De mediaan is
+// zou de ene status overspoelen en de andere nooit raken. Alles in dagen,
+// net als de rest van het dashboard — weken als aparte eenheid hier maakte
+// het onnodig lastig te vergelijken met de dagen-teller ernaast. De mediaan is
 // bovendien ongevoelig voor een handvol extreem lang liggende gevallen, die
 // een gemiddelde juist zo optrekken dat er niets meer opvalt.
-const STAGNATIE_MIN_WEKEN = 3;   // onder de 3 weken is "stilstand" ruis
+const STAGNATIE_MIN_DAGEN = 21;  // onder de drie weken is "stilstand" ruis
 const STAGNATIE_RATIO = 2;       // pas melden vanaf 2x de mediaan van die status
 
 function buildStatusDuurStats() {
@@ -1919,8 +1921,8 @@ function buildStatusDuurStats() {
       if (!cur) {
         lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx };
       } else if (cur.status !== s.ovStatus) {
-        const weken = Math.round((new Date(sn.week) - new Date(cur.sinds)) / (7 * 86400000));
-        if (weken >= 0) (afgerond[cur.status] = afgerond[cur.status] || []).push(weken);
+        const dagen = dagenTussen(cur.sinds, sn.week);
+        if (dagen >= 0) (afgerond[cur.status] = afgerond[cur.status] || []).push(dagen);
         lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx };
       }
     });
@@ -1929,8 +1931,8 @@ function buildStatusDuurStats() {
     Object.keys(lopend).forEach(order => {
       if (seen.has(order) || lopend[order].index >= idx) return;
       const cur = lopend[order];
-      const weken = Math.round((new Date(sn.week) - new Date(cur.sinds)) / (7 * 86400000));
-      if (weken >= 0) (afgerond[cur.status] = afgerond[cur.status] || []).push(weken);
+      const dagen = dagenTussen(cur.sinds, sn.week);
+      if (dagen >= 0) (afgerond[cur.status] = afgerond[cur.status] || []).push(dagen);
       delete lopend[order];
     });
   });
@@ -1955,25 +1957,26 @@ function buildStagnatieRows() {
   filterByActive(typeFiltered(latest.storingen)).forEach(s => {
     const cur = lopend[s.order];
     if (!cur || !s.ovStatus) return;
-    const weken = Math.round((new Date(latest.week) - new Date(cur.sinds)) / (7 * 86400000));
-    if (weken < STAGNATIE_MIN_WEKEN) return;
+    const dagen = dagenTussen(cur.sinds, latest.week);
+    if (dagen < STAGNATIE_MIN_DAGEN) return;
     // Zonder genoeg historie voor deze status valt er niets te vergelijken;
     // dan gebruiken we de minimumdrempel als referentie, zodat de kaart ook
     // in de eerste maanden al iets zinnigs laat zien in plaats van leeg te zijn.
     const mediaan = medianen[s.ovStatus] != null ? medianen[s.ovStatus] : null;
-    const referentie = mediaan != null ? Math.max(mediaan, 1) : STAGNATIE_MIN_WEKEN;
-    const ratio = weken / referentie;
-    if (mediaan != null ? ratio < STAGNATIE_RATIO : weken < STAGNATIE_MIN_WEKEN * 2) return;
+    const referentie = mediaan != null ? Math.max(mediaan, 1) : STAGNATIE_MIN_DAGEN;
+    const ratio = dagen / referentie;
+    if (mediaan != null ? ratio < STAGNATIE_RATIO : dagen < STAGNATIE_MIN_DAGEN * 2) return;
     rows.push({
       order: s.order,
       plaats: s.city || 'Onbekend',
       gebiedscode: s.gebiedscode || '—',
       ovStatus: s.ovStatus,
-      weken,
+      dagen,
       mediaan,
       ratio,
       geblokkeerd: isOvBlocked(s),
       daysLeft: typeof s.daysLeft === 'number' ? s.daysLeft : null,
+      storing: s,
     });
   });
   return rows;
@@ -1984,10 +1987,10 @@ const STAGNATIE_COLUMNS = [
   { key: 'plaats', label: 'Plaats', cell: r => `<td>${esc(r.plaats)}</td>` },
   { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
   { key: 'ovStatus', label: 'Status', cell: r => `<td>${esc(r.ovStatus)}</td>` },
-  { key: 'weken', label: 'Weken in status', num: true, cell: r => `<td class="num">${r.weken}</td>` },
-  { key: 'mediaan', label: 'Normaal', num: true, cell: r => `<td class="num">${r.mediaan == null ? '—' : r.mediaan.toFixed(1) + ' wk'}</td>` },
+  { key: 'dagen', label: 'Dagen in status', num: true, cell: r => `<td class="num">${r.dagen}</td>` },
+  { key: 'mediaan', label: 'Normaal', num: true, cell: r => `<td class="num">${r.mediaan == null ? '—' : Math.round(r.mediaan) + ' dgn'}</td>` },
   { key: 'ratio', label: 'Verhouding', num: true, cell: r => `<td class="num prognose-bad">${r.ratio.toFixed(1)}×</td>` },
-  { key: 'daysLeft', label: 'Dagen over', num: true, cell: r => `<td class="num">${r.daysLeft == null ? '—' : r.daysLeft}</td>` },
+  { key: 'daysLeft', label: 'Deadline', num: true, cell: r => `<td class="num">${r.daysLeft == null ? '—' : renderDaysPill(r.storing)}</td>` },
   { key: 'geblokkeerd', label: 'Geblokkeerd', cell: r => `<td>${r.geblokkeerd ? '🚧 ja' : '—'}</td>` },
 ];
 
@@ -1996,7 +1999,7 @@ function renderStagnatieCard() {
   if (!container) return;
   const rows = buildStagnatieRows();
   if (rows.length === 0) {
-    container.innerHTML = '<p class="empty-note">Geen stilstaande storingen gevonden — of er is nog te weinig historie om "normaal" te bepalen. Deze kaart wordt scherper naarmate er meer weken zijn verwerkt.</p>';
+    container.innerHTML = '<p class="empty-note">Geen stilstaande storingen gevonden — of er is nog te weinig historie om "normaal" te bepalen. Deze kaart wordt scherper naarmate er meer dagen zijn vastgelegd.</p>';
     return;
   }
   const sorted = sortByState(rows, state.stagnatieSortState);
@@ -2243,7 +2246,19 @@ function renderHistorieSearch() {
 
   const q = (state.historieQuery || '').trim().toLowerCase();
   if (q.length < 2) {
-    container.innerHTML = '<p class="empty-note">Typ minstens twee tekens — zoek op ordernummer, straat, plaats, postcode of assetnummer. Ook allang opgeloste storingen worden gevonden.</p>';
+    // Zonder zoekterm was deze kaart leeg, en daarmee het hele tabblad bij
+    // binnenkomst. Standaard tonen we daarom de laatst opgeloste storingen:
+    // dat is meteen bruikbaar ("wat is er de afgelopen tijd afgerond") en het
+    // laat zien welke vorm de zoekresultaten hebben.
+    const recent = alle.filter(r => !r.open).sort((a, b) => b.laatst.localeCompare(a.laatst)).slice(0, 10);
+    if (recent.length === 0) {
+      container.innerHTML = '<p class="empty-note">Nog geen opgeloste storingen in de historie. Zoek hierboven op ordernummer, straat, plaats, postcode of assetnummer.</p>';
+      return;
+    }
+    container.innerHTML = '<p class="muted small">Laatst opgeloste storingen — of zoek hierboven om iets specifieks terug te vinden.</p>';
+    const tabel = document.createElement('div');
+    container.appendChild(tabel);
+    renderFullTable(tabel, recent, HISTORIE_COLUMNS, { key: 'laatst', dir: -1 });
     return;
   }
   const treffers = alle.filter(r => [r.order, r.city, r.street, r.postcode, r.asset].some(v => (v || '').toLowerCase().includes(q)));
@@ -2264,17 +2279,31 @@ function renderHistorieSearch() {
 // wijst op iets structureels in plaats van pech. Vandaar de gemiddelde tussentijd
 // als aparte kolom: vier storingen in tien jaar is iets anders dan vier in een
 // half jaar, en dat verschil zie je niet aan het aantal alleen.
+// De adresregel uit de bron is "Breestraat 40" — straatnaam MET huisnummer.
+// Op dat veld groeperen betekent dat twee storingen even verderop in dezelfde
+// straat als twee losse locaties tellen, waardoor er praktisch nooit herhaling
+// gevonden wordt. Daarom het huisnummer (met eventuele toevoeging of
+// bis-nummer) van het eind af halen. Een leidend getal blijft staan, zodat
+// "1e Binnenvestgracht 5" netjes "1e Binnenvestgracht" wordt.
+function straatZonderHuisnummer(street) {
+  if (!street) return 'Onbekend';
+  const zonder = street.replace(/\s+\d+\s*[a-zA-Z]?(\s*[-\/]\s*\d+\s*[a-zA-Z]?)?\s*$/, '').trim();
+  return zonder || street.trim();
+}
+
 function buildRecidiveStats(mode) {
   const groepen = new Map();
   buildOrderIndex().forEach(r => {
-    const key = mode === 'asset' ? (r.asset || '') : `${r.city || 'Onbekend'}|||${r.street || 'Onbekend'}`;
+    const straat = straatZonderHuisnummer(r.street);
+    const key = mode === 'asset' ? (r.asset || '') : `${r.city || 'Onbekend'}|||${straat}`;
     if (!key || key === '|||') return;
     let g = groepen.get(key);
     if (!g) {
-      g = { key, city: r.city || 'Onbekend', street: r.street || 'Onbekend', asset: r.asset || '—', assetType: r.assetType || '', gebiedscode: r.gebiedscode || '', orders: [] };
+      g = { key, city: r.city || 'Onbekend', street: straat, asset: r.asset || '—', assetType: r.assetType || '', gebiedscode: r.gebiedscode || '', orders: [], adressen: new Set() };
       groepen.set(key, g);
     }
     g.orders.push({ order: r.order, eerst: r.eerst, open: r.open, doorlooptijd: r.looptijd });
+    g.adressen.add(r.street || '');
     if (!g.gebiedscode && r.gebiedscode) g.gebiedscode = r.gebiedscode;
   });
 
@@ -2294,6 +2323,7 @@ function buildRecidiveStats(mode) {
         assetType: g.assetType,
         gebiedscode: g.gebiedscode || '—',
         aantal: data.length,
+        adressen: g.adressen.size,
         eerste,
         laatste,
         // Gemiddelde tijd tussen twee opeenvolgende storingen op deze plek.
@@ -2309,6 +2339,7 @@ const RECIDIVE_COLUMNS_STRAAT = [
   { key: 'street', label: 'Straat', cell: r => `<td>${esc(r.street)}</td>` },
   { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
   { key: 'aantal', label: 'Storingen', num: true, cell: r => `<td class="num"><strong>${r.aantal}</strong></td>` },
+  { key: 'adressen', label: 'Adressen', num: true, cell: r => `<td class="num">${r.adressen}</td>` },
   { key: 'tussentijd', label: 'Gem. tussentijd', num: true, cell: r => `<td class="num">${r.tussentijd == null ? '—' : Math.round(r.tussentijd) + ' dgn'}</td>` },
   { key: 'eerste', label: 'Eerste', cell: r => `<td>${esc(r.eerste)}</td>` },
   { key: 'laatste', label: 'Laatste', cell: r => `<td>${esc(r.laatste)}</td>` },
@@ -2811,7 +2842,7 @@ function renderDashboardFromState() {
   updateStorageUsage();
 }
 
-// Platte-tekst weekoverzicht (voor het "Kopieer weekoverzicht"-knopje) — kijkt
+// Platte-tekst overzicht (voor het "Kopieer overzicht"-knopje) — kijkt
 // altijd naar alle regio's, ongeacht welke regio-filtertab net toevallig
 // actief staat, zodat het gedeelde overzicht altijd het complete plaatje is.
 function buildWeekSummaryText() {
@@ -2826,7 +2857,7 @@ function buildWeekSummaryText() {
   const count = key => latestVisible.filter(filters[key].test).length;
 
   const lines = [
-    `NUS-weekoverzicht — ${fmtDate(latest.week)}`,
+    `NUS-overzicht — ${latest.week}`,
     '',
     `Totaal open: ${latestVisible.length}`,
   ];
