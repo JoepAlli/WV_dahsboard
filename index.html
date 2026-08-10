@@ -90,7 +90,7 @@
           <button id="copy-summary-btn" class="btn-link">📋 Kopieer overzicht</button>
         </div>
 
-        <section class="stat-row" id="stat-tiles"></section>
+        <section class="stat-groups" id="stat-tiles"></section>
 
         <section class="card hidden" id="overdue-detail"></section>
 
@@ -106,13 +106,6 @@
         <details class="details-card details-toggle">
           <summary>📊 Trends, grafieken &amp; mutaties bekijken</summary>
           <div class="details-toggle-body">
-            <section class="card">
-              <div class="card-header">
-                <h2>⏱️ Doorlooptijd</h2>
-              </div>
-              <div id="doorlooptijd-card-body"></div>
-            </section>
-
             <div class="charts-grid">
               <section class="card">
                 <div class="card-header">
@@ -188,6 +181,8 @@
       </div>
     </div>
 
+    <div id="gebied-onbekend" class="warning-box hidden"></div>
+
     <section class="card">
       <div id="gebied-plaatsen-body" class="table-scroll"></div>
     </section>
@@ -229,6 +224,11 @@
         <p>Alles wat de tool ooit heeft gezien, ook storingen die al lang zijn opgelost. Zoek een order of adres terug, of kijk waar het steeds opnieuw misgaat. Klik op een ordernummer — waar dan ook in het dashboard — voor de volledige tijdlijn van die storing.</p>
       </div>
     </div>
+
+    <section class="card">
+      <h2>⏱️ Gemiddelde doorlooptijd</h2>
+      <div id="doorlooptijd-card-body"></div>
+    </section>
 
     <section class="card">
       <h2>🔎 Zoek in de historie</h2>

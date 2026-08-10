@@ -647,17 +647,48 @@ function enrichWithCarriedForwardOvFields(storingen, priorSnapshots) {
 function regioOf(s) { return s.city || 'Onbekend'; }
 
 // Regio wordt bepaald door de gebiedscode die voor de storing stond in de
-// paste: ZZE9(A/B) en ZZE10(A/B) zijn Regio Haarlem, elke andere gebiedscode
-// is Regio Leiden. Ontbreekt de gebiedscode (bv. oudere paste zonder codes),
-// dan weten we het niet zeker en valt de storing onder "Overig".
+// paste: ZZE9 en ZZE10 (A/B) zijn Regio Haarlem, ZZE5 t/m ZZE8 (A/B) zijn
+// Regio Leiden. Alles wat daar niet in past — een ontbrekende code, een nieuw
+// gebied, of een verschrijving — valt onder "Overig".
+//
+// Bewust twee opgesomde lijsten in plaats van "Haarlem, en al het andere is
+// Leiden". Bij die catch-all belandde een onbekende of verkeerd overgenomen
+// code geruisloos in Regio Leiden, waar 'm niemand als vreemde eend opmerkt;
+// nu valt 'ie op als "Overig" (zie ook onbekendeGebiedscodes hieronder).
+const REGIO_NUMMERS = { Haarlem: [9, 10], Leiden: [5, 6, 7, 8] };
 const REGIO_GROUP_ORDER = ['Haarlem', 'Leiden', 'Overig'];
 const REGIO_GROUP_COLOR = { Haarlem: 'var(--series-1)', Leiden: 'var(--series-2)', Overig: 'var(--series-other)' };
 
+// Het nummer los uitlezen in plaats van op tekst vergelijken: met
+// startsWith zou "ZZE1..." ook op "ZZE10" lijken en andersom.
+function gebiedsNummerOf(gebiedscode) {
+  const m = (gebiedscode || '').toUpperCase().match(/^ZZE\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
 function regioGroupOf(s) {
-  const code = (s.gebiedscode || '').toUpperCase();
-  if (!code) return 'Overig';
-  if (code.startsWith('ZZE9') || code.startsWith('ZZE10')) return 'Haarlem';
-  return 'Leiden';
+  const nr = gebiedsNummerOf(s.gebiedscode);
+  if (nr === null) return 'Overig';
+  if (REGIO_NUMMERS.Haarlem.includes(nr)) return 'Haarlem';
+  if (REGIO_NUMMERS.Leiden.includes(nr)) return 'Leiden';
+  return 'Overig';
+}
+
+// Gebiedscodes die wél zijn ingevuld maar bij geen van beide regio's horen.
+// Die wil je zien: het is óf een nieuw gebied dat in REGIO_NUMMERS moet, óf
+// een typefout in de bron. Zonder signaal blijven ze onzichtbaar onder
+// "Overig" hangen, samen met de storingen die helemaal geen code hebben.
+function onbekendeGebiedscodes() {
+  const codes = new Set();
+  chronoSnapshots().forEach(sn => {
+    typeFiltered(sn.storingen).forEach(s => {
+      if (!s.gebiedscode) return;
+      const nr = gebiedsNummerOf(s.gebiedscode);
+      if (nr === null || (!REGIO_NUMMERS.Haarlem.includes(nr) && !REGIO_NUMMERS.Leiden.includes(nr))) {
+        codes.add(s.gebiedscode);
+      }
+    });
+  });
+  return Array.from(codes).sort();
 }
 function regioGroupLabel(g) { return g === 'Overig' ? 'Overig' : `Regio ${g}`; }
 function sortByGroupOrder(names) {
@@ -1061,39 +1092,64 @@ function renderStatTiles(current, mutations) {
   const expiredDateCount = current.filter(filters.verlopenDatum.test).length;
   const overdueUnknown = current.filter(filters.unknown.test).length;
   const geblokkeerdCount = current.filter(filters.geblokkeerd.test).length;
+  // Drie soorten getallen die er eerder als één uniforme rij uitzagen, terwijl
+  // ze niet bij elkaar optellen en niet hetzelfde betekenen:
+  //  - werkvoorraad: het totaal en de statussen die samen dat totaal vormen;
+  //  - signalen: risicocategorieën die dwars door die statussen heen lopen en
+  //    elkaar ook onderling overlappen;
+  //  - mutatie: "opgelost" is geen stand maar een verandering sinds gisteren.
+  // Door ze te scheiden is meteen duidelijk wat wél en niet bij elkaar optelt.
   const tiles = [
-    { key: 'totaal', icon: '📋', label: 'Totaal open', value: total, scrollTarget: 'ov-full-table-card' },
+    { groep: 'voorraad', key: 'totaal', icon: '📋', label: 'Totaal open', value: total, scrollTarget: 'ov-full-table-card' },
   ];
   OV_STATUS_ORDER.forEach(status => {
     const filterKey = OV_STATUS_FILTER_KEYS[status];
     const count = current.filter(filters[filterKey].test).length;
-    tiles.push({ key: filterKey, icon: OV_STATUS_ICONS[status], label: status, value: count, filterKey });
+    tiles.push({ groep: 'voorraad', key: filterKey, icon: OV_STATUS_ICONS[status], label: status, value: count, filterKey });
   });
   tiles.push(
-    { key: 'verlopenDatum', icon: '⏰', label: 'Uitvoeringsdatum verstreken', value: expiredDateCount, deltaClass: expiredDateCount > 0 ? 'bad' : 'good',
+    { groep: 'signaal', key: 'verlopenDatum', icon: '⏰', label: 'Uitvoeringsdatum verstreken', value: expiredDateCount, deltaClass: expiredDateCount > 0 ? 'bad' : 'good',
       note: expiredDateCount > 0 ? 'geplande datum is zelf ook al voorbij — zie Vraagt om actie' : 'geen', alert: expiredDateCount > 0, scrollTarget: 'attention-card' },
-    { key: 'unknown', icon: '⛔', label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
+    { groep: 'signaal', key: 'unknown', icon: '⛔', label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
       note: overdueUnknown > 0 ? 'nog niets ingepland — zie Vraagt om actie' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
-    { key: 'afgesloten', icon: '✅', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
+    { groep: 'mutatie', key: 'afgesloten', icon: '✅', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
       note: mutations.hasPrevious ? `sinds ${mutations.vorigeDag || 'de vorige update'}` : 'nog geen eerdere dag', scrollTarget: 'mutations-out' },
-    { key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
+    { groep: 'signaal', key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
   );
   // Elke tegel is nu klikbaar: altijd voor het verloop-grafiekje in het
   // paneel hieronder, en (waar van toepassing) óók voor de rij-per-storing-
   // lijst of het wegscrollen naar het bijbehorende kaartje verderop.
-  el.innerHTML = tiles.map(t => {
+  const tegelHtml = (t) => {
     const selected = state.statDetailFilter === t.key ? ' stat-tile-selected' : '';
     const hasList = OV_DETAIL_LIST_KEYS.has(t.key);
     const hint = (hasList ? 'Klik voor lijst + verloop' : 'Klik voor verloop') + (t.scrollTarget ? ' ↓' : '');
     const clickAttrs = ` data-stat-filter="${t.key}"${t.scrollTarget ? ` data-scroll-target="${t.scrollTarget}"` : ''} tabindex="0" role="button" aria-expanded="${state.statDetailFilter === t.key}"`;
+    // Een tegel op nul is meestal goed nieuws en hoeft niet net zo hard te
+    // roepen als een tegel met werk erin — hij blijft leesbaar, maar treedt
+    // terug zodat je oog naar de aantallen gaat die er wél toe doen.
+    const nul = t.value === 0 ? ' stat-tile-zero' : '';
     return `
-    <div class="stat-tile stat-tile-clickable${t.alert ? ' stat-tile-alert' : ''}${selected}" data-stat-key="${t.key}"${clickAttrs}>
+    <div class="stat-tile stat-tile-clickable${t.alert ? ' stat-tile-alert' : ''}${nul}${selected}" data-stat-key="${t.key}"${clickAttrs}>
       <div class="stat-tile-icon${t.deltaClass ? ' stat-tile-icon-' + t.deltaClass : ''}" aria-hidden="true">${t.icon}</div>
       <div class="label">${esc(t.label)}</div>
       <div class="value">${esc(t.value)}</div>
       ${t.note ? `<div class="delta ${t.deltaClass || ''}">${esc(t.note)}</div>` : ''}
       <div class="stat-tile-hint">${hint}</div>
     </div>`;
+  };
+  const GROEPEN = [
+    { key: 'voorraad', label: 'Werkvoorraad', uitleg: 'De statussen tellen samen op tot het totaal.' },
+    { key: 'signaal', label: 'Signalen', uitleg: 'Lopen dwars door de statussen heen en kunnen elkaar overlappen.' },
+    { key: 'mutatie', label: `Sinds ${mutations.vorigeDag || 'de vorige update'}`, uitleg: '' },
+  ];
+  el.innerHTML = GROEPEN.map(g => {
+    const inGroep = tiles.filter(t => t.groep === g.key);
+    if (inGroep.length === 0) return '';
+    return `
+      <div class="stat-group stat-group-${g.key}">
+        <h3 class="stat-group-head">${esc(g.label)}${g.uitleg ? ` <span class="stat-group-note">${esc(g.uitleg)}</span>` : ''}</h3>
+        <div class="stat-row">${inGroep.map(tegelHtml).join('')}</div>
+      </div>`;
   }).join('');
 
   const activate = (key) => {
@@ -1495,7 +1551,19 @@ const GEBIED_STATS_COLUMNS = [
   { key: 'actieNodig', label: 'Actie nodig nu', num: true, cell: r => `<td class="num">${r.actieNodig}</td>` },
 ];
 
+function renderGebiedOnbekendNotice() {
+  const el = document.getElementById('gebied-onbekend');
+  if (!el) return;
+  const codes = onbekendeGebiedscodes();
+  if (codes.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = `<strong>Onbekende gebiedscode${codes.length === 1 ? '' : 's'}:</strong> ${codes.map(c => esc(c)).join(', ')}. `
+    + `Deze ${codes.length === 1 ? 'hoort' : 'horen'} bij geen van beide regio's (Haarlem = ZZE9/ZZE10, Leiden = ZZE5 t/m ZZE8) en `
+    + `${codes.length === 1 ? 'valt' : 'vallen'} daardoor onder "Overig". Klopt de code, dan hoort er een regio bij; anders staat er een verschrijving in de bron.`;
+}
+
 function renderGebiedPlaatsenCard() {
+  renderGebiedOnbekendNotice();
   const container = document.getElementById('gebied-plaatsen-body');
   if (!container) return;
   const stats = buildGebiedPlaatsenStats();
@@ -2376,6 +2444,7 @@ function renderRecidiveCard() {
 }
 
 function renderHistorie() {
+  renderDoorlooptijdCard();
   renderHistorieSearch();
   renderRecidiveCard();
 }
@@ -2829,7 +2898,6 @@ function renderDashboardFromState() {
   renderWeekSummaryBanner(latestFiltered, mutations);
   renderStatTiles(latestFiltered, mutations);
   renderAttentionList(latestFiltered, latestVisible);
-  renderDoorlooptijdCard();
   renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
   renderTrendChart(perDag); // idem, filtert zelf op state.activeFilter
   renderMutationTables(mutations);

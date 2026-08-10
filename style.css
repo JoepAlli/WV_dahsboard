@@ -386,6 +386,40 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 16px;
 }
+
+/* De tegels staan in groepen (werkvoorraad / signalen / mutatie) omdat het
+   drie soorten getallen zijn die niet bij elkaar optellen. */
+.stat-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+/* Een groep met één of twee tegels moet die niet over de volle breedte
+   uitrekken — dan lijkt het aantal groter dan het is. */
+.stat-group-mutatie .stat-row {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 260px));
+  justify-content: start;
+}
+.stat-group-head {
+  margin: 0 0 12px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+.stat-group-note {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+/* Nul is doorgaans goed nieuws: leesbaar houden, maar niet even hard laten
+   roepen als een tegel waar wél werk in zit. */
+.stat-tile-zero .value,
+.stat-tile-zero .stat-tile-icon { opacity: 0.55; }
+.stat-tile-zero:hover .value,
+.stat-tile-zero:hover .stat-tile-icon { opacity: 1; }
 .stat-tile {
   position: relative;
   overflow: hidden;
