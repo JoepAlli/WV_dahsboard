@@ -480,6 +480,21 @@ async function saveBijnaVerlopenThreshold(n) {
 // Ook op ordernummer bijgehouden, zodat je een lang openstaande storing niet
 // elke week opnieuw hoeft te beoordelen — eenmaal gezet blijft de reden staan
 // en verdwijnt de "actie nodig"-markering voor die storing.
+// Wanneer er voor het laatst een back-up is gedownload. Nieuwe, losstaande
+// sleutel in dezelfde kv-store: geen versiewijziging, geen migratie, en oudere
+// versies van de app negeren 'm gewoon. Ontbreekt de sleutel, dan gedraagt de
+// app zich alsof er nog nooit een back-up is gemaakt — precies wat je wilt.
+const LAST_BACKUP_KEY = 'nusdash_last_backup_at_v1';
+const BACKUP_HERINNERING_DAGEN = 7;
+async function loadLastBackupAt() {
+  try { return (await idbGet(LAST_BACKUP_KEY)) || null; }
+  catch (e) { console.error(e); return null; }
+}
+async function saveLastBackupAt(iso) {
+  try { await idbSet(LAST_BACKUP_KEY, iso); }
+  catch (e) { console.error(e); }
+}
+
 const OV_BLOCK_STATUS_KEY = 'nusdash_ov_block_status_v1';
 async function loadOvBlockStatusMap() {
   if (sharePointActive()) {
@@ -551,6 +566,10 @@ async function exportBackup() {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  await saveLastBackupAt(new Date().toISOString());
+  state.lastBackupAt = await loadLastBackupAt();
+  renderBackupReminder();
+  renderBackupStatus();
 }
 
 // Voorkomt dat de HTML-parser een ingebedde </script> of </style> als een
@@ -774,7 +793,8 @@ const state = {
   activeFilter: 'Totaal',
   sortState: { key: 'daysLeft', dir: 1 },
   gebiedSortState: { key: 'regio', dir: 1 },
-  wvSortState: { key: 'wvNaam', dir: 1 },
+  wvSortState: { key: 'nuOpen', dir: -1 },
+  lastBackupAt: null,
   stagnatieSortState: { key: 'ratio', dir: -1 },
   historieQuery: '',
   historieSortState: { key: 'eerst', dir: -1 },
@@ -1625,13 +1645,26 @@ function findRelevantWvNaam(s) {
 // persoon). Geen gebiedsuitsplitsing: de indeling wie welk gebied doet ligt
 // al vast (Dulani/Patricia = Haarlem, Conor = Leiden), dus dat voegt hier
 // niets toe.
+// Werkverdeling per WV'er. De vraag is niet "wie is sneller" maar "krijgt
+// iedereen een vergelijkbare hoeveelheid werk" — vandaar dat aantallen leidend
+// zijn en de doorlooptijd achteraan bungelt.
+//
+// nuOpen is het stuurgetal: dat kun je vandaag nog rechttrekken. nieuw/opgelost
+// over een venster laten zien of de verdeling scheefgroeit of juist bijtrekt;
+// totaal is alleen context, want wie er langer zit heeft vanzelf meer.
+const WV_VENSTER_DAGEN = 30;
+
 function buildWvStats() {
   const snaps = chronoSnapshots();
   const stats = {};
   const ensure = (naam) => {
-    if (!stats[naam]) stats[naam] = { wvNaam: naam, orders: new Set(), doorlooptijden: [] };
+    if (!stats[naam]) stats[naam] = { wvNaam: naam, orders: new Set(), doorlooptijden: [], nuOpen: 0, nieuwVenster: 0, opgelostVenster: 0, regios: {} };
     return stats[naam];
   };
+  if (snaps.length === 0) return [];
+  const laatsteDag = snaps[snaps.length - 1].week;
+  const inVenster = (dag) => dagenTussen(dag, laatsteDag) <= WV_VENSTER_DAGEN;
+
   const firstSeen = {}; // order -> { week, wvNaam }
   snaps.forEach((sn, i) => {
     const curOrders = new Set();
@@ -1639,8 +1672,16 @@ function buildWvStats() {
       const naam = findRelevantWvNaam(s);
       if (!naam) return;
       curOrders.add(s.order);
-      ensure(naam).orders.add(s.order);
-      if (!(s.order in firstSeen)) firstSeen[s.order] = { week: sn.week, wvNaam: naam };
+      const e = ensure(naam);
+      e.orders.add(s.order);
+      if (!(s.order in firstSeen)) {
+        firstSeen[s.order] = { week: sn.week, wvNaam: naam };
+        if (inVenster(sn.week)) e.nieuwVenster++;
+      }
+      // In welke regio deze WV'er feitelijk werkt — nodig om te weten wie je
+      // met wie mág vergelijken (zie renderWvGebiedCard).
+      const regio = regioGroupOf(s);
+      e.regios[regio] = (e.regios[regio] || 0) + 1;
     });
     if (i > 0) {
       snaps[i - 1].storingen.forEach(s => {
@@ -1648,19 +1689,70 @@ function buildWvStats() {
         if (!naam || curOrders.has(s.order)) return;
         const fs = firstSeen[s.order];
         if (!fs) return;
-        const days = Math.round((new Date(sn.week) - new Date(fs.week)) / 86400000);
+        const days = dagenTussen(fs.week, sn.week);
         if (days >= 0) ensure(fs.wvNaam).doorlooptijden.push(days);
+        if (inVenster(sn.week)) ensure(fs.wvNaam).opgelostVenster++;
       });
     }
   });
+
+  // Huidige werkvoorraad uit de nieuwste dag.
+  snaps[snaps.length - 1].storingen.forEach(s => {
+    const naam = findRelevantWvNaam(s);
+    if (naam) ensure(naam).nuOpen++;
+  });
+
   return Object.values(stats);
 }
 
 const WV_STATS_COLUMNS = [
   { key: 'wvNaam', label: "WV'er", cell: r => `<td>${esc(r.wvNaam)}</td>` },
-  { key: 'totaal', label: 'Totaal aantal storingen', num: true, cell: r => `<td class="num">${r.totaal}</td>` },
-  { key: 'doorlooptijd', label: 'Gem. doorlooptijd', num: true, cell: r => `<td class="num">${r.doorlooptijd == null ? '—' : r.doorlooptijd.toFixed(1) + ' dgn'}</td>` },
+  { key: 'regio', label: 'Werkt in', cell: r => `<td>${esc(r.regio)}</td>` },
+  { key: 'nuOpen', label: 'Nu open', num: true, cell: r => `<td class="num"><strong>${r.nuOpen}</strong></td>` },
+  { key: 'aandeel', label: 'Aandeel in regio', num: true, cell: r => `<td class="num">${r.aandeel == null ? '—' : Math.round(r.aandeel * 100) + '%'}</td>` },
+  { key: 'nieuwVenster', label: `Nieuw (${WV_VENSTER_DAGEN} dgn)`, num: true, cell: r => `<td class="num">${r.nieuwVenster}</td>` },
+  { key: 'opgelostVenster', label: `Opgelost (${WV_VENSTER_DAGEN} dgn)`, num: true, cell: r => `<td class="num">${r.opgelostVenster}</td>` },
+  { key: 'totaal', label: 'Totaal ooit', num: true, cell: r => `<td class="num">${r.totaal}</td>` },
+  { key: 'doorlooptijd', label: 'Gem. doorlooptijd', num: true, cell: r => `<td class="num muted">${r.doorlooptijd == null ? '—' : r.doorlooptijd.toFixed(1) + ' dgn'}</td>` },
 ];
+
+// De data staat in de IndexedDB van één browser op één machine. Gaat dat
+// profiel verloren, dan is alles weg — een gedownload bestand is het enige
+// dat een kapotte laptop overleeft. Omdat het dashboard dagelijks open gaat,
+// is een zichtbare herinnering effectiever dan hopen dat je eraan denkt.
+// Bewust niet wegklikbaar: hij verdwijnt door een back-up te maken.
+function renderBackupReminder() {
+  const el = document.getElementById('backup-reminder');
+  if (!el) return;
+  if (isStaticExport || state.snapshots.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+
+  const laatste = state.lastBackupAt ? new Date(state.lastBackupAt) : null;
+  const dagen = laatste ? Math.floor((Date.now() - laatste.getTime()) / DAG_MS) : null;
+  if (dagen !== null && dagen < BACKUP_HERINNERING_DAGEN) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+
+  const tekst = laatste
+    ? `De laatste back-up is van ${fmtDate(state.lastBackupAt)} — ${dagenTekst(dagen)} geleden.`
+    : 'Er is nog nooit een back-up gedownload.';
+  el.classList.remove('hidden');
+  el.innerHTML = `<strong>Back-up maken?</strong> ${esc(tekst)} Alle ${state.snapshots.length} opgeslagen updates staan alleen in deze browser; `
+    + `raakt dit profiel kwijt, dan is die historie weg. `
+    + `<button type="button" id="backup-reminder-btn" class="btn-primary btn-inline">Download back-up</button>`;
+  const btn = document.getElementById('backup-reminder-btn');
+  if (btn) btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try { await exportBackup(); }
+    catch (e) { showErrorToast('Back-up maken is mislukt: ' + e.message); btn.disabled = false; }
+  });
+}
+
+// Leesbare stand van zaken bij de back-upknop in Instellingen.
+function renderBackupStatus() {
+  const el = document.getElementById('backup-last');
+  if (!el) return;
+  el.textContent = state.lastBackupAt
+    ? `Laatste back-up: ${fmtDate(state.lastBackupAt)}.`
+    : 'Nog geen back-up gedownload.';
+}
 
 function renderWvGebiedCard() {
   const container = document.getElementById('wv-gebied-body');
@@ -1676,15 +1768,52 @@ function renderWvGebiedCard() {
     container.innerHTML = '<p class="empty-note">Nog geen storingen gevonden voor de gevolgde WV\'ers.</p>';
     return;
   }
-  const rows = stats
-    .map(s => ({
-      wvNaam: s.wvNaam,
-      totaal: s.orders.size,
-      doorlooptijd: s.doorlooptijden.length ? s.doorlooptijden.reduce((a, b) => a + b, 0) / s.doorlooptijden.length : null,
-    }))
-    .sort((a, b) => a.wvNaam.localeCompare(b.wvNaam));
+
+  const dominanteRegio = (regios) => {
+    const namen = Object.keys(regios);
+    if (namen.length === 0) return 'Onbekend';
+    return regioGroupLabel(namen.sort((a, b) => regios[b] - regios[a])[0]);
+  };
+  const basis = stats.map(s => ({
+    wvNaam: s.wvNaam,
+    regio: dominanteRegio(s.regios),
+    nuOpen: s.nuOpen,
+    nieuwVenster: s.nieuwVenster,
+    opgelostVenster: s.opgelostVenster,
+    totaal: s.orders.size,
+    doorlooptijd: s.doorlooptijden.length ? s.doorlooptijden.reduce((a, b) => a + b, 0) / s.doorlooptijden.length : null,
+  }));
+
+  // Het aandeel wordt bínnen de regio berekend. Iemand die in zijn eentje een
+  // regio doet heeft per definitie 100% en is niet te vergelijken met een
+  // regio die door twee mensen wordt gedeeld; door per regio te delen gaat de
+  // vergelijking alleen over mensen die hetzelfde werkgebied delen.
+  const openPerRegio = {};
+  basis.forEach(r => { openPerRegio[r.regio] = (openPerRegio[r.regio] || 0) + r.nuOpen; });
+  const rows = basis.map(r => Object.assign({}, r, {
+    aandeel: openPerRegio[r.regio] > 0 ? r.nuOpen / openPerRegio[r.regio] : null,
+  })).sort((a, b) => a.regio.localeCompare(b.regio) || b.nuOpen - a.nuOpen);
+
+  // Kopregel: alleen zinvol waar meerdere mensen dezelfde regio delen.
+  const gedeeld = {};
+  rows.forEach(r => { (gedeeld[r.regio] = gedeeld[r.regio] || []).push(r); });
+  const oordelen = Object.keys(gedeeld).sort().map(regio => {
+    const groep = gedeeld[regio].slice().sort((a, b) => b.nuOpen - a.nuOpen);
+    if (groep.length < 2) return `<li>${esc(regio)}: alleen ${esc(groep[0].wvNaam)} — geen vergelijking mogelijk.</li>`;
+    const hoog = groep[0], laag = groep[groep.length - 1];
+    if (hoog.nuOpen === laag.nuOpen) return `<li>${esc(regio)}: gelijk verdeeld (${hoog.nuOpen} elk).</li>`;
+    const verschil = hoog.nuOpen - laag.nuOpen;
+    const factor = laag.nuOpen > 0 ? (hoog.nuOpen / laag.nuOpen) : null;
+    const scheef = factor === null || factor >= 1.5;
+    return `<li>${esc(regio)}: <strong class="${scheef ? 'prognose-bad' : ''}">${esc(hoog.wvNaam)} ${hoog.nuOpen}</strong> tegenover ${esc(laag.wvNaam)} ${laag.nuOpen}`
+      + ` — ${verschil} storing${verschil === 1 ? '' : 'en'} verschil${factor !== null ? `, ${factor.toFixed(1)}×` : ''}.</li>`;
+  }).join('');
+
+  container.innerHTML = `<ul class="wv-oordeel">${oordelen}</ul>`;
+  const tabel = document.createElement('div');
+  container.appendChild(tabel);
   const sorted = sortByState(rows, state.wvSortState);
-  renderFullTable(container, sorted, WV_STATS_COLUMNS, state.wvSortState);
+  renderFullTable(tabel, sorted, WV_STATS_COLUMNS, state.wvSortState);
 }
 
 /* ---------- Historie-helpers ---------- */
@@ -2905,6 +3034,8 @@ function renderDashboardFromState() {
   renderWvGebiedCard();
   renderPrognose(latestFiltered);
   renderHistorie();
+  renderBackupReminder();
+  renderBackupStatus();
   renderTableAll(latestFiltered);
   renderWeeksList();
   updateStorageUsage();
@@ -2993,8 +3124,9 @@ async function reloadAllStateAndRender() {
   state.typeWhitelist = await loadTypeWhitelist();
   state.ovBlockStatus = await loadOvBlockStatusMap();
   state.bijnaVerlopenThreshold = await loadBijnaVerlopenThreshold();
+  state.lastBackupAt = await loadLastBackupAt();
   if (state.snapshots.length > 0) renderDashboardFromState();
-  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); }
+  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderBackupReminder(); renderBackupStatus(); }
 }
 
 function wireEvents() {
@@ -3011,6 +3143,7 @@ function wireEvents() {
     try {
       await exportBackup();
       statusEl.textContent = 'Back-up gedownload.';
+      renderBackupStatus();
     } catch (e) {
       statusEl.textContent = 'Exporteren mislukt: ' + e.message;
     }

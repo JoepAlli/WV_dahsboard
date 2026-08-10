@@ -83,6 +83,7 @@
       </section>
       <section id="dashboard" class="hidden">
 
+        <div id="backup-reminder" class="warning-box backup-reminder hidden"></div>
         <div id="week-summary-banner"></div>
 
         <div class="ov-toolbar">
@@ -262,13 +263,14 @@
 
     <section class="card" id="backup-card">
       <h2>💾 Back-up</h2>
-      <p class="muted small">Download een back-upbestand met alle opgeslagen weken en instellingen, of herstel een eerder gedownload back-upbestand.</p>
+      <p class="muted small">Download een back-upbestand met alle opgeslagen updates en instellingen, of herstel een eerder gedownload back-upbestand. Dit is de énige kopie die buiten deze browser bestaat — bewaar 'm ergens waar je hem terugvindt.</p>
       <div class="input-row">
         <button id="export-backup-btn" class="btn-primary">Exporteer back-up</button>
         <button id="import-backup-btn" class="btn-link">Importeer back-up…</button>
         <input type="file" id="import-backup-input" accept="application/json" class="hidden">
         <span id="backup-status" class="muted small"></span>
       </div>
+      <div id="backup-last" class="muted small"></div>
       <div id="storage-usage" class="muted small"></div>
     </section>
 
@@ -335,7 +337,7 @@
 
     <details class="card details-card" id="wv-gebied-card">
       <summary>🔍 Controle WV'er</summary>
-      <p class="muted small details-body-header">Totaal aantal storingen en gemiddelde doorlooptijd — alleen zichtbaar in jouw eigen dashboard, niet in de gedeelde teamexport.</p>
+      <p class="muted small details-body-header">Werkverdeling per WV'er: hoeveel storingen ieder nu open heeft staan, en of dat scheefgroeit. Het aandeel wordt binnen de regio berekend, want alleen mensen die hetzelfde werkgebied delen zijn met elkaar te vergelijken. Alleen zichtbaar in jouw eigen dashboard, niet in de gedeelde teamexport.</p>
       <div id="wv-gebied-body" class="table-scroll"></div>
     </details>
 

@@ -901,6 +901,22 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .order-link:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; border-radius: 3px; }
 
 .recidive-mode { margin-bottom: 16px; }
+
+.backup-reminder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.btn-inline { padding: 7px 14px; font-size: 0.85rem; }
+
+.wv-oordeel {
+  margin: 0 0 18px;
+  padding-left: 20px;
+  font-size: 0.92rem;
+  line-height: 1.65;
+  color: var(--text-primary);
+}
 .historie-search { min-width: min(420px, 100%); flex: 1 1 320px; }
 
 .timeline-modal {
