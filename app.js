@@ -745,6 +745,10 @@ const state = {
   gebiedSortState: { key: 'regio', dir: 1 },
   wvSortState: { key: 'wvNaam', dir: 1 },
   stagnatieSortState: { key: 'ratio', dir: -1 },
+  historieQuery: '',
+  historieSortState: { key: 'eerst', dir: -1 },
+  recidiveMode: 'straat',
+  recidiveSortState: { key: 'aantal', dir: -1 },
   regioViewMode: 'chart',
   trendViewMode: 'chart',
   statDetailFilter: null,
@@ -1615,6 +1619,28 @@ function renderWvGebiedCard() {
   renderFullTable(container, sorted, WV_STATS_COLUMNS, state.wvSortState);
 }
 
+/* ---------- Historie-helpers ---------- */
+
+// Eén snapshot per kalenderdag, chronologisch. Op één dag kunnen meerdere
+// updates staan (bv. eerst de gebieds-weergave plakken en daarna de status-
+// weergave); die zijn twee blikken op dezelfde dag, geen twee momenten. Zou je
+// ze als losse stappen behandelen, dan zie je storingen "verdwijnen" en weer
+// "verschijnen" tussen twee plakacties door, en dat vervuilt elke telling die
+// naar verandering kijkt. De laatste update van een dag wint — dat is dezelfde
+// regel die het dashboard al hanteert voor "de huidige stand".
+function chronoSnapshots(snapshots) {
+  const list = (snapshots || state.snapshots).slice()
+    .sort((a, b) => a.week.localeCompare(b.week) || a.savedAt.localeCompare(b.savedAt));
+  const perDag = new Map();
+  list.forEach(sn => perDag.set(sn.week, sn));
+  return Array.from(perDag.values());
+}
+
+const DAG_MS = 86400000;
+function dagenTussen(vanIso, totIso) {
+  return Math.round((new Date(totIso) - new Date(vanIso)) / DAG_MS);
+}
+
 /* ---------- Prognose: verloopkalender ---------- */
 
 // De verloopkalender is bewust géén voorspelling: daysLeft is een aftelling
@@ -1745,30 +1771,69 @@ function renderVerloopkalender(current) {
 // wat je nu moet halen, en een lang gemiddelde verbergt juist de omslag die je
 // wilt zien. Alles loopt via dezelfde zichtbaarheidsfilters als de rest van het
 // dashboard, zodat de aantallen aansluiten bij wat je in de tabellen ziet.
-const TEMPO_WEEKS = 8;
+const TEMPO_VENSTER_DAGEN = 56; // 8 weken
 
 function buildTempoStats() {
-  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  const snaps = chronoSnapshots();
   const visibleOf = (list) => filterByActive(typeFiltered(list));
   if (snaps.length < 2) return null;
 
+  // Elke overgang draagt zijn éigen lengte in dagen mee. Het dashboard wordt
+  // dagelijks bijgewerkt, dus twee opeenvolgende updates liggen meestal één dag
+  // uit elkaar — maar na een weekend of vakantie ineens drie of tien. Zou je
+  // simpelweg over overgangen middelen, dan telt een gat van tien dagen even
+  // zwaar als een gat van één en klopt het tempo niet meer.
   const transitions = [];
   for (let i = 1; i < snaps.length; i++) {
     const prevOrders = new Set(visibleOf(snaps[i - 1].storingen).map(s => s.order));
     const curOrders = new Set(visibleOf(snaps[i].storingen).map(s => s.order));
-    let instroom = 0, uitstroom = 0;
+    let instroom = 0, opgelost = 0;
     curOrders.forEach(o => { if (!prevOrders.has(o)) instroom++; });
-    prevOrders.forEach(o => { if (!curOrders.has(o)) uitstroom++; });
-    transitions.push({ week: snaps[i].week, instroom, uitstroom, open: curOrders.size });
+    prevOrders.forEach(o => { if (!curOrders.has(o)) opgelost++; });
+    const dagen = Math.max(1, Math.round((new Date(snaps[i].week) - new Date(snaps[i - 1].week)) / 86400000));
+    transitions.push({ week: snaps[i].week, vorigeWeek: snaps[i - 1].week, instroom, opgelost, dagen, open: curOrders.size });
   }
 
-  const recent = transitions.slice(-TEMPO_WEEKS);
-  const avg = (list, key) => list.reduce((sum, t) => sum + t[key], 0) / list.length;
-  const avgIn = avg(recent, 'instroom');
-  const avgUit = avg(recent, 'uitstroom');
+  const laatste = new Date(snaps[snaps.length - 1].week);
+  const recent = transitions.filter(tr => (laatste - new Date(tr.week)) / 86400000 <= TEMPO_VENSTER_DAGEN);
+  if (recent.length === 0) return null;
+
+  const totaalDagen = recent.reduce((sum, tr) => sum + tr.dagen, 0);
+  const totaalIn = recent.reduce((sum, tr) => sum + tr.instroom, 0);
+  const totaalUit = recent.reduce((sum, tr) => sum + tr.opgelost, 0);
+  if (totaalDagen === 0) return null;
+
+  // Alles wordt uitgedrukt per week, ongeacht hoe vaak je bijwerkt: dat is de
+  // eenheid waarin je plant, en 'm loskoppelen van de bijwerkfrequentie zorgt
+  // dat de getallen niet veranderen als je een paar dagen overslaat.
+  const perWeek = (totaal) => (totaal / totaalDagen) * 7;
+  const avgIn = perWeek(totaalIn);
+  const avgUit = perWeek(totaalUit);
   const open = visibleOf(snaps[snaps.length - 1].storingen).length;
 
-  return { transitions: recent, avgIn, avgUit, open, netto: avgIn - avgUit, weken: recent.length };
+  // Voor de tabel bundelen we tot blokken van 7 dagen terug vanaf de laatste
+  // update — bij dagelijks bijwerken zouden losse overgangen anders 56 regels
+  // opleveren waar je niets uit afleest.
+  const buckets = [];
+  for (let b = 0; b < Math.ceil(totaalDagen / 7) && b < 8; b++) {
+    const tot = new Date(laatste.getTime() - b * 7 * 86400000);
+    const van = new Date(laatste.getTime() - (b + 1) * 7 * 86400000);
+    const inBucket = recent.filter(tr => {
+      const d = new Date(tr.week);
+      return d > van && d <= tot;
+    });
+    if (inBucket.length === 0) continue;
+    buckets.push({
+      van: van.toISOString().slice(0, 10),
+      tot: tot.toISOString().slice(0, 10),
+      instroom: inBucket.reduce((s, tr) => s + tr.instroom, 0),
+      opgelost: inBucket.reduce((s, tr) => s + tr.opgelost, 0),
+      open: inBucket[inBucket.length - 1].open,
+    });
+  }
+  buckets.reverse();
+
+  return { buckets, avgIn, avgUit, open, netto: avgIn - avgUit, dagen: totaalDagen, updates: recent.length };
 }
 
 function renderTempoCard() {
@@ -1776,7 +1841,7 @@ function renderTempoCard() {
   if (!container) return;
   const t = buildTempoStats();
   if (!t) {
-    container.innerHTML = '<p class="empty-note">Verwerk minstens twee weken om instroom en uitstroom te kunnen vergelijken.</p>';
+    container.innerHTML = '<p class="empty-note">Verwerk minstens twee updates op verschillende dagen om instroom en oplostempo te kunnen vergelijken.</p>';
     return;
   }
 
@@ -1798,27 +1863,27 @@ function renderTempoCard() {
     oordeel = `<p class="prognose-headline">Instroom en uitstroom zijn <strong>in evenwicht</strong> — de voorraad blijft rond de ${t.open} storingen hangen.</p>`;
   }
 
-  const rows = t.transitions.map(tr => {
-    const netto = tr.instroom - tr.uitstroom;
+  const rows = t.buckets.map(b => {
+    const netto = b.instroom - b.opgelost;
     const nettoCls = netto > 0 ? 'prognose-bad' : netto < 0 ? 'prognose-good' : '';
-    return `<tr><td>${esc(tr.week)}</td><td class="num">${tr.instroom}</td><td class="num">${tr.uitstroom}</td><td class="num ${nettoCls}">${netto > 0 ? '+' : ''}${netto}</td><td class="num">${tr.open}</td></tr>`;
+    return `<tr><td>${esc(b.van)} t/m ${esc(b.tot)}</td><td class="num">${b.instroom}</td><td class="num">${b.opgelost}</td><td class="num ${nettoCls}">${netto > 0 ? '+' : ''}${netto}</td><td class="num">${b.open}</td></tr>`;
   }).join('');
 
   container.innerHTML = `
     ${oordeel}
     <div class="tempo-grid">
       <div class="tempo-stat"><div class="label">Gem. instroom</div><div class="value">${t.avgIn.toFixed(1)}</div><div class="muted small">per week</div></div>
-      <div class="tempo-stat"><div class="label">Gem. uitstroom</div><div class="value">${t.avgUit.toFixed(1)}</div><div class="muted small">per week</div></div>
+      <div class="tempo-stat"><div class="label">Gem. opgelost</div><div class="value">${t.avgUit.toFixed(1)}</div><div class="muted small">per week</div></div>
       <div class="tempo-stat"><div class="label">Benodigd tempo</div><div class="value">${Math.ceil(t.avgIn)}</div><div class="muted small">per week om vlak te blijven</div></div>
       <div class="tempo-stat"><div class="label">Nu open</div><div class="value">${t.open}</div><div class="muted small">storingen</div></div>
     </div>
     <div class="table-scroll">
       <table>
-        <thead><tr><th>Week</th><th class="num">In</th><th class="num">Uit</th><th class="num">Netto</th><th class="num">Open na afloop</th></tr></thead>
+        <thead><tr><th>Periode</th><th class="num">Nieuw</th><th class="num">Opgelost</th><th class="num">Netto</th><th class="num">Open aan eind</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <p class="muted small">Gebaseerd op de laatste ${t.weken} week-overgang${t.weken === 1 ? '' : 'en'}. "Uit" betekent dat een storing niet meer in de lijst stond — dat kan opgelost zijn, maar ook geannuleerd of overgedragen; dat onderscheid legt de tool nu niet vast.</p>`;
+    <p class="muted small">Gebaseerd op ${t.dagen} dag${t.dagen === 1 ? '' : 'en'} historie (${t.updates} update${t.updates === 1 ? '' : 's'}). Instroom en oplostempo worden omgerekend naar een weektempo, zodat de getallen niet verspringen als je een dag overslaat.</p>`;
 }
 
 /* ---------- Prognose: stagnatiesignaal ---------- */
@@ -1838,7 +1903,7 @@ const STAGNATIE_MIN_WEKEN = 3;   // onder de 3 weken is "stilstand" ruis
 const STAGNATIE_RATIO = 2;       // pas melden vanaf 2x de mediaan van die status
 
 function buildStatusDuurStats() {
-  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  const snaps = chronoSnapshots();
   const visibleOf = (list) => filterByActive(typeFiltered(list));
   // Per order: sinds welke week staat 'ie onafgebroken op de huidige status.
   const lopend = {};
@@ -1881,7 +1946,7 @@ function buildStatusDuurStats() {
 }
 
 function buildStagnatieRows() {
-  const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
+  const snaps = chronoSnapshots();
   if (snaps.length < 2) return [];
   const latest = snaps[snaps.length - 1];
   const { lopend, medianen } = buildStatusDuurStats();
@@ -1915,7 +1980,7 @@ function buildStagnatieRows() {
 }
 
 const STAGNATIE_COLUMNS = [
-  { key: 'order', label: 'Order', cell: r => `<td>${esc(r.order)}</td>` },
+  { key: 'order', label: 'Order', cell: r => `<td>${orderLinkHtml(r.order)}</td>` },
   { key: 'plaats', label: 'Plaats', cell: r => `<td>${esc(r.plaats)}</td>` },
   { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
   { key: 'ovStatus', label: 'Status', cell: r => `<td>${esc(r.ovStatus)}</td>` },
@@ -1942,6 +2007,346 @@ function renderPrognose(current) {
   renderVerloopkalender(current);
   renderTempoCard();
   renderStagnatieCard();
+}
+
+/* ---------- Historie: tijdlijn van één storing ---------- */
+
+// Bouwt de levensloop van één storing uit alle snapshots. Bewust een lijst
+// GEBEURTENISSEN en niet één regel per update: bij dagelijks bijwerken zou dat
+// honderden identieke regels geven waarin de paar echte veranderingen wegvallen.
+// Alleen wat er ánders is dan de vorige dag komt in de tijdlijn — dat is precies
+// het verhaal dat de ISH-app niet kan vertellen.
+function buildOrderTimeline(order) {
+  const snaps = chronoSnapshots();
+  const events = [];
+  const statusDuur = {};
+  let prev = null;
+  let eersteDatum = null;
+  let laatsteDatum = null;
+  let opgelostOp = null;
+  let statusSinds = null;
+  let laatsteRecord = null;
+
+  const sluitStatus = (tot) => {
+    if (prev && prev.ovStatus && statusSinds) {
+      const d = dagenTussen(statusSinds, tot);
+      if (d > 0) statusDuur[prev.ovStatus] = (statusDuur[prev.ovStatus] || 0) + d;
+    }
+  };
+
+  snaps.forEach(sn => {
+    const s = sn.storingen.find(x => x.order === order);
+    if (s) {
+      if (!prev) {
+        // Eerste keer gezien, of terug na eerder opgelost te zijn geweest.
+        if (opgelostOp) {
+          events.push({ datum: sn.week, kind: 'heropend', tekst: `Opnieuw in de lijst verschenen, ${dagenTekst(dagenTussen(opgelostOp, sn.week))} na het verdwijnen` });
+          opgelostOp = null;
+        } else {
+          eersteDatum = sn.week;
+          events.push({ datum: sn.week, kind: 'start', tekst: `Voor het eerst in de lijst${s.ovStatus ? ` — status ${s.ovStatus}` : ''}` });
+        }
+        statusSinds = sn.week;
+      } else {
+        if (s.ovStatus !== prev.ovStatus && (s.ovStatus || prev.ovStatus)) {
+          const dagen = statusSinds ? dagenTussen(statusSinds, sn.week) : null;
+          sluitStatus(sn.week);
+          events.push({
+            datum: sn.week, kind: 'status',
+            tekst: `Status ${prev.ovStatus || 'onbekend'} → ${s.ovStatus || 'onbekend'}${dagen != null && prev.ovStatus ? ` (${dagenTekst(dagen)} op ${prev.ovStatus})` : ''}`,
+          });
+          statusSinds = sn.week;
+        }
+        if ((s.executionDateRaw || '') !== (prev.executionDateRaw || '')) {
+          events.push({
+            datum: sn.week, kind: 'datum',
+            tekst: `Uitvoeringsdatum ${prev.executionDateRaw ? esc(prev.executionDateRaw) : 'onbekend'} → ${s.executionDateRaw ? esc(s.executionDateRaw) : 'onbekend'}`,
+          });
+        }
+        if (s.overdue && !prev.overdue) {
+          events.push({ datum: sn.week, kind: 'verlopen', tekst: 'Uiterste datum verstreken' });
+        }
+        if (s.gebiedscode && s.gebiedscode !== prev.gebiedscode) {
+          events.push({ datum: sn.week, kind: 'gebied', tekst: `Gebiedscode ${prev.gebiedscode ? prev.gebiedscode + ' → ' : ''}${s.gebiedscode}` });
+        }
+      }
+      laatsteDatum = sn.week;
+      laatsteRecord = s;
+      prev = s;
+    } else if (prev) {
+      sluitStatus(sn.week);
+      opgelostOp = sn.week;
+      events.push({
+        datum: sn.week, kind: 'opgelost',
+        tekst: `Niet meer in de lijst — opgelost na ${dagenTekst(dagenTussen(eersteDatum, sn.week))}`,
+      });
+      prev = null;
+      statusSinds = null;
+    }
+  });
+
+  // Nog open? Dan loopt de huidige status door tot vandaag/de laatste update.
+  if (prev && statusSinds && laatsteDatum) sluitStatus(laatsteDatum);
+
+  const open = !!prev;
+  return {
+    order,
+    record: laatsteRecord,
+    eersteDatum,
+    laatsteDatum,
+    opgelostOp: open ? null : opgelostOp,
+    open,
+    doorlooptijd: eersteDatum ? dagenTussen(eersteDatum, open ? laatsteDatum : opgelostOp) : null,
+    statusDuur,
+    events,
+  };
+}
+
+// "1 dagen" leest als een tikfout en ondermijnt het vertrouwen in de rest van
+// de getallen, dus enkelvoud/meervoud gaat overal via dit hulpje.
+function dagenTekst(n) { return `${n} ${n === 1 ? 'dag' : 'dagen'}`; }
+
+function orderLinkHtml(order) {
+  return `<button type="button" class="order-link" data-order="${esc(order)}" title="Bekijk de tijdlijn van deze storing">${esc(order)}</button>`;
+}
+
+const TIMELINE_ICONS = {
+  start: '📥', status: '🔄', datum: '📅', verlopen: '⚠️', gebied: '🗺️', opgelost: '✅', heropend: '🔁',
+};
+
+function openTimeline(order) {
+  const modal = document.getElementById('timeline-modal');
+  const body = document.getElementById('timeline-body');
+  const title = document.getElementById('timeline-title');
+  if (!modal || !body) return;
+
+  const tl = buildOrderTimeline(order);
+  title.textContent = `Storing ${order}`;
+
+  if (!tl.record) {
+    body.innerHTML = '<p class="empty-note">Deze storing komt in geen enkele opgeslagen update voor.</p>';
+  } else {
+    const r = tl.record;
+    const blok = ovBlockStatusOf(order);
+    const statusRegels = Object.keys(tl.statusDuur)
+      .sort((a, b) => tl.statusDuur[b] - tl.statusDuur[a])
+      .map(st => `<li><span>${esc(st)}</span><strong>${tl.statusDuur[st]} dgn</strong></li>`)
+      .join('');
+
+    body.innerHTML = `
+      <dl class="timeline-meta">
+        <div><dt>Adres</dt><dd>${esc(r.street)}, ${esc(r.postcode)} ${esc(r.city)}</dd></div>
+        <div><dt>Type</dt><dd>${esc(r.type)}</dd></div>
+        <div><dt>Asset</dt><dd>${esc(r.asset)}${r.assetType ? ' ' + esc(r.assetType) : ''}</dd></div>
+        <div><dt>Gebied</dt><dd>${r.gebiedscode ? esc(r.gebiedscode) : '—'}</dd></div>
+        <div><dt>Status</dt><dd>${tl.open ? ovStatusPillHtml(r) : '<span class="status-pill">Opgelost</span>'}</dd></div>
+        <div><dt>Blokkade</dt><dd>${blok.reason ? esc(OV_BLOCK_REASON_LABELS[blok.reason]) + (blok.note ? ` — ${esc(blok.note)}` : '') : '—'}</dd></div>
+        <div><dt>Eerst gezien</dt><dd>${esc(tl.eersteDatum)}</dd></div>
+        <div><dt>${tl.open ? 'Open sinds' : 'Opgelost op'}</dt><dd>${tl.open ? `${dagenTekst(tl.doorlooptijd)}` : `${esc(tl.opgelostOp)} (${dagenTekst(tl.doorlooptijd)})`}</dd></div>
+      </dl>
+      ${statusRegels ? `<h3 class="timeline-subhead">Tijd per status</h3><ul class="timeline-statuslist">${statusRegels}</ul>` : ''}
+      <h3 class="timeline-subhead">Verloop</h3>
+      <ol class="timeline-list">
+        ${tl.events.map(e => `
+          <li class="timeline-event timeline-${e.kind}">
+            <span class="timeline-icon" aria-hidden="true">${TIMELINE_ICONS[e.kind] || '•'}</span>
+            <span class="timeline-date">${esc(e.datum)}</span>
+            <span class="timeline-text">${e.tekst}</span>
+          </li>`).join('')}
+      </ol>
+      ${tl.events.length <= 1 ? '<p class="muted small">Sinds deze storing in beeld kwam is er niets aan veranderd.</p>' : ''}`;
+  }
+
+  if (typeof modal.showModal === 'function') { if (!modal.open) modal.showModal(); }
+  else modal.setAttribute('open', '');
+}
+
+/* ---------- Historie: zoeken over alle updates ---------- */
+
+// Eén regel per ordernummer over de hele historie heen, inclusief storingen die
+// allang opgelost zijn. Dit is waar de zoekbalk op het Data-tabblad niet bij kan:
+// die filtert alleen de huidige lijst.
+// Eén regel per ordernummer, gedeeld door de zoekfunctie én de herhaallocaties
+// zodat die twee onmogelijk uit elkaar kunnen lopen.
+//
+// De looptijd van een opgeloste storing loopt tot de update waarin 'ie voor het
+// eerst wég was, niet tot de laatste waarin 'ie er nog stond. Het oplossen
+// gebeurde ergens tussen die twee updates in, en de eerste-keer-weg-datum is
+// dezelfde keuze die de doorlooptijd-kaart al maakt (zie resolvedDurations) —
+// zouden we hier de laatst-geziene datum nemen, dan noemden twee kaarten in
+// hetzelfde dashboard een andere doorlooptijd voor dezelfde storing.
+function buildOrderIndex() {
+  const snaps = chronoSnapshots();
+  const index = new Map();
+  snaps.forEach(sn => {
+    const aanwezig = new Set();
+    typeFiltered(sn.storingen).forEach(s => {
+      aanwezig.add(s.order);
+      let e = index.get(s.order);
+      if (!e) {
+        e = { order: s.order, eerst: sn.week, laatstGezien: sn.week, opgelostOp: null, record: s };
+        index.set(s.order, e);
+      }
+      // Terug na eerder verdwenen te zijn: dan telt 'ie weer als open.
+      e.opgelostOp = null;
+      e.laatstGezien = sn.week;
+      e.record = s;
+    });
+    index.forEach(e => {
+      if (!e.opgelostOp && !aanwezig.has(e.order) && e.laatstGezien < sn.week) e.opgelostOp = sn.week;
+    });
+  });
+
+  return Array.from(index.values()).map(e => {
+    const open = !e.opgelostOp;
+    return {
+      order: e.order,
+      city: e.record.city,
+      street: e.record.street,
+      postcode: e.record.postcode,
+      asset: e.record.asset,
+      assetType: e.record.assetType,
+      type: e.record.type,
+      gebiedscode: e.record.gebiedscode || '',
+      ovStatus: e.record.ovStatus || '',
+      eerst: e.eerst,
+      laatst: open ? e.laatstGezien : e.opgelostOp,
+      open,
+      looptijd: dagenTussen(e.eerst, open ? e.laatstGezien : e.opgelostOp),
+    };
+  });
+}
+
+const HISTORIE_COLUMNS = [
+  { key: 'order', label: 'Order', cell: r => `<td>${orderLinkHtml(r.order)}</td>` },
+  { key: 'city', label: 'Plaats', cell: r => `<td>${esc(r.city)}</td>` },
+  { key: 'street', label: 'Adres', cell: r => `<td>${esc(r.street)}, ${esc(r.postcode)}</td>` },
+  { key: 'asset', label: 'Asset', cell: r => `<td>${esc(r.asset)}${r.assetType ? ' ' + esc(r.assetType) : ''}</td>` },
+  { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${r.gebiedscode ? esc(r.gebiedscode) : '—'}</td>` },
+  { key: 'eerst', label: 'Eerst gezien', cell: r => `<td>${esc(r.eerst)}</td>` },
+  { key: 'open', label: 'Stand', cell: r => `<td>${r.open ? '<span class="ov-status-pill ov-status-nieuw">Open</span>' : `<span class="status-pill">Opgelost ${esc(r.laatst)}</span>`}</td>` },
+  { key: 'looptijd', label: 'Looptijd', num: true, cell: r => `<td class="num">${r.looptijd} dgn${r.open ? ' <span class="muted small">(loopt)</span>' : ''}</td>` },
+];
+
+function renderHistorieSearch() {
+  const container = document.getElementById('historie-body');
+  const summary = document.getElementById('historie-summary');
+  if (!container) return;
+
+  const alle = buildOrderIndex();
+  if (summary) {
+    const opgelost = alle.filter(r => !r.open).length;
+    summary.textContent = alle.length === 0
+      ? ''
+      : `${alle.length} storingen in de historie, waarvan ${opgelost} opgelost en ${alle.length - opgelost} nu open.`;
+  }
+
+  const q = (state.historieQuery || '').trim().toLowerCase();
+  if (q.length < 2) {
+    container.innerHTML = '<p class="empty-note">Typ minstens twee tekens — zoek op ordernummer, straat, plaats, postcode of assetnummer. Ook allang opgeloste storingen worden gevonden.</p>';
+    return;
+  }
+  const treffers = alle.filter(r => [r.order, r.city, r.street, r.postcode, r.asset].some(v => (v || '').toLowerCase().includes(q)));
+  if (treffers.length === 0) {
+    container.innerHTML = '<p class="empty-note">Niets gevonden in de opgeslagen historie.</p>';
+    return;
+  }
+  const sorted = sortByState(treffers, state.historieSortState);
+  renderFullTable(container, sorted, HISTORIE_COLUMNS, state.historieSortState);
+}
+
+/* ---------- Historie: recidive / herhaallocaties ---------- */
+
+// Plekken waar het steeds opnieuw misgaat. Elke storing telt één keer mee (op
+// zijn ordernummer), toegeschreven aan de plek waar 'ie het eerst gezien werd.
+// De waarde zit niet in "waar komen veel storingen vandaan" — dat is vooral een
+// functie van hoeveel netwerk er ligt — maar in herhaling op dezelfde plek: dat
+// wijst op iets structureels in plaats van pech. Vandaar de gemiddelde tussentijd
+// als aparte kolom: vier storingen in tien jaar is iets anders dan vier in een
+// half jaar, en dat verschil zie je niet aan het aantal alleen.
+function buildRecidiveStats(mode) {
+  const groepen = new Map();
+  buildOrderIndex().forEach(r => {
+    const key = mode === 'asset' ? (r.asset || '') : `${r.city || 'Onbekend'}|||${r.street || 'Onbekend'}`;
+    if (!key || key === '|||') return;
+    let g = groepen.get(key);
+    if (!g) {
+      g = { key, city: r.city || 'Onbekend', street: r.street || 'Onbekend', asset: r.asset || '—', assetType: r.assetType || '', gebiedscode: r.gebiedscode || '', orders: [] };
+      groepen.set(key, g);
+    }
+    g.orders.push({ order: r.order, eerst: r.eerst, open: r.open, doorlooptijd: r.looptijd });
+    if (!g.gebiedscode && r.gebiedscode) g.gebiedscode = r.gebiedscode;
+  });
+
+  return Array.from(groepen.values())
+    .filter(g => g.orders.length >= 2)
+    .map(g => {
+      const data = g.orders.slice().sort((a, b) => a.eerst.localeCompare(b.eerst));
+      const eerste = data[0].eerst;
+      const laatste = data[data.length - 1].eerst;
+      const spanDagen = dagenTussen(eerste, laatste);
+      const afgerond = data.filter(o => !o.open);
+      return {
+        key: g.key,
+        city: g.city,
+        street: g.street,
+        asset: g.asset,
+        assetType: g.assetType,
+        gebiedscode: g.gebiedscode || '—',
+        aantal: data.length,
+        eerste,
+        laatste,
+        // Gemiddelde tijd tussen twee opeenvolgende storingen op deze plek.
+        tussentijd: data.length > 1 ? spanDagen / (data.length - 1) : null,
+        nuOpen: data.filter(o => o.open).length,
+        doorlooptijd: afgerond.length ? afgerond.reduce((sum, o) => sum + o.doorlooptijd, 0) / afgerond.length : null,
+      };
+    });
+}
+
+const RECIDIVE_COLUMNS_STRAAT = [
+  { key: 'city', label: 'Plaats', cell: r => `<td>${esc(r.city)}</td>` },
+  { key: 'street', label: 'Straat', cell: r => `<td>${esc(r.street)}</td>` },
+  { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
+  { key: 'aantal', label: 'Storingen', num: true, cell: r => `<td class="num"><strong>${r.aantal}</strong></td>` },
+  { key: 'tussentijd', label: 'Gem. tussentijd', num: true, cell: r => `<td class="num">${r.tussentijd == null ? '—' : Math.round(r.tussentijd) + ' dgn'}</td>` },
+  { key: 'eerste', label: 'Eerste', cell: r => `<td>${esc(r.eerste)}</td>` },
+  { key: 'laatste', label: 'Laatste', cell: r => `<td>${esc(r.laatste)}</td>` },
+  { key: 'nuOpen', label: 'Nu open', num: true, cell: r => `<td class="num">${r.nuOpen}</td>` },
+  { key: 'doorlooptijd', label: 'Gem. doorlooptijd', num: true, cell: r => `<td class="num">${r.doorlooptijd == null ? '—' : r.doorlooptijd.toFixed(0) + ' dgn'}</td>` },
+];
+
+const RECIDIVE_COLUMNS_ASSET = [
+  { key: 'asset', label: 'Asset', cell: r => `<td>${esc(r.asset)}${r.assetType ? ' ' + esc(r.assetType) : ''}</td>` },
+  { key: 'city', label: 'Plaats', cell: r => `<td>${esc(r.city)}</td>` },
+  { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
+  { key: 'aantal', label: 'Storingen', num: true, cell: r => `<td class="num"><strong>${r.aantal}</strong></td>` },
+  { key: 'tussentijd', label: 'Gem. tussentijd', num: true, cell: r => `<td class="num">${r.tussentijd == null ? '—' : Math.round(r.tussentijd) + ' dgn'}</td>` },
+  { key: 'eerste', label: 'Eerste', cell: r => `<td>${esc(r.eerste)}</td>` },
+  { key: 'laatste', label: 'Laatste', cell: r => `<td>${esc(r.laatste)}</td>` },
+  { key: 'nuOpen', label: 'Nu open', num: true, cell: r => `<td class="num">${r.nuOpen}</td>` },
+  { key: 'doorlooptijd', label: 'Gem. doorlooptijd', num: true, cell: r => `<td class="num">${r.doorlooptijd == null ? '—' : r.doorlooptijd.toFixed(0) + ' dgn'}</td>` },
+];
+
+function renderRecidiveCard() {
+  const container = document.getElementById('recidive-body');
+  if (!container) return;
+  document.querySelectorAll('#recidive-mode button[data-recidive-mode]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.recidiveMode === state.recidiveMode);
+  });
+
+  const stats = buildRecidiveStats(state.recidiveMode);
+  if (stats.length === 0) {
+    container.innerHTML = `<p class="empty-note">Nog geen ${state.recidiveMode === 'asset' ? 'asset' : 'straat'} met twee of meer storingen in de opgeslagen historie. Deze kaart wordt sterker naarmate er meer maanden zijn vastgelegd.</p>`;
+    return;
+  }
+  const rows = sortByState(stats, state.recidiveSortState);
+  renderFullTable(container, rows, state.recidiveMode === 'asset' ? RECIDIVE_COLUMNS_ASSET : RECIDIVE_COLUMNS_STRAAT, state.recidiveSortState);
+}
+
+function renderHistorie() {
+  renderHistorieSearch();
+  renderRecidiveCard();
 }
 
 /* ---------- Rendering: regio chart ---------- */
@@ -2191,7 +2596,7 @@ function buildOvColumns() {
     { key: 'ovStatus', label: 'Status', cell: s => `<td>${ovStatusPillHtml(s)}</td>` },
     { key: 'city', label: 'Plaats', cell: s => `<td>${esc(s.city)}</td>` },
     { key: 'street', label: 'Adres', cell: s => `<td>${esc(s.street)}, ${esc(s.postcode)}</td>` },
-    { key: 'order', label: 'Order', cell: s => `<td>${esc(s.order)}</td>` },
+    { key: 'order', label: 'Order', cell: s => `<td>${orderLinkHtml(s.order)}</td>` },
     { key: 'asset', label: 'Asset', cell: s => `<td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>` },
     { key: 'wvNaam', label: "WV'er", cell: s => `<td>${s.wvNaam ? esc(s.wvNaam) : '—'}</td>` },
     { key: 'daysLeft', label: 'Dagen', num: true, cell: s => `<td class="num">${renderDaysPill(s)}</td>` },
@@ -2394,6 +2799,7 @@ function renderDashboardFromState() {
   renderGebiedPlaatsenCard();
   renderWvGebiedCard();
   renderPrognose(latestFiltered);
+  renderHistorie();
   renderTableAll(latestFiltered);
   renderWeeksList();
   updateStorageUsage();
@@ -2685,6 +3091,68 @@ function wireEvents() {
     renderStagnatieCard();
   });
 
+  // Eén gedelegeerde luisteraar voor álle ordernummers, waar ze ook staan:
+  // de tabellen worden voortdurend opnieuw opgebouwd, dus per knop een eigen
+  // luisteraar hangen zou ze bij elke render opnieuw moeten koppelen.
+  document.addEventListener('click', e => {
+    const link = e.target.closest('.order-link');
+    if (!link) return;
+    openTimeline(link.dataset.order);
+  });
+
+  const timelineModal = document.getElementById('timeline-modal');
+  const timelineClose = document.getElementById('timeline-close');
+  if (timelineClose && timelineModal) {
+    timelineClose.addEventListener('click', () => {
+      if (typeof timelineModal.close === 'function') timelineModal.close();
+      else timelineModal.removeAttribute('open');
+    });
+  }
+  // Klik op de achtergrond sluit ook — <dialog> vangt die klik zelf op, dus we
+  // kijken of de klik buiten het inhoudsvlak viel.
+  if (timelineModal) {
+    timelineModal.addEventListener('click', e => {
+      if (e.target !== timelineModal) return;
+      const r = timelineModal.getBoundingClientRect();
+      const buiten = e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+      if (buiten && typeof timelineModal.close === 'function') timelineModal.close();
+    });
+  }
+
+  const historieSearch = document.getElementById('historie-search');
+  if (historieSearch) {
+    historieSearch.addEventListener('input', () => {
+      state.historieQuery = historieSearch.value;
+      renderHistorieSearch();
+    });
+  }
+
+  document.getElementById('historie-body').addEventListener('click', e => {
+    const th = e.target.closest('th[data-key]');
+    if (!th) return;
+    if (state.historieSortState.key === th.dataset.key) state.historieSortState.dir *= -1;
+    else { state.historieSortState.key = th.dataset.key; state.historieSortState.dir = 1; }
+    renderHistorieSearch();
+  });
+
+  document.getElementById('recidive-body').addEventListener('click', e => {
+    const th = e.target.closest('th[data-key]');
+    if (!th) return;
+    if (state.recidiveSortState.key === th.dataset.key) state.recidiveSortState.dir *= -1;
+    else { state.recidiveSortState.key = th.dataset.key; state.recidiveSortState.dir = 1; }
+    renderRecidiveCard();
+  });
+
+  document.querySelectorAll('#recidive-mode button[data-recidive-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.recidiveMode = btn.dataset.recidiveMode;
+      // De sorteersleutels verschillen per weergave; terug naar de standaard
+      // voorkomt dat er op een kolom gesorteerd blijft die er niet meer is.
+      state.recidiveSortState = { key: 'aantal', dir: -1 };
+      renderRecidiveCard();
+    });
+  });
+
   document.getElementById('ov-bulk-apply-btn').addEventListener('click', async () => {
     if (state.ovBulkSelected.size === 0) return;
     const reason = document.getElementById('ov-bulk-reason').value;
@@ -2768,8 +3236,8 @@ function wireEvents() {
 // #/instellingen) is de bron van waarheid — dat geeft "gratis" een werkende
 // terug-knop en een herlaad die op hetzelfde tabblad blijft staan, zonder een
 // eigen sessionStorage-bijhoudmechanisme nodig te hebben.
-const TAB_HASH_ROUTES = { invoer: '#/invoer', data: '#/data', gebieden: '#/gebieden', prognose: '#/prognose', settings: '#/instellingen' };
-const HASH_TO_TAB = { '#/invoer': 'invoer', '#/data': 'data', '#/gebieden': 'gebieden', '#/prognose': 'prognose', '#/instellingen': 'settings' };
+const TAB_HASH_ROUTES = { invoer: '#/invoer', data: '#/data', gebieden: '#/gebieden', prognose: '#/prognose', historie: '#/historie', settings: '#/instellingen' };
+const HASH_TO_TAB = { '#/invoer': 'invoer', '#/data': 'data', '#/gebieden': 'gebieden', '#/prognose': 'prognose', '#/historie': 'historie', '#/instellingen': 'settings' };
 
 // Past alleen de zichtbare panelen/knoppen aan — geen hash-manipulatie hier,
 // zodat dit ook veilig als reactie op een hashchange-event aangeroepen kan

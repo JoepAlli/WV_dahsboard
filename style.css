@@ -846,6 +846,141 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .panel-banner-data { background: linear-gradient(135deg, var(--brand-primary-dark) 0%, #2c3f14 140%); }
 .panel-banner-gebieden { background: linear-gradient(135deg, var(--series-2) 0%, color-mix(in srgb, var(--series-2) 55%, var(--brand-primary-dark)) 140%); }
 .panel-banner-prognose { background: linear-gradient(135deg, #1f6f8b 0%, #14455a 140%); }
+.panel-banner-historie { background: linear-gradient(135deg, #6a4a86 0%, #3d2a50 140%); }
+
+/* ---------- Historie: ordernummer-knop + tijdlijn ---------- */
+
+/* Ordernummers zijn overal aanklikbaar. Ze moeten er als een link uitzien maar
+   in tabellen niet gaan schreeuwen — vandaar de merkkleur zonder onderstreping,
+   met de onderstreping pas bij hover. */
+.order-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--brand-primary);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.order-link:hover { text-decoration: underline; }
+.order-link:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; border-radius: 3px; }
+
+.recidive-mode { margin-bottom: 16px; }
+.historie-search { min-width: min(420px, 100%); flex: 1 1 320px; }
+
+.timeline-modal {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(80vh, 900px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-card-hover);
+  overflow: hidden;
+}
+.timeline-modal::backdrop { background: rgba(26,26,26,0.45); }
+.timeline-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--page-plane);
+}
+.timeline-modal-head h2 { margin: 0; font-size: 1.15rem; }
+.timeline-close {
+  background: none;
+  border: 0;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.timeline-close:hover { background: var(--gridline); color: var(--text-primary); }
+.timeline-modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  max-height: calc(min(80vh, 900px) - 70px);
+}
+
+.timeline-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px 24px;
+  margin: 0 0 24px;
+}
+.timeline-meta dt { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 2px; }
+.timeline-meta dd { margin: 0; font-size: 0.92rem; }
+
+.timeline-subhead {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+.timeline-statuslist {
+  list-style: none;
+  margin: 0 0 24px;
+  padding: 0;
+}
+.timeline-statuslist li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--gridline);
+  font-size: 0.9rem;
+}
+
+/* De verticale lijn loopt door de iconen heen, zodat de tijdlijn als één
+   doorlopend verhaal leest in plaats van als losse regels. */
+.timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 4px;
+  position: relative;
+}
+.timeline-list::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 6px;
+  bottom: 14px;
+  width: 2px;
+  background: var(--gridline);
+}
+.timeline-event {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px 96px 1fr;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 0.9rem;
+}
+.timeline-icon {
+  position: relative;
+  z-index: 1;
+  width: 24px;
+  text-align: center;
+  background: var(--surface-1);
+}
+.timeline-date { color: var(--text-secondary); font-variant-numeric: tabular-nums; font-size: 0.84rem; }
+.timeline-event.timeline-opgelost .timeline-text { color: var(--status-good); font-weight: 600; }
+.timeline-event.timeline-verlopen .timeline-text { color: var(--status-critical); font-weight: 600; }
+.timeline-event.timeline-heropend .timeline-text { color: var(--status-serious); font-weight: 600; }
+
+@media (max-width: 620px) {
+  .timeline-event { grid-template-columns: 24px 1fr; }
+  .timeline-date { grid-column: 2; }
+  .timeline-text { grid-column: 2; }
+}
 .panel-banner-settings { background: linear-gradient(135deg, #6b6b65 0%, #3a3a35 140%); }
 
 /* ---------- Prognose ---------- */

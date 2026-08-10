@@ -27,6 +27,9 @@
     <button class="tab-btn" id="tab-btn-prognose" data-tab="prognose" role="tab" aria-selected="false" aria-controls="section-prognose">
       <span class="nav-icon" aria-hidden="true">🔮</span><span class="nav-label">Prognose</span>
     </button>
+    <button class="tab-btn" id="tab-btn-historie" data-tab="historie" role="tab" aria-selected="false" aria-controls="section-historie">
+      <span class="nav-icon" aria-hidden="true">🕓</span><span class="nav-label">Historie</span>
+    </button>
     <button class="tab-btn" id="tab-btn-settings" data-tab="settings" role="tab" aria-selected="false" aria-controls="section-settings">
       <span class="nav-icon" aria-hidden="true">⚙️</span><span class="nav-label">Instellingen</span>
     </button>
@@ -218,6 +221,36 @@
     </section>
   </section>
 
+  <section class="tab-panel hidden" id="section-historie" data-tab-panel="historie" role="tabpanel" aria-labelledby="tab-btn-historie" tabindex="0">
+    <div class="panel-banner panel-banner-historie">
+      <span class="panel-icon">🕓</span>
+      <div>
+        <h2>Historie</h2>
+        <p>Alles wat de tool ooit heeft gezien, ook storingen die al lang zijn opgelost. Zoek een order of adres terug, of kijk waar het steeds opnieuw misgaat. Klik op een ordernummer — waar dan ook in het dashboard — voor de volledige tijdlijn van die storing.</p>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>🔎 Zoek in de historie</h2>
+      <p class="muted small">Zoekt over álle opgeslagen updates heen, in tegenstelling tot de zoekbalk bij de volledige lijst die alleen de huidige stand doorzoekt. Zoek op ordernummer, straat, plaats, postcode of assetnummer.</p>
+      <p class="muted small" id="historie-summary"></p>
+      <div class="input-row">
+        <input type="search" id="historie-search" class="table-search historie-search" placeholder="Bijv. 81010101001, Hoofdstraat of 2020378" autocomplete="off">
+      </div>
+      <div id="historie-body" class="table-scroll"></div>
+    </section>
+
+    <section class="card">
+      <h2>🔁 Herhaallocaties</h2>
+      <p class="muted small">Plekken met twee of meer storingen sinds het begin van de metingen. Herhaling op dezelfde plek wijst op iets structureels in plaats van pech — en de gemiddelde tussentijd laat zien of het versnelt. Elke storing telt één keer mee, op de plek waar 'ie het eerst gezien werd.</p>
+      <div class="filter-tabs recidive-mode" id="recidive-mode">
+        <button type="button" class="filter-tab active" data-recidive-mode="straat">Per straat</button>
+        <button type="button" class="filter-tab" data-recidive-mode="asset">Per asset</button>
+      </div>
+      <div id="recidive-body" class="table-scroll"></div>
+    </section>
+  </section>
+
   <section class="tab-panel hidden" id="section-settings" data-tab-panel="settings" role="tabpanel" aria-labelledby="tab-btn-settings" tabindex="0">
     <div class="panel-banner panel-banner-settings">
       <span class="panel-icon">⚙️</span>
@@ -311,6 +344,14 @@
     </main>
   </div>
 </div>
+
+<dialog id="timeline-modal" class="timeline-modal" aria-labelledby="timeline-title">
+  <div class="timeline-modal-head">
+    <h2 id="timeline-title">Storing</h2>
+    <button type="button" id="timeline-close" class="timeline-close" aria-label="Sluiten">✕</button>
+  </div>
+  <div id="timeline-body" class="timeline-modal-body"></div>
+</dialog>
 
 <div id="tooltip" class="tooltip hidden"></div>
 <div id="toast-container" class="toast-container" aria-live="assertive" aria-atomic="true"></div>
