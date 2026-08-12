@@ -1583,6 +1583,44 @@ function buildClusters(mode) {
   return { clusters, totaal: open.length, zonderLocatie };
 }
 
+// Platte tekst van de clusters, om in een mail of Teams-bericht te plakken.
+// De interactieve versie zit al in de teamexport, maar voor "hier is je lijstje
+// voor morgen" is een blok tekst praktischer dan een bestand.
+function buildClusterText() {
+  const { clusters, totaal, zonderLocatie } = buildClusters(state.clusterMode);
+  const snaps = chronoSnapshots();
+  const datum = snaps.length ? snaps[snaps.length - 1].week : '';
+  const kop = `NUS-clusters — ${datum} (${CLUSTER_MODI[state.clusterMode].label.toLowerCase()})`;
+  if (clusters.length === 0) return `${kop}\n\nGeen clusters van twee of meer op dit niveau.`;
+
+  const inCluster = clusters.reduce((sum, c) => sum + c.aantal, 0);
+  const regels = [
+    kop,
+    '',
+    `${inCluster} van de ${totaal} openstaande storingen liggen in ${clusters.length} ${clusters.length === 1 ? 'cluster' : 'clusters'} van twee of meer.`,
+    `${totaal - inCluster} ${totaal - inCluster === 1 ? 'staat' : 'staan'} op zichzelf${zonderLocatie > 0 ? ` (${zonderLocatie} zonder bruikbare locatiegegevens)` : ''}.`,
+    '',
+  ];
+  clusters.forEach(c => {
+    const merk = [];
+    if (c.mio > 0) merk.push(`${c.mio}x mast geen spanning`);
+    if (c.verlopen > 0) merk.push(`${c.verlopen}x verlopen`);
+    if (c.geblokkeerd > 0) merk.push(`${c.geblokkeerd}x geblokkeerd`);
+    regels.push(`${c.city} — ${c.sleutel}  (${c.aantal} storingen${merk.length ? ', ' + merk.join(', ') : ''})`);
+    c.storingen.forEach(s => {
+      const dagen = typeof s.daysLeft !== 'number' ? 'dagen onbekend'
+        : s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen`
+        : s.daysLeft === 0 ? 'verloopt vandaag'
+        : `nog ${s.daysLeft} dgn`;
+      const extra = [isMastGeenSpanning(s) ? 'mast geen spanning' : s.type, s.ovStatus || 'status onbekend'];
+      if (isOvBlocked(s)) extra.push('geblokkeerd');
+      regels.push(`  ${s.order}  ${s.street}, ${s.postcode}  — ${dagen}  (${extra.join(', ')})`);
+    });
+    regels.push('');
+  });
+  return regels.join('\n').trimEnd();
+}
+
 function renderClusterCard() {
   const container = document.getElementById('cluster-body');
   if (!container) return;
@@ -3520,6 +3558,18 @@ function wireEvents() {
     if (state.recidiveSortState.key === th.dataset.key) state.recidiveSortState.dir *= -1;
     else { state.recidiveSortState.key = th.dataset.key; state.recidiveSortState.dir = 1; }
     renderRecidiveCard();
+  });
+
+  document.getElementById('copy-clusters-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('copy-clusters-btn');
+    const original = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(buildClusterText());
+      btn.textContent = '✅ Gekopieerd!';
+    } catch (e) {
+      btn.textContent = '⚠️ Kopiëren mislukt';
+    }
+    setTimeout(() => { btn.textContent = original; }, 2000);
   });
 
   document.querySelectorAll('#cluster-mode button[data-cluster-mode]').forEach(btn => {
