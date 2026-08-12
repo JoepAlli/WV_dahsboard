@@ -799,6 +799,7 @@ const state = {
   historieQuery: '',
   historieSortState: { key: 'eerst', dir: -1 },
   recidiveMode: 'straat',
+  clusterMode: 'pc4',
   recidiveSortState: { key: 'aantal', dir: -1 },
   regioViewMode: 'chart',
   trendViewMode: 'chart',
@@ -951,6 +952,13 @@ function needsFollowUp(s) { return isActionableOverdue(s) || isActionableExpired
 // of een order ook in de andere bak voorkwam, dit is de échte status uit de
 // Instandhoudingsapp zelf.
 const OV_STATUS_FILTER_KEYS = { 'Nieuw': 'statusNieuw', 'In onderzoek': 'statusOnderzoek', 'Onderzoek controleren': 'statusOnderzoekControleren', 'In voorbereiding': 'statusVoorbereiding', 'Planning': 'statusPlanning', 'In uitvoering': 'statusUitvoering' };
+// "Mast geen spanning Infra" is het type waarbij een MIO-ploeg er in veel
+// gevallen alleen op af kan, zonder Meetdienst. Ruim gematcht (hoofdletters en
+// extra spaties variëren in de bron) maar wel op de hele woordgroep, zodat
+// alleen dit type meetelt.
+const MIO_TYPE_RE = /mast\s+geen\s+spanning/i;
+function isMastGeenSpanning(s) { return MIO_TYPE_RE.test(s.type || ''); }
+
 function statTileFilters() {
   const filters = {
     known: { title: 'Verlopen — uitvoering gepland', test: s => s.overdue && !!s.executionDate && !isExpiredExecutionDate(s) && !isOvBlocked(s) },
@@ -958,6 +966,7 @@ function statTileFilters() {
     unknown: { title: 'Verlopen — uitvoering onbekend', test: s => isActionableOverdue(s) },
     bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' && !isOvBlocked(s) },
     geblokkeerd: { title: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt)', test: s => isOvBlocked(s) },
+    mastGeenSpanning: { title: 'Mast geen spanning', test: s => isMastGeenSpanning(s) },
   };
   OV_STATUS_ORDER.forEach(status => {
     filters[OV_STATUS_FILTER_KEYS[status]] = { title: `Status: ${status}`, test: s => s.ovStatus === status && !isOvBlocked(s) };
@@ -988,7 +997,7 @@ const OV_STATUS_ICONS = { 'Nieuw': '🆕', 'In onderzoek': '🔍', 'Onderzoek co
 // momenten heen — inclusief meerdere updates op één dag. Alleen deze
 // tegels hebben er daarnaast ook een rij-per-storing-tabel bij (de rest
 // duplicerde toch al wat "Aandacht deze week"/"Volledige lijst" al tonen).
-const OV_DETAIL_LIST_KEYS = new Set([...Object.values(OV_STATUS_FILTER_KEYS), 'geblokkeerd']);
+const OV_DETAIL_LIST_KEYS = new Set([...Object.values(OV_STATUS_FILTER_KEYS), 'geblokkeerd', 'mastGeenSpanning']);
 const OV_TILE_TITLES = {
   totaal: 'Totaal open',
   verlopenDatum: 'Uitvoeringsdatum verstreken',
@@ -1112,6 +1121,7 @@ function renderStatTiles(current, mutations) {
   const expiredDateCount = current.filter(filters.verlopenDatum.test).length;
   const overdueUnknown = current.filter(filters.unknown.test).length;
   const geblokkeerdCount = current.filter(filters.geblokkeerd.test).length;
+  const mioCount = current.filter(filters.mastGeenSpanning.test).length;
   // Drie soorten getallen die er eerder als één uniforme rij uitzagen, terwijl
   // ze niet bij elkaar optellen en niet hetzelfde betekenen:
   //  - werkvoorraad: het totaal en de statussen die samen dat totaal vormen;
@@ -1134,6 +1144,8 @@ function renderStatTiles(current, mutations) {
       note: overdueUnknown > 0 ? 'nog niets ingepland — zie Vraagt om actie' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
     { groep: 'mutatie', key: 'afgesloten', icon: '✅', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
       note: mutations.hasPrevious ? `sinds ${mutations.vorigeDag || 'de vorige update'}` : 'nog geen eerdere dag', scrollTarget: 'mutations-out' },
+    { groep: 'inzet', key: 'mastGeenSpanning', icon: '🗼', label: 'Mast geen spanning', value: mioCount,
+      note: total > 0 ? `${Math.round((mioCount / total) * 100)}% van alle open storingen` : 'geen open storingen', scrollTarget: 'cluster-card' },
     { groep: 'signaal', key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
   );
   // Elke tegel is nu klikbaar: altijd voor het verloop-grafiekje in het
@@ -1160,6 +1172,7 @@ function renderStatTiles(current, mutations) {
   const GROEPEN = [
     { key: 'voorraad', label: 'Werkvoorraad', uitleg: 'De statussen tellen samen op tot het totaal.' },
     { key: 'signaal', label: 'Signalen', uitleg: 'Lopen dwars door de statussen heen en kunnen elkaar overlappen.' },
+    { key: 'inzet', label: 'Inzet', uitleg: 'Indeling op type, voor de planning — telt niet op bij de statussen.' },
     { key: 'mutatie', label: `Sinds ${mutations.vorigeDag || 'de vorige update'}`, uitleg: '' },
   ];
   el.innerHTML = GROEPEN.map(g => {
@@ -1499,6 +1512,133 @@ function renderDoorlooptijdCard() {
     <div class="value">${avg.toFixed(1)} dagen</div>
     <div class="muted small">Gemiddelde doorlooptijd van ${durations.length} storing${durations.length === 1 ? '' : 'en'} die sinds het begin van de metingen uit de lijst zijn verdwenen (van eerst gezien tot niet meer aanwezig).</div>
     ${trendHtml}`;
+}
+
+/* ---------- Clusters: openstaande storingen die dicht bij elkaar liggen ---------- */
+
+// Meetdienst-capaciteit is schaars, dus één rit moet zoveel mogelijk opleveren.
+// Deze kaart zoekt groepjes openstaande storingen die geografisch bij elkaar
+// liggen, zodat ze in één keer kunnen worden ingepland.
+//
+// Drie niveaus van "dicht bij elkaar", omdat de juiste korrel per situatie
+// verschilt: een postcodegebied (de vier cijfers) is ruwweg een buurt en levert
+// de meeste combinaties op; een volledige postcode is een straatblok; en op
+// straatnaam vang je ook de gevallen waar één straat meerdere postcodes heeft.
+const CLUSTER_MODI = {
+  pc4: { label: 'Postcodegebied', kolom: 'Postcode (4 cijfers)' },
+  pc6: { label: 'Volledige postcode', kolom: 'Postcode' },
+  straat: { label: 'Straat', kolom: 'Straat' },
+};
+
+function pc4Van(postcode) {
+  const m = (postcode || '').match(/(\d{4})/);
+  return m ? m[1] : null;
+}
+
+function buildClusters(mode) {
+  const snaps = chronoSnapshots();
+  if (snaps.length === 0) return { clusters: [], totaal: 0, zonderLocatie: 0 };
+  const open = typeFiltered(snaps[snaps.length - 1].storingen);
+
+  const groepen = new Map();
+  let zonderLocatie = 0;
+  open.forEach(s => {
+    let sleutel = null;
+    if (mode === 'pc4') sleutel = pc4Van(s.postcode);
+    else if (mode === 'pc6') sleutel = (s.postcode || '').trim() || null;
+    else sleutel = straatZonderHuisnummer(s.street);
+    if (!sleutel || sleutel === 'Onbekend') { zonderLocatie++; return; }
+    const key = `${s.city || 'Onbekend'}|||${sleutel}`;
+    let g = groepen.get(key);
+    if (!g) {
+      g = { key, city: s.city || 'Onbekend', sleutel, storingen: [], straten: new Set() };
+      groepen.set(key, g);
+    }
+    g.storingen.push(s);
+    g.straten.add(straatZonderHuisnummer(s.street));
+  });
+
+  const clusters = Array.from(groepen.values())
+    .filter(g => g.storingen.length >= 2)
+    .map(g => {
+      const mio = g.storingen.filter(isMastGeenSpanning).length;
+      const dagen = g.storingen.map(s => (typeof s.daysLeft === 'number' ? s.daysLeft : null)).filter(d => d !== null);
+      return {
+        key: g.key,
+        city: g.city,
+        sleutel: g.sleutel,
+        aantal: g.storingen.length,
+        mio,
+        overig: g.storingen.length - mio,
+        straten: g.straten.size,
+        // De krapste deadline bepaalt wanneer de hele groep uiterlijk moet.
+        vroegste: dagen.length ? Math.min(...dagen) : null,
+        verlopen: g.storingen.filter(s => s.overdue).length,
+        geblokkeerd: g.storingen.filter(isOvBlocked).length,
+        storingen: g.storingen.slice().sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999)),
+      };
+    })
+    .sort((a, b) => b.aantal - a.aantal || (a.vroegste ?? 999) - (b.vroegste ?? 999) || a.city.localeCompare(b.city));
+
+  return { clusters, totaal: open.length, zonderLocatie };
+}
+
+function renderClusterCard() {
+  const container = document.getElementById('cluster-body');
+  if (!container) return;
+  document.querySelectorAll('#cluster-mode button[data-cluster-mode]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.clusterMode === state.clusterMode);
+  });
+
+  const { clusters, totaal, zonderLocatie } = buildClusters(state.clusterMode);
+  if (totaal === 0) {
+    container.innerHTML = '<p class="empty-note">Nog geen openstaande storingen om te clusteren.</p>';
+    return;
+  }
+  if (clusters.length === 0) {
+    container.innerHTML = `<p class="empty-note">Geen twee openstaande storingen die op dit niveau bij elkaar liggen. Probeer een ruimere indeling — ${esc(CLUSTER_MODI.pc4.label.toLowerCase())} vangt de meeste combinaties.</p>`;
+    return;
+  }
+
+  const inCluster = clusters.reduce((sum, c) => sum + c.aantal, 0);
+  const mioInCluster = clusters.reduce((sum, c) => sum + c.mio, 0);
+  const kop = `<p class="prognose-headline"><strong>${inCluster}</strong> van de ${totaal} openstaande storingen liggen in <strong>${clusters.length}</strong> ${clusters.length === 1 ? 'cluster' : 'clusters'} van twee of meer`
+    + `${mioInCluster > 0 ? `, waarvan ${mioInCluster} van het type "mast geen spanning"` : ''}. `
+    + `De overige ${totaal - inCluster} ${totaal - inCluster === 1 ? 'staat' : 'staan'} op zichzelf${zonderLocatie > 0 ? ` (${zonderLocatie} zonder bruikbare locatiegegevens)` : ''}.</p>`;
+
+  const rijen = clusters.map(c => {
+    const deadline = c.vroegste === null ? '—'
+      : c.vroegste < 0 ? `<span class="prognose-bad">${Math.abs(c.vroegste)} dgn verlopen</span>`
+      : `nog ${c.vroegste} dgn`;
+    const merk = [];
+    if (c.mio > 0) merk.push(`${c.mio}× mast geen spanning`);
+    if (c.verlopen > 0) merk.push(`${c.verlopen}× verlopen`);
+    if (c.geblokkeerd > 0) merk.push(`${c.geblokkeerd}× geblokkeerd`);
+    const detailRijen = c.storingen.map(s => `
+      <tr>
+        <td>${orderLinkHtml(s.order)}</td>
+        <td>${esc(s.street)}, ${esc(s.postcode)}</td>
+        <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}</td>
+        <td>${ovStatusPillHtml(s)}</td>
+        <td class="num">${renderDaysPill(s)}</td>
+      </tr>`).join('');
+    return `
+      <details class="cluster-item">
+        <summary>
+          <span class="cluster-titel">${esc(c.city)} — ${esc(c.sleutel)}</span>
+          <span class="cluster-aantal">${c.aantal} storingen</span>
+          <span class="cluster-meta">${merk.length ? esc(merk.join(' · ')) + ' · ' : ''}krapste deadline: ${deadline}${state.clusterMode !== 'straat' && c.straten > 1 ? ` · ${c.straten} straten` : ''}</span>
+        </summary>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Order</th><th>Adres</th><th>Type</th><th>Status</th><th class="num">Dagen</th></tr></thead>
+            <tbody>${detailRijen}</tbody>
+          </table>
+        </div>
+      </details>`;
+  }).join('');
+
+  container.innerHTML = kop + rijen;
 }
 
 /* ---------- Rendering: gebied → plaatsen overzicht ---------- */
@@ -3031,6 +3171,7 @@ function renderDashboardFromState() {
   renderTrendChart(perDag); // idem, filtert zelf op state.activeFilter
   renderMutationTables(mutations);
   renderGebiedPlaatsenCard();
+  renderClusterCard();
   renderWvGebiedCard();
   renderPrognose(latestFiltered);
   renderHistorie();
@@ -3379,6 +3520,13 @@ function wireEvents() {
     if (state.recidiveSortState.key === th.dataset.key) state.recidiveSortState.dir *= -1;
     else { state.recidiveSortState.key = th.dataset.key; state.recidiveSortState.dir = 1; }
     renderRecidiveCard();
+  });
+
+  document.querySelectorAll('#cluster-mode button[data-cluster-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.clusterMode = btn.dataset.clusterMode;
+      renderClusterCard();
+    });
   });
 
   document.querySelectorAll('#recidive-mode button[data-recidive-mode]').forEach(btn => {

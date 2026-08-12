@@ -902,6 +902,37 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 
 .recidive-mode { margin-bottom: 16px; }
 
+/* Clusters: elk cluster is een uitklapbaar blok met de orders erin, zodat de
+   lijst overzichtelijk blijft maar de details één klik weg zijn. */
+.cluster-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+  background: var(--surface-1);
+  overflow: hidden;
+}
+.cluster-item > summary {
+  cursor: pointer;
+  padding: 14px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+}
+.cluster-item > summary:hover { background: var(--brand-highlight); }
+.cluster-item[open] > summary { border-bottom: 1px solid var(--border); }
+.cluster-titel { font-weight: 700; }
+.cluster-aantal {
+  background: var(--brand-highlight);
+  color: var(--brand-primary-dark);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.cluster-meta { color: var(--text-secondary); font-size: 0.82rem; }
+.cluster-item .table-scroll { padding: 4px 18px 14px; }
+
 .backup-reminder {
   display: flex;
   flex-wrap: wrap;

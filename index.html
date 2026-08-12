@@ -178,13 +178,25 @@
       <span class="panel-icon">🗺️</span>
       <div>
         <h2>Gebieden</h2>
-        <p>Per gebiedscode en plaats: hoeveel storingen daar ooit vandaan kwamen, hoeveel er nu nog open staan, de gemiddelde doorlooptijd, en hoeveel er nu geblokkeerd zijn of actie nodig hebben. Klik op een kolomkop om te sorteren — handig om structurele probleemplekken op te sporen.</p>
+        <p>Waar het werk zit. Bovenaan de clusters: openstaande storingen die dicht bij elkaar liggen en dus in één rit kunnen worden ingepland. Daaronder per gebiedscode en plaats hoeveel storingen daar ooit vandaan kwamen en hoe ze er nu voor staan — handig om structurele probleemplekken op te sporen.</p>
       </div>
     </div>
 
     <div id="gebied-onbekend" class="warning-box hidden"></div>
 
+    <section class="card" id="cluster-card">
+      <h2>📍 Slim inplannen — clusters</h2>
+      <p class="muted small">Groepjes openstaande storingen die geografisch bij elkaar liggen, zodat één rit van de Meetdienst meerdere storingen meepakt. Klik een cluster open voor de bijbehorende orders. Storingen van het type "mast geen spanning" zijn apart gemarkeerd: daar kan in veel gevallen een MIO-ploeg alleen op af.</p>
+      <div class="filter-tabs recidive-mode" id="cluster-mode">
+        <button type="button" class="filter-tab active" data-cluster-mode="pc4">Postcodegebied</button>
+        <button type="button" class="filter-tab" data-cluster-mode="pc6">Volledige postcode</button>
+        <button type="button" class="filter-tab" data-cluster-mode="straat">Straat</button>
+      </div>
+      <div id="cluster-body"></div>
+    </section>
+
     <section class="card">
+      <h2>🗺️ Per gebiedscode en plaats</h2>
       <div id="gebied-plaatsen-body" class="table-scroll"></div>
     </section>
   </section>
