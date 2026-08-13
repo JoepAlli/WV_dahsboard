@@ -800,6 +800,7 @@ const state = {
   historieSortState: { key: 'eerst', dir: -1 },
   recidiveMode: 'straat',
   clusterMode: 'pc4',
+  mioLeeftijdFilter: 'alles',
   recidiveSortState: { key: 'aantal', dir: -1 },
   regioViewMode: 'chart',
   trendViewMode: 'chart',
@@ -1249,6 +1250,23 @@ function renderWeekSummaryBanner(current, mutations) {
 // Toont (indien een klikbare tegel is aangeklikt) de exacte lijst van
 // storingen daarachter, zodat je niet handmatig door de hele tabel hoeft te
 // zoeken naar welke opdrachten het precies betreft.
+// Sub-filter binnen de "Mast geen spanning"-lijst: hoe lang staat de storing
+// al in beeld. Elke mast moet één keer in de ISH-app worden nagekeken om te
+// bepalen of 'ie met of zonder Meetdienst kan; wie dat dagelijks bijhoudt wil
+// alleen de storingen zien die er sinds de vorige keer bij zijn gekomen, niet
+// telkens de hele lijst opnieuw.
+//
+// "Eerst gezien" is de dag waarop het ordernummer voor het eerst in een update
+// stond — niet de datum waarop de storing in werkelijkheid is ontstaan. In de
+// eerste dagen na het begin van de metingen lijkt daardoor alles nieuw.
+const MIO_LEEFTIJD_FILTERS = [
+  { key: 'alles', label: 'Alles', dagen: null },
+  { key: 'vandaag', label: 'Vandaag nieuw', dagen: 0 },
+  { key: '7', label: 'Laatste 7 dagen', dagen: 7 },
+  { key: '14', label: 'Laatste 14 dagen', dagen: 14 },
+  { key: '30', label: 'Laatste 30 dagen', dagen: 30 },
+];
+
 function renderStatDetail(current, mutations) {
   const container = document.getElementById('overdue-detail');
   const filterKey = state.statDetailFilter;
@@ -1264,11 +1282,38 @@ function renderStatDetail(current, mutations) {
   const showBlock = filterKey === 'geblokkeerd' && !isStaticExport;
 
   let badgeCount, body;
+  const toonLeeftijdFilter = filterKey === 'mastGeenSpanning';
+  let leeftijdBalk = '';
+  let leeftijdNoot = '';
+
   if (hasList) {
     const orderSet = new Set(state.statDetailOrders || []);
-    const list = current.filter(s => orderSet.has(s.order));
-    badgeCount = list.length;
+    let list = current.filter(s => orderSet.has(s.order));
     const firstSeenMap = firstSeenWeekMap();
+
+    if (toonLeeftijdFilter) {
+      const snaps = chronoSnapshots();
+      const vandaag = snaps.length ? snaps[snaps.length - 1].week : null;
+      const gekozen = MIO_LEEFTIJD_FILTERS.find(f => f.key === state.mioLeeftijdFilter) || MIO_LEEFTIJD_FILTERS[0];
+      const totaalVoorFilter = list.length;
+      if (gekozen.dagen !== null && vandaag) {
+        list = list.filter(s => {
+          const eerst = firstSeenMap[s.order];
+          if (!eerst) return false;
+          const leeftijd = dagenTussen(eerst, vandaag);
+          return leeftijd >= 0 && leeftijd <= gekozen.dagen;
+        });
+      }
+      leeftijdBalk = `<div class="filter-tabs mio-leeftijd" id="mio-leeftijd">`
+        + MIO_LEEFTIJD_FILTERS.map(f => `<button type="button" class="filter-tab${f.key === gekozen.key ? ' active' : ''}" data-mio-leeftijd="${f.key}">${esc(f.label)}</button>`).join('')
+        + `</div>`;
+      leeftijdNoot = `<p class="muted small">${list.length} van de ${totaalVoorFilter} openstaande masten`
+        + `${gekozen.dagen === null ? '' : gekozen.dagen === 0 ? ' zijn vandaag voor het eerst gezien' : ` zijn in de laatste ${gekozen.dagen} dagen voor het eerst gezien`}.`
+        + ` "Eerst gezien" is de dag waarop de storing in dit dashboard verscheen, niet de werkelijke meldingsdatum.`
+        + `${list.length > 0 && !isStaticExport ? ' <button type="button" class="btn-link" id="copy-mio-orders">📋 Kopieer ordernummers</button>' : ''}</p>`;
+    }
+
+    badgeCount = list.length;
     body = list.length === 0
       ? '<p class="empty-note">Geen storingen in deze lijst.</p>'
       : `<div class="table-scroll"><table><thead><tr>
@@ -1313,7 +1358,30 @@ function renderStatDetail(current, mutations) {
       <button class="btn-link" id="close-overdue-detail">Sluiten ✕</button>
     </div>
     <div class="tile-trend-chart">${chartHtml}</div>
+    ${leeftijdBalk}
+    ${leeftijdNoot}
     ${body}`;
+
+  container.querySelectorAll('#mio-leeftijd button[data-mio-leeftijd]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.mioLeeftijdFilter = btn.dataset.mioLeeftijd;
+      renderStatDetail(current, mutations);
+    });
+  });
+  const copyMio = document.getElementById('copy-mio-orders');
+  if (copyMio) {
+    copyMio.addEventListener('click', async () => {
+      const orders = Array.from(container.querySelectorAll('tbody tr td:first-child')).map(td => td.textContent.trim());
+      const original = copyMio.textContent;
+      try {
+        await navigator.clipboard.writeText(orders.join('\n'));
+        copyMio.textContent = '✅ Gekopieerd!';
+      } catch (e) {
+        copyMio.textContent = '⚠️ Kopiëren mislukt';
+      }
+      setTimeout(() => { copyMio.textContent = original; }, 2000);
+    });
+  }
 
   container.querySelectorAll('.tile-trend-pt').forEach(pt => {
     pt.addEventListener('mouseenter', e => showTooltip(e, `<strong>${esc(pt.dataset.label)}</strong><br>${esc(pt.dataset.val)}`));

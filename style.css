@@ -902,6 +902,8 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 
 .recidive-mode { margin-bottom: 16px; }
 
+.mio-leeftijd { margin: 4px 0 12px; }
+
 /* Clusters: elk cluster is een uitklapbaar blok met de orders erin, zodat de
    lijst overzichtelijk blijft maar de details één klik weg zijn. */
 .cluster-item {
