@@ -904,6 +904,22 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 
 .mio-leeftijd { margin: 4px 0 12px; }
 
+/* Staafje naast het opgehoopte aantal: de verhouding tussen de statussen is
+   sneller te zien dan de getallen zelf. */
+.doorstroom-balk {
+  background: var(--gridline);
+  border-radius: 999px;
+  height: 8px;
+  min-width: 60px;
+  overflow: hidden;
+}
+.doorstroom-balk span {
+  display: block;
+  height: 100%;
+  background: var(--series-1);
+  border-radius: 999px;
+}
+
 /* Clusters: elk cluster is een uitklapbaar blok met de orders erin, zodat de
    lijst overzichtelijk blijft maar de details één klik weg zijn. */
 .cluster-item {

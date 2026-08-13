@@ -226,6 +226,12 @@
     </section>
 
     <section class="card">
+      <h2>🚦 Waar loopt het vast?</h2>
+      <p class="muted small">Per status hoeveel storingen er nu in staan, hoe lang ze daar normaal blijven, en hoeveel wachttijd er op dat moment bij elkaar ligt. Zo zie je niet alleen dát het traag gaat, maar bij welke stap.</p>
+      <div id="doorstroom-body"></div>
+    </section>
+
+    <section class="card">
       <h2>🐢 Stagnatiesignaal</h2>
       <p class="muted small">Storingen die veel langer in dezelfde status staan dan gebruikelijk voor die status. Deze vallen vaak buiten "Vraagt om actie" omdat ze formeel nog op tijd zijn — terwijl ze in de praktijk stilstaan.</p>
       <div id="stagnatie-body" class="table-scroll"></div>
@@ -326,6 +332,25 @@
         <button id="sharepoint-test-btn" class="btn-link">Test verbinding</button>
         <button id="sharepoint-save-btn" class="btn-primary">Opslaan</button>
         <span id="sharepoint-status" class="muted small"></span>
+      </div>
+    </section>
+
+    <section class="card" id="capaciteit-card">
+      <h2>🛠️ Beschikbare capaciteit</h2>
+      <p class="muted small">Hoeveel storingen je per week gemiddeld kunt afronden. Hiermee wordt het benodigd tempo op de Prognose-pagina een oordeel in plaats van alleen een constatering. Laat op 0 staan om het blok verborgen te houden.</p>
+      <div class="input-row">
+        <label for="cap-meetdienst">Meetdienst</label>
+        <input type="number" id="cap-meetdienst" min="0" step="1" inputmode="numeric">
+        <span class="muted small">storingen per week</span>
+      </div>
+      <div class="input-row">
+        <label for="cap-mio">MIO-ploeg</label>
+        <input type="number" id="cap-mio" min="0" step="1" inputmode="numeric">
+        <span class="muted small">storingen per week</span>
+      </div>
+      <div class="input-row">
+        <button id="cap-save-btn" class="btn-primary">Opslaan</button>
+        <span id="cap-status" class="muted small"></span>
       </div>
     </section>
 

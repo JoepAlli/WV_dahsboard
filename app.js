@@ -484,6 +484,26 @@ async function saveBijnaVerlopenThreshold(n) {
 // sleutel in dezelfde kv-store: geen versiewijziging, geen migratie, en oudere
 // versies van de app negeren 'm gewoon. Ontbreekt de sleutel, dan gedraagt de
 // app zich alsof er nog nooit een back-up is gemaakt — precies wat je wilt.
+// Beschikbare capaciteit, om het benodigd tempo tegen af te kunnen zetten.
+// Losstaande sleutel, net als de back-updatum: geen versiewijziging, en zonder
+// ingevulde waarden gedraagt het dashboard zich precies als voorheen.
+const CAPACITEIT_KEY = 'nusdash_capaciteit_v1';
+const LEGE_CAPACITEIT = { meetdienst: 0, mio: 0 };
+async function loadCapaciteit() {
+  try {
+    const v = await idbGet(CAPACITEIT_KEY);
+    if (!v || typeof v !== 'object') return Object.assign({}, LEGE_CAPACITEIT);
+    return {
+      meetdienst: Number.isFinite(v.meetdienst) && v.meetdienst >= 0 ? v.meetdienst : 0,
+      mio: Number.isFinite(v.mio) && v.mio >= 0 ? v.mio : 0,
+    };
+  } catch (e) { console.error(e); return Object.assign({}, LEGE_CAPACITEIT); }
+}
+async function saveCapaciteit(cap) {
+  try { await idbSet(CAPACITEIT_KEY, cap); }
+  catch (e) { showErrorToast('Opslaan van de capaciteit is mislukt: ' + e.message); }
+}
+
 const LAST_BACKUP_KEY = 'nusdash_last_backup_at_v1';
 const BACKUP_HERINNERING_DAGEN = 7;
 async function loadLastBackupAt() {
@@ -556,6 +576,7 @@ async function exportBackup() {
     ovBlockStatus: await loadOvBlockStatusMap(),
     bijnaVerlopenThreshold: await loadBijnaVerlopenThreshold(),
     sharePointConfig: await loadSharePointConfig(),
+    capaciteit: await loadCapaciteit(),
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -633,6 +654,7 @@ async function importBackup(file) {
   if (backup.ovBlockStatus && typeof backup.ovBlockStatus === 'object' && !sharePointActive()) await saveOvBlockStatusMap(backup.ovBlockStatus);
   if (Number.isFinite(backup.bijnaVerlopenThreshold) && backup.bijnaVerlopenThreshold > 0) await saveBijnaVerlopenThreshold(backup.bijnaVerlopenThreshold);
   if (backup.sharePointConfig && typeof backup.sharePointConfig === 'object') await saveSharePointConfig(backup.sharePointConfig);
+  if (backup.capaciteit && typeof backup.capaciteit === 'object') await saveCapaciteit(backup.capaciteit);
 }
 
 // Bouwt, in één keer over alle bestaande OV-snapshots (nieuwste eerst), een
@@ -795,6 +817,7 @@ const state = {
   gebiedSortState: { key: 'regio', dir: 1 },
   wvSortState: { key: 'nuOpen', dir: -1 },
   lastBackupAt: null,
+  capaciteit: { meetdienst: 0, mio: 0 },
   stagnatieSortState: { key: 'ratio', dir: -1 },
   historieQuery: '',
   historieSortState: { key: 'eerst', dir: -1 },
@@ -2189,8 +2212,27 @@ function renderVerloopkalender(current) {
   const komendTotal = komende2.reduce((sum, b) => sum + b.total, 0);
   const komendZonderPlan = komende2.reduce((sum, b) => sum + b.zonderPlan, 0);
 
+  // Koppeling met de clusterkaart: van de storingen die bijna verlopen liggen
+  // er vaak een paar bij elkaar. Dat is de goedkoopste winst die er is — één
+  // rit lost er dan meerdere tegelijk op — maar je ziet het niet als beide
+  // kaarten los van elkaar staan.
+  const komendeStoringen = current.filter(s => typeof s.daysLeft === 'number' && s.daysLeft >= 0 && s.daysLeft < 14);
+  const perGebied = new Map();
+  komendeStoringen.forEach(s => {
+    const sleutel = pc4Van(s.postcode);
+    if (!sleutel) return;
+    const key = `${s.city || 'Onbekend'}|||${sleutel}`;
+    perGebied.set(key, (perGebied.get(key) || 0) + 1);
+  });
+  const clusterGroepen = Array.from(perGebied.values()).filter(n => n >= 2);
+  const inClusters = clusterGroepen.reduce((a, b) => a + b, 0);
+  const clusterZin = clusterGroepen.length > 0
+    ? `<p class="muted small">Daarvan liggen er <strong>${inClusters}</strong> in ${clusterGroepen.length} postcodegebied${clusterGroepen.length === 1 ? '' : 'en'} bij elkaar — zie <em>Slim inplannen</em> op Gebieden; één rit pakt daar meerdere tegelijk.</p>`
+    : '';
+
   container.innerHTML = `
     <p class="prognose-headline">Komende 2 weken ${komendTotal === 1 ? 'bereikt' : 'bereiken'} <strong>${komendTotal}</strong> storing${komendTotal === 1 ? '' : 'en'} ${komendTotal === 1 ? 'zijn' : 'hun'} uiterste datum, waarvan <strong class="${komendZonderPlan > 0 ? 'prognose-bad' : ''}">${komendZonderPlan}</strong> zonder uitvoeringsdatum.</p>
+    ${clusterZin}
     <svg class="chart-svg" viewBox="0 0 ${chartW} ${chartH}" width="100%" height="${chartH}">
       <line class="axis-line" x1="${leftPad}" x2="${leftPad}" y1="${topPad}" y2="${topPad + plotH}" />
       ${gridSvg}
@@ -2279,6 +2321,16 @@ function buildTempoStats() {
   return { buckets, avgIn, avgUit, open, netto: avgIn - avgUit, dagen: totaalDagen, updates: recent.length };
 }
 
+// Aandeel "mast geen spanning" in de huidige werkvoorraad — gebruikt om de
+// benodigde capaciteit ruwweg over Meetdienst en MIO te verdelen.
+function mioAandeelVanOpen() {
+  const snaps = chronoSnapshots();
+  if (snaps.length === 0) return null;
+  const open = filterByActive(typeFiltered(snaps[snaps.length - 1].storingen));
+  if (open.length === 0) return null;
+  return open.filter(isMastGeenSpanning).length / open.length;
+}
+
 function renderTempoCard() {
   const container = document.getElementById('tempo-body');
   if (!container) return;
@@ -2312,8 +2364,31 @@ function renderTempoCard() {
     return `<tr><td>${esc(b.van)} t/m ${esc(b.tot)}</td><td class="num">${b.instroom}</td><td class="num">${b.opgelost}</td><td class="num ${nettoCls}">${netto > 0 ? '+' : ''}${netto}</td><td class="num">${b.open}</td></tr>`;
   }).join('');
 
+  // Benodigd tempo is pas een oordeel als je weet wat er beschikbaar is.
+  // Zonder ingevulde capaciteit blijft dit blok weg, zodat de kaart precies
+  // doet wat 'ie eerst deed.
+  const cap = state.capaciteit || LEGE_CAPACITEIT;
+  const capTotaal = (cap.meetdienst || 0) + (cap.mio || 0);
+  let capBlok = '';
+  if (capTotaal > 0) {
+    const benodigd = t.avgIn;
+    const gat = capTotaal - benodigd;
+    const haalbaar = gat >= 0;
+    const mioAandeel = mioAandeelVanOpen();
+    const mioNodig = mioAandeel === null ? null : benodigd * mioAandeel;
+    const meetNodig = mioNodig === null ? null : benodigd - mioNodig;
+    capBlok = `
+      <p class="prognose-headline">Beschikbaar is <strong>${capTotaal}</strong> per week tegenover <strong>${benodigd.toFixed(1)}</strong> nodig — `
+      + `<strong class="${haalbaar ? 'prognose-good' : 'prognose-bad'}">${haalbaar ? `${gat.toFixed(1)} over` : `${Math.abs(gat).toFixed(1)} te kort`}</strong>`
+      + `${haalbaar ? ' om de voorraad vlak te houden.' : ' om de voorraad vlak te houden; de achterstand loopt dus op.'}</p>`
+      + (mioNodig !== null && cap.mio > 0 ? `<p class="muted small">Naar de huidige verhouding (${Math.round(mioAandeel * 100)}% mast geen spanning) `
+        + `zou dat ruwweg ${meetNodig.toFixed(1)} Meetdienst en ${mioNodig.toFixed(1)} MIO per week zijn, tegenover ${cap.meetdienst} en ${cap.mio} beschikbaar. `
+        + `Niet elke mast kan zonder Meetdienst, dus dit is een bovengrens voor MIO.</p>` : '');
+  }
+
   container.innerHTML = `
     ${oordeel}
+    ${capBlok}
     <div class="tempo-grid">
       <div class="tempo-stat"><div class="label">Gem. instroom</div><div class="value">${t.avgIn.toFixed(1)}</div><div class="muted small">per week</div></div>
       <div class="tempo-stat"><div class="label">Gem. opgelost</div><div class="value">${t.avgUit.toFixed(1)}</div><div class="muted small">per week</div></div>
@@ -2437,6 +2512,77 @@ const STAGNATIE_COLUMNS = [
   { key: 'geblokkeerd', label: 'Geblokkeerd', cell: r => `<td>${r.geblokkeerd ? '🚧 ja' : '—'}</td>` },
 ];
 
+// Waar hoopt het werk zich op? Het stagnatiesignaal wijst individuele
+// storingen aan; deze kaart kijkt naar de stap in het proces. Twee getallen
+// die iets anders zeggen:
+//  - mediane duur: hoe lang een storing normaal in die status blijft;
+//  - opgehoopt: alle wachttijd van wie er nu in zit, bij elkaar opgeteld.
+// Een status kan een korte mediaan hebben en toch de grootste ophoping zijn
+// (veel storingen), of andersom (weinig storingen die er heel lang liggen).
+// Alleen op de mediaan sturen zou dat eerste geval missen.
+function buildDoorstroomStats() {
+  const snaps = chronoSnapshots();
+  if (snaps.length === 0) return [];
+  const latest = snaps[snaps.length - 1];
+  const { lopend, medianen } = buildStatusDuurStats();
+  const huidig = filterByActive(typeFiltered(latest.storingen));
+
+  return OV_STATUS_ORDER.map(status => {
+    const inStatus = huidig.filter(s => s.ovStatus === status);
+    const wachttijden = inStatus.map(s => {
+      const cur = lopend[s.order];
+      return cur ? dagenTussen(cur.sinds, latest.week) : 0;
+    });
+    return {
+      status,
+      aantal: inStatus.length,
+      mediaan: medianen[status] != null ? medianen[status] : null,
+      opgehoopt: wachttijden.reduce((a, b) => a + b, 0),
+      langste: wachttijden.length ? Math.max(...wachttijden) : 0,
+    };
+  });
+}
+
+function renderDoorstroomCard() {
+  const container = document.getElementById('doorstroom-body');
+  if (!container) return;
+  const rijen = buildDoorstroomStats();
+  const totaalOpen = rijen.reduce((sum, r) => sum + r.aantal, 0);
+  if (totaalOpen === 0) {
+    container.innerHTML = '<p class="empty-note">Nog geen openstaande storingen met een status om door te rekenen.</p>';
+    return;
+  }
+
+  const zwaarste = rijen.slice().sort((a, b) => b.opgehoopt - a.opgehoopt)[0];
+  const kop = zwaarste && zwaarste.opgehoopt > 0
+    ? `<p class="prognose-headline">De meeste tijd hoopt zich op bij <strong>${esc(zwaarste.status)}</strong>: ${zwaarste.aantal} storing${zwaarste.aantal === 1 ? '' : 'en'}, samen <strong>${zwaarste.opgehoopt}</strong> wachtdagen.</p>`
+    : '';
+
+  const body = rijen.map(r => {
+    const aandeel = zwaarste.opgehoopt > 0 ? r.opgehoopt / zwaarste.opgehoopt : 0;
+    return `<tr>
+      <td>${esc(r.status)}</td>
+      <td class="num">${r.aantal}</td>
+      <td class="num">${r.mediaan == null ? '—' : Math.round(r.mediaan) + ' dgn'}</td>
+      <td class="num">${r.opgehoopt}</td>
+      <td><div class="doorstroom-balk"><span style="width:${Math.round(aandeel * 100)}%"></span></div></td>
+      <td class="num">${r.langste || '—'}</td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `${kop}
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Status</th><th class="num">Nu in deze status</th><th class="num">Mediane duur</th>
+          <th class="num">Opgehoopt</th><th></th><th class="num">Langst wachtend</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+    <p class="muted small">"Opgehoopt" is alle wachttijd van de storingen die nu in die status staan bij elkaar opgeteld, in dagen. "Mediane duur" is hoe lang een storing normaal in die status blijft voordat 'ie doorstroomt — die wordt pas getoond bij minstens drie afgeronde metingen.</p>`;
+}
+
 function renderStagnatieCard() {
   const container = document.getElementById('stagnatie-body');
   if (!container) return;
@@ -2452,6 +2598,7 @@ function renderStagnatieCard() {
 function renderPrognose(current) {
   renderVerloopkalender(current);
   renderTempoCard();
+  renderDoorstroomCard();
   renderStagnatieCard();
 }
 
@@ -3372,6 +3519,7 @@ async function reloadAllStateAndRender() {
   state.ovBlockStatus = await loadOvBlockStatusMap();
   state.bijnaVerlopenThreshold = await loadBijnaVerlopenThreshold();
   state.lastBackupAt = await loadLastBackupAt();
+  state.capaciteit = await loadCapaciteit();
   if (state.snapshots.length > 0) renderDashboardFromState();
   else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderBackupReminder(); renderBackupStatus(); }
 }
@@ -3465,6 +3613,8 @@ function wireEvents() {
       await importBackup(file);
       await reloadAllStateAndRender();
       document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
+  document.getElementById('cap-meetdienst').value = state.capaciteit.meetdienst;
+  document.getElementById('cap-mio').value = state.capaciteit.mio;
       document.getElementById('sharepoint-site-url').value = state.sharePointConfig.siteUrl;
       document.getElementById('sharepoint-library-name').value = state.sharePointConfig.libraryName;
       document.getElementById('sharepoint-enabled-checkbox').checked = state.sharePointConfig.enabled;
@@ -3496,6 +3646,16 @@ function wireEvents() {
     // gisteren, ook als je vandaag al eerder bijgewerkt hebt.
     const snaps = await loadSnapshots();
     enrichWithCarriedForwardOvFields(storingen, snaps);
+    // De blokkade-reden staat in een aparte lijst die alleen de HUIDIGE stand
+    // bewaart: hef je een blokkade op, dan is niet meer terug te zien dat 'ie
+    // er ooit was. Door 'm bij elke update mee te schrijven in de momentopname
+    // bouwt zich vanzelf een geschiedenis op, en kan over een paar maanden
+    // worden uitgerekend hoeveel tijd elke blokkade-reden werkelijk kost.
+    // Nu nog zonder zichtbaar effect — puur het vastleggen.
+    storingen.forEach(s => {
+      const reden = (state.ovBlockStatus[s.order] || {}).reason;
+      if (reden) s.blokkadeReden = reden;
+    });
     const snapshot = { week, savedAt: new Date().toISOString(), storingen };
     snaps.push(snapshot);
     try {
@@ -3626,6 +3786,19 @@ function wireEvents() {
     if (state.recidiveSortState.key === th.dataset.key) state.recidiveSortState.dir *= -1;
     else { state.recidiveSortState.key = th.dataset.key; state.recidiveSortState.dir = 1; }
     renderRecidiveCard();
+  });
+
+  document.getElementById('cap-save-btn').addEventListener('click', async () => {
+    const lees = (id) => {
+      const v = parseInt(document.getElementById(id).value, 10);
+      return Number.isFinite(v) && v >= 0 ? v : 0;
+    };
+    state.capaciteit = { meetdienst: lees('cap-meetdienst'), mio: lees('cap-mio') };
+    await saveCapaciteit(state.capaciteit);
+    document.getElementById('cap-meetdienst').value = state.capaciteit.meetdienst;
+    document.getElementById('cap-mio').value = state.capaciteit.mio;
+    document.getElementById('cap-status').textContent = 'Opgeslagen.';
+    if (state.snapshots.length > 0) renderDashboardFromState();
   });
 
   document.getElementById('copy-clusters-btn').addEventListener('click', async () => {
@@ -3813,6 +3986,8 @@ async function init() {
   if (isStaticExport) applyStaticExportData();
   else await reloadAllStateAndRender();
   document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
+  document.getElementById('cap-meetdienst').value = state.capaciteit.meetdienst;
+  document.getElementById('cap-mio').value = state.capaciteit.mio;
   document.getElementById('sharepoint-site-url').value = state.sharePointConfig.siteUrl;
   document.getElementById('sharepoint-library-name').value = state.sharePointConfig.libraryName;
   document.getElementById('sharepoint-enabled-checkbox').checked = state.sharePointConfig.enabled;
