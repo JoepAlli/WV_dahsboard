@@ -263,173 +263,6 @@ async function migrateLegacyKey(key) {
   } catch (e) { console.error('Migratie mislukt voor', key, e); }
 }
 
-/* ---------- Optioneel: gedeelde status via SharePoint ---------- */
-//
-// Blokkade-reden (OV NUSsen) kan — als je dit expliciet instelt in
-// Instellingen — via één gedeeld JSON-bestand in de
-// standaard documentbibliotheek van een SharePoint-site gedeeld worden i.p.v.
-// alleen lokaal in IndexedDB te leven, zodat collega's die hetzelfde
-// dashboard vanaf dezelfde SharePoint-site openen elkaars wijzigingen zien.
-// Staat dit uit (standaard), dan verandert er niets aan het bestaande,
-// volledig lokale gedrag.
-//
-// Bewust géén SharePoint-lijsten (die moet je zelf met de juiste kolommen
-// aanmaken — te veel gedoe) maar één bestand in een bibliotheek die elke
-// site al standaard heeft. Om te voorkomen dat twee mensen die vlak na
-// elkaar iets aanpassen elkaars wijziging overschrijven, wordt bij elke
-// opslag eerst de laatste versie opnieuw opgehaald en samengevoegd, met
-// SharePoint's ETag-mechanisme als extra vangnet (een duidelijke melding +
-// automatische herhaalpoging bij een echt gelijktijdig conflict).
-//
-// Vereist dat de pagina zelf vanaf de SharePoint-site wordt geopend (niet als
-// lokaal bestand), zodat de browser de bestaande SharePoint-sessie/cookie kan
-// hergebruiken voor authenticatie — er wordt hier bewust geen apart
-// inlogscherm of app-registratie gebouwd.
-const SHAREPOINT_CONFIG_KEY = 'nusdash_sharepoint_config_v1';
-const DEFAULT_SHAREPOINT_LIBRARY = 'Shared Documents';
-const SHAREPOINT_STATUS_FILE_NAME = 'nusdash-gedeelde-status.json';
-
-async function loadSharePointConfig() {
-  const fallback = { siteUrl: '', enabled: false, libraryName: '' };
-  try { return Object.assign({}, fallback, (await idbGet(SHAREPOINT_CONFIG_KEY)) || {}); }
-  catch (e) { console.error(e); return fallback; }
-}
-async function saveSharePointConfig(cfg) {
-  try { await idbSet(SHAREPOINT_CONFIG_KEY, cfg); }
-  catch (e) { showErrorToast('Opslaan van de SharePoint-instelling is mislukt: ' + e.message); throw e; }
-}
-
-function sharePointActive() {
-  return !!(state.sharePointConfig && state.sharePointConfig.enabled && state.sharePointConfig.siteUrl);
-}
-function sharePointLibraryName() {
-  return (state.sharePointConfig && state.sharePointConfig.libraryName) || DEFAULT_SHAREPOINT_LIBRARY;
-}
-// Geeft een duidelijke melding i.p.v. een cryptische netwerkfout ("Failed to
-// fetch") wanneer gedeelde status wél aanstaat maar de pagina nog steeds als
-// lokaal bestand is geopend — een fetch() naar een https-SharePoint-site
-// werkt dan sowieso niet vanaf een file://-oorsprong.
-function spAssertHostedProperly() {
-  if (location.protocol === 'file:') {
-    throw new Error('open het dashboard via de SharePoint-URL (niet als lokaal bestand) om gedeelde status te gebruiken');
-  }
-}
-
-function spApiUrl(siteUrl, path) {
-  return siteUrl.replace(/\/$/, '') + '/_api/' + path;
-}
-// Server-relatief pad naar het gedeelde bestand, bv. "/sites/NUSTeam/Shared
-// Documents/nusdash-gedeelde-status.json" — afgeleid van de site-URL zelf,
-// zodat je alleen de site-URL hoeft in te vullen en niets hoeft te kopiëren
-// vanuit de bibliotheek.
-function spStatusFileServerRelativeUrl(siteUrl) {
-  const sitePath = new URL(siteUrl).pathname.replace(/\/$/, '');
-  return `${sitePath}/${sharePointLibraryName()}/${SHAREPOINT_STATUS_FILE_NAME}`;
-}
-
-// Vraagt een "form digest" op — SharePoint eist dit anti-CSRF-token bij elke
-// schrijfactie via de REST API.
-async function spGetDigest(siteUrl) {
-  const res = await fetch(spApiUrl(siteUrl, 'contextinfo'), {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { Accept: 'application/json;odata=verbose' },
-  });
-  if (!res.ok) throw new Error(`kon geen SharePoint-formulierdigest ophalen (status ${res.status})`);
-  const data = await res.json();
-  return data.d.GetContextWebInformation.FormDigestValue;
-}
-
-// Haalt de inhoud van het gedeelde statusbestand op. exists:false betekent
-// "bestaat nog niet" (nog niets opgeslagen) — geen fout, gewoon leeg beginnen.
-async function spGetFileContent(siteUrl) {
-  const fileUrl = spStatusFileServerRelativeUrl(siteUrl);
-  const res = await fetch(spApiUrl(siteUrl, `web/GetFileByServerRelativeUrl('${encodeURIComponent(fileUrl)}')/$value`), {
-    credentials: 'same-origin',
-  });
-  if (res.status === 404) return { exists: false, data: { ovBlockStatus: {} }, etag: null };
-  if (!res.ok) throw new Error(`ophalen van gedeeld statusbestand mislukt (status ${res.status}) — bestaat de bibliotheek "${sharePointLibraryName()}" op deze site?`);
-  const etag = res.headers.get('ETag');
-  const text = await res.text();
-  let data;
-  try { data = text ? JSON.parse(text) : {}; }
-  catch (e) { throw new Error('het gedeelde statusbestand bevat geen geldige data (kapotte JSON)'); }
-  if (!data.ovBlockStatus) data.ovBlockStatus = {};
-  return { exists: true, data, etag };
-}
-
-// Schrijft de inhoud van het gedeelde statusbestand weg. Bij een bestaand
-// bestand met IF-MATCH op de eerder opgehaalde ETag, zodat een gelijktijdige
-// wijziging door iemand anders wordt gedetecteerd (SharePoint geeft dan 412
-// terug) i.p.v. stilzwijgend overschreven te worden.
-async function spPutFileContent(siteUrl, exists, etag, data) {
-  const digest = await spGetDigest(siteUrl);
-  const body = JSON.stringify(data);
-  if (!exists) {
-    const sitePath = new URL(siteUrl).pathname.replace(/\/$/, '');
-    const folderUrl = `${sitePath}/${sharePointLibraryName()}`;
-    const res = await fetch(spApiUrl(siteUrl, `web/GetFolderByServerRelativeUrl('${encodeURIComponent(folderUrl)}')/Files/add(url='${encodeURIComponent(SHAREPOINT_STATUS_FILE_NAME)}',overwrite=true)`), {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json;odata=verbose', 'X-RequestDigest': digest },
-      body,
-    });
-    if (!res.ok) throw new Error(`aanmaken van gedeeld statusbestand mislukt (status ${res.status}) — bestaat de bibliotheek "${sharePointLibraryName()}" op deze site?`);
-    return;
-  }
-  const fileUrl = spStatusFileServerRelativeUrl(siteUrl);
-  const res = await fetch(spApiUrl(siteUrl, `web/GetFileByServerRelativeUrl('${encodeURIComponent(fileUrl)}')/$value`), {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: {
-      'X-RequestDigest': digest,
-      'X-HTTP-Method': 'PUT',
-      'IF-MATCH': etag,
-    },
-    body,
-  });
-  if (res.status === 412) throw new Error('CONFLICT');
-  if (!res.ok) throw new Error(`opslaan van gedeeld statusbestand mislukt (status ${res.status})`);
-}
-
-// Haalt de laatste versie op, past 'm aan via mutateFn, en schrijft 'm terug
-// — bij een gelijktijdig-conflict (412) wordt dit automatisch nog 2x
-// opnieuw geprobeerd (met een verse ophaal + hersamenvoeging), zodat een
-// toevallige botsing met een collega's wijziging vanzelf oplost i.p.v. stil
-// data te verliezen of meteen een foutmelding te tonen.
-async function spUpdateSharedFile(siteUrl, mutateFn) {
-  let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const current = await spGetFileContent(siteUrl);
-    mutateFn(current.data);
-    try {
-      await spPutFileContent(siteUrl, current.exists, current.etag, current.data);
-      return current.data;
-    } catch (e) {
-      if (e.message !== 'CONFLICT') throw e;
-      lastErr = e;
-    }
-  }
-  throw new Error('iemand anders wijzigde het gedeelde statusbestand precies tegelijk — probeer het nog eens');
-}
-
-// Test-knop in Instellingen: probeert het gedeelde statusbestand te lezen
-// (of bevestigt dat de bibliotheek in elk geval bestaat als het bestand er
-// nog niet is) zonder iets te wijzigen.
-async function spTestConnection(siteUrl, libraryName) {
-  spAssertHostedProperly();
-  libraryName = libraryName || DEFAULT_SHAREPOINT_LIBRARY;
-  const sitePath = new URL(siteUrl).pathname.replace(/\/$/, '');
-  const folderUrl = `${sitePath}/${libraryName}`;
-  const res = await fetch(spApiUrl(siteUrl, `web/GetFolderByServerRelativeUrl('${encodeURIComponent(folderUrl)}')?$select=Exists`), {
-    credentials: 'same-origin',
-    headers: { Accept: 'application/json;odata=verbose' },
-  });
-  if (!res.ok) throw new Error(`bibliotheek "${libraryName}" niet gevonden op deze site (status ${res.status})`);
-  const data = await res.json();
-  if (!data.d.Exists) throw new Error(`bibliotheek "${libraryName}" bestaat niet op deze site`);
-}
-
 const STORAGE_KEY = 'nusdash_snapshots_v1';
 const TYPE_WHITELIST_KEY = 'nusdash_type_whitelist_v1';
 
@@ -517,42 +350,10 @@ async function saveLastBackupAt(iso) {
 
 const OV_BLOCK_STATUS_KEY = 'nusdash_ov_block_status_v1';
 async function loadOvBlockStatusMap() {
-  if (sharePointActive()) {
-    try {
-      spAssertHostedProperly();
-      const current = await spGetFileContent(state.sharePointConfig.siteUrl);
-      return current.data.ovBlockStatus;
-    } catch (e) {
-      showErrorToast('Ophalen van gedeelde blokkade-status (SharePoint) is mislukt, lokale versie gebruikt: ' + e.message);
-      // val terug op de lokale kopie zodat een mislukte sync niet de hele
-      // blokkade-lijst leegtrekt
-    }
-  }
   try { return (await idbGet(OV_BLOCK_STATUS_KEY)) || {}; }
   catch (e) { console.error(e); return {}; }
 }
-// orders: het ordernummer (of een array van ordernummers) dat net gewijzigd
-// is — alleen relevant wanneer SharePoint actief is, om gericht precies dat
-// deel van het gedeelde bestand bij te werken i.p.v. het hele bestand met
-// mogelijk verouderde lokale data te overschrijven.
-async function saveOvBlockStatusMap(map, orders) {
-  if (sharePointActive()) {
-    try {
-      spAssertHostedProperly();
-      const list = orders == null ? [] : (Array.isArray(orders) ? orders : [orders]);
-      await spUpdateSharedFile(state.sharePointConfig.siteUrl, (data) => {
-        list.forEach(order => {
-          const entry = map[order];
-          if (entry && entry.reason) data.ovBlockStatus[order] = { reason: entry.reason, note: entry.note || '', since: entry.since || undefined };
-          else delete data.ovBlockStatus[order];
-        });
-      });
-      return;
-    } catch (e) {
-      showErrorToast('Delen via SharePoint is mislukt, wijziging lokaal opgeslagen: ' + e.message);
-      // val terug op lokaal opslaan zodat de wijziging niet verloren gaat
-    }
-  }
+async function saveOvBlockStatusMap(map) {
   try { await idbSet(OV_BLOCK_STATUS_KEY, map); }
   catch (e) { showErrorToast('Opslaan van de blokkade-reden is mislukt: ' + e.message); throw e; }
 }
@@ -575,7 +376,6 @@ async function exportBackup() {
     typeWhitelist: await loadTypeWhitelist(),
     ovBlockStatus: await loadOvBlockStatusMap(),
     bijnaVerlopenThreshold: await loadBijnaVerlopenThreshold(),
-    sharePointConfig: await loadSharePointConfig(),
     capaciteit: await loadCapaciteit(),
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
@@ -647,13 +447,8 @@ async function importBackup(file) {
   if (!backup || typeof backup !== 'object') throw new Error('bestand is geen geldig back-upbestand');
   if (Array.isArray(backup.ovSnapshots)) await saveSnapshots(backup.ovSnapshots);
   if (Array.isArray(backup.typeWhitelist)) await saveTypeWhitelist(backup.typeWhitelist);
-  // Blokkade-reden leeft ergens anders (in SharePoint, gedeeld met
-  // collega's) zodra dat actief staat — een lokaal back-upbestand daar
-  // overheen zetten zou voor iedereen tegelijk verrassend zijn, dus dat
-  // slaan we dan bewust over. Herstel daarvan gebeurt via SharePoint zelf.
-  if (backup.ovBlockStatus && typeof backup.ovBlockStatus === 'object' && !sharePointActive()) await saveOvBlockStatusMap(backup.ovBlockStatus);
+  if (backup.ovBlockStatus && typeof backup.ovBlockStatus === 'object') await saveOvBlockStatusMap(backup.ovBlockStatus);
   if (Number.isFinite(backup.bijnaVerlopenThreshold) && backup.bijnaVerlopenThreshold > 0) await saveBijnaVerlopenThreshold(backup.bijnaVerlopenThreshold);
-  if (backup.sharePointConfig && typeof backup.sharePointConfig === 'object') await saveSharePointConfig(backup.sharePointConfig);
   if (backup.capaciteit && typeof backup.capaciteit === 'object') await saveCapaciteit(backup.capaciteit);
 }
 
@@ -831,7 +626,6 @@ const state = {
   statDetailOrders: null,
   ovBlockStatus: {},
   searchQuery: '',
-  ovBulkSelected: new Set(),
   // Bevriest welke orders + categorie in "Aandacht deze week" staan, zodat
   // een rij niet meteen verdwijnt zodra je 'm daar blokkeert (zelfde reden als
   // state.statDetailOrders hierboven). Wordt op null gezet bij echte
@@ -839,7 +633,6 @@ const state = {
   // de lijst dan opnieuw wordt opgebouwd.
   attentionOrders: null,
   bijnaVerlopenThreshold: DEFAULT_BIJNA_VERLOPEN_THRESHOLD,
-  sharePointConfig: { siteUrl: '', enabled: false },
 };
 
 /* ---------- Tooltip ---------- */
@@ -1167,7 +960,7 @@ function renderStatTiles(current, mutations) {
     { groep: 'signaal', key: 'unknown', icon: '⛔', label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
       note: overdueUnknown > 0 ? 'nog niets ingepland — zie Vraagt om actie' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
     { groep: 'mutatie', key: 'afgesloten', icon: '✅', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
-      note: mutations.hasPrevious ? `sinds ${mutations.vorigeDag || 'de vorige update'}` : 'nog geen eerdere dag', scrollTarget: 'mutations-out' },
+      note: mutations.hasPrevious ? `sinds ${mutations.vorigeDag || 'de vorige update'}` : 'nog geen eerdere dag' },
     { groep: 'inzet', key: 'mastGeenSpanning', icon: '🗼', label: 'Mast geen spanning', value: mioCount,
       note: total > 0 ? `${Math.round((mioCount / total) * 100)}% van alle open storingen` : 'geen open storingen', scrollTarget: 'cluster-card' },
     { groep: 'signaal', key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
@@ -3123,26 +2916,6 @@ function renderTrendChart(snapshots) {
   });
 }
 
-/* ---------- Rendering: mutation tables ---------- */
-
-function miniTable(list) {
-  if (list.length === 0) return '<p class="empty-note">Geen mutaties.</p>';
-  const rows = list.map(s => `<tr><td>${esc(s.order)}</td><td>${esc(regioOf(s))} — ${esc(s.street)}</td><td>${esc(s.type)}</td></tr>`).join('');
-  return `<table><thead><tr><th>Order</th><th>Adres</th><th>Type</th></tr></thead><tbody>${rows}</tbody></table>`;
-}
-
-function renderMutationTables(mutations) {
-  document.getElementById('count-in').textContent = mutations.hasPrevious ? mutations.nieuw.length : '—';
-  document.getElementById('count-out').textContent = mutations.hasPrevious ? mutations.uitgegaan.length : '—';
-  if (!mutations.hasPrevious) {
-    document.getElementById('table-in').innerHTML = '<p class="empty-note">Nog geen eerdere dag om mee te vergelijken.</p>';
-    document.getElementById('table-out').innerHTML = '<p class="empty-note">Nog geen eerdere dag om mee te vergelijken.</p>';
-    return;
-  }
-  document.getElementById('table-in').innerHTML = miniTable(mutations.nieuw);
-  document.getElementById('table-out').innerHTML = miniTable(mutations.uitgegaan);
-}
-
 /* ---------- Rendering: full table ---------- */
 
 // Gedeeld door "Volledige lijst": kop-opbouw, sorteerlogica en rij-opbouw uit
@@ -3244,8 +3017,6 @@ function renderTableAll(current) {
   const rows = sortByState(annotated, state.sortState);
   const columns = buildOvColumns();
   renderFullTable(container, rows, columns, state.sortState, {
-    leadHead: isStaticExport ? '' : '<th class="checkbox-col"><input type="checkbox" id="ov-select-all" title="Alles selecteren"></th>',
-    leadCell: isStaticExport ? null : s => `<td class="checkbox-col"><input type="checkbox" class="ov-row-select" data-order="${esc(s.order)}"${state.ovBulkSelected.has(s.order) ? ' checked' : ''}></td>`,
     rowClass: s => needsFollowUp(s) ? 'row-alert' : '',
   });
 
@@ -3264,41 +3035,6 @@ function renderTableAll(current) {
     });
   });
 
-  // Bulkselectie: meerdere lang openstaande storingen in één keer dezelfde
-  // blokkade-reden geven, zonder ze één voor één te hoeven aanklikken.
-  if (!isStaticExport) {
-    const visibleOrders = rows.map(s => s.order);
-    const selectAll = document.getElementById('ov-select-all');
-    if (selectAll) {
-      selectAll.checked = visibleOrders.length > 0 && visibleOrders.every(o => state.ovBulkSelected.has(o));
-      selectAll.addEventListener('change', () => {
-        if (selectAll.checked) visibleOrders.forEach(o => state.ovBulkSelected.add(o));
-        else visibleOrders.forEach(o => state.ovBulkSelected.delete(o));
-        container.querySelectorAll('.ov-row-select').forEach(cb => { cb.checked = state.ovBulkSelected.has(cb.dataset.order); });
-        renderOvBulkBar();
-      });
-    }
-    container.querySelectorAll('.ov-row-select').forEach(cb => {
-      cb.addEventListener('change', () => {
-        const order = cb.dataset.order;
-        if (cb.checked) state.ovBulkSelected.add(order); else state.ovBulkSelected.delete(order);
-        if (selectAll) selectAll.checked = visibleOrders.length > 0 && visibleOrders.every(o => state.ovBulkSelected.has(o));
-        renderOvBulkBar();
-      });
-    });
-    renderOvBulkBar();
-  }
-}
-
-// Toont/verbergt de bulkactie-balk boven de OV NUS-tabel en houdt de teller
-// bij — los van de tabel zelf gerenderd, zodat 'm niet steeds herbouwd wordt.
-function renderOvBulkBar() {
-  const bar = document.getElementById('ov-bulk-bar');
-  if (!bar) return;
-  const n = state.ovBulkSelected.size;
-  if (n === 0) { bar.classList.add('hidden'); return; }
-  bar.classList.remove('hidden');
-  document.getElementById('ov-bulk-count').textContent = `${n} storing${n === 1 ? '' : 'en'} geselecteerd`;
 }
 
 /* ---------- Rendering: weeks list ---------- */
@@ -3422,7 +3158,6 @@ function renderDashboardFromState() {
   renderAttentionList(latestFiltered, latestVisible);
   renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
   renderTrendChart(perDag); // idem, filtert zelf op state.activeFilter
-  renderMutationTables(mutations);
   renderGebiedPlaatsenCard();
   renderClusterCard();
   renderWvGebiedCard();
@@ -3502,18 +3237,6 @@ function showParseWarning(errors, okCount) {
 
 async function reloadAllStateAndRender() {
   state.attentionOrders = null;
-  // Vóór ovBlockStatus geladen wordt: die functie kijkt naar
-  // state.sharePointConfig om te bepalen of ze uit SharePoint of IndexedDB
-  // moet lezen.
-  state.sharePointConfig = await loadSharePointConfig();
-  if (state.sharePointConfig.enabled && location.protocol === 'file:') {
-    // Kan sowieso nooit werken vanaf een lokaal geopend bestand (zie
-    // spAssertHostedProperly) — automatisch uitzetten voorkomt dat bij elke
-    // wijziging opnieuw dezelfde onvermijdelijke foutmelding verschijnt.
-    state.sharePointConfig.enabled = false;
-    await saveSharePointConfig(state.sharePointConfig);
-    showErrorToast('Gedeelde status via SharePoint is uitgezet: dit dashboard is lokaal geopend, niet vanaf de SharePoint-site, dus delen kan hier niet werken.');
-  }
   state.snapshots = await loadSnapshots();
   state.typeWhitelist = await loadTypeWhitelist();
   state.ovBlockStatus = await loadOvBlockStatusMap();
@@ -3615,9 +3338,6 @@ function wireEvents() {
       document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
   document.getElementById('cap-meetdienst').value = state.capaciteit.meetdienst;
   document.getElementById('cap-mio').value = state.capaciteit.mio;
-      document.getElementById('sharepoint-site-url').value = state.sharePointConfig.siteUrl;
-      document.getElementById('sharepoint-library-name').value = state.sharePointConfig.libraryName;
-      document.getElementById('sharepoint-enabled-checkbox').checked = state.sharePointConfig.enabled;
       statusEl.textContent = 'Back-up hersteld.';
     } catch (e) {
       statusEl.textContent = 'Importeren mislukt: ' + e.message;
@@ -3830,24 +3550,6 @@ function wireEvents() {
     });
   });
 
-  document.getElementById('ov-bulk-apply-btn').addEventListener('click', async () => {
-    if (state.ovBulkSelected.size === 0) return;
-    const reason = document.getElementById('ov-bulk-reason').value;
-    const changedOrders = Array.from(state.ovBulkSelected);
-    changedOrders.forEach(order => setOvBlockReason(order, reason));
-    await saveOvBlockStatusMap(state.ovBlockStatus, changedOrders);
-    state.ovBulkSelected.clear();
-    renderDashboardFromState();
-  });
-
-  document.getElementById('ov-bulk-clear-btn').addEventListener('click', () => {
-    state.ovBulkSelected.clear();
-    document.querySelectorAll('.ov-row-select').forEach(cb => { cb.checked = false; });
-    const selectAll = document.getElementById('ov-select-all');
-    if (selectAll) selectAll.checked = false;
-    renderOvBulkBar();
-  });
-
   document.getElementById('add-type-btn').addEventListener('click', async () => {
     const input = document.getElementById('new-type-input');
     const val = input.value.trim();
@@ -3873,39 +3575,6 @@ function wireEvents() {
     if (state.snapshots.length > 0) renderDashboardFromState();
   });
 
-  document.getElementById('sharepoint-test-btn').addEventListener('click', async () => {
-    const statusEl = document.getElementById('sharepoint-status');
-    const siteUrl = document.getElementById('sharepoint-site-url').value.trim();
-    const libraryName = document.getElementById('sharepoint-library-name').value.trim();
-    if (!siteUrl) { statusEl.textContent = 'Vul eerst een site-URL in.'; return; }
-    statusEl.textContent = 'Bezig met testen…';
-    try {
-      await spTestConnection(siteUrl, libraryName);
-      statusEl.textContent = `✅ Verbinding gelukt — bibliotheek "${libraryName || DEFAULT_SHAREPOINT_LIBRARY}" gevonden.`;
-    } catch (e) {
-      statusEl.textContent = '⚠️ Verbinding mislukt: ' + e.message;
-    }
-  });
-
-  document.getElementById('sharepoint-save-btn').addEventListener('click', async () => {
-    const statusEl = document.getElementById('sharepoint-status');
-    const siteUrl = document.getElementById('sharepoint-site-url').value.trim();
-    const libraryName = document.getElementById('sharepoint-library-name').value.trim();
-    const enabled = document.getElementById('sharepoint-enabled-checkbox').checked;
-    if (enabled && !siteUrl) { statusEl.textContent = 'Vul een site-URL in om gedeelde status in te schakelen.'; return; }
-    try {
-      const cfg = { siteUrl, enabled, libraryName };
-      await saveSharePointConfig(cfg);
-      state.sharePointConfig = cfg;
-      // Blokkade-reden komt vanaf nu uit een andere bron (SharePoint of weer
-      // terug naar lokaal) — opnieuw inladen zodat het scherm meteen klopt.
-      state.ovBlockStatus = await loadOvBlockStatusMap();
-      statusEl.textContent = 'Opgeslagen.';
-      if (state.snapshots.length > 0) renderDashboardFromState();
-    } catch (e) {
-      statusEl.textContent = 'Opslaan mislukt: ' + e.message;
-    }
-  });
 }
 
 // Echte tabbladen: precies één paneel zichtbaar tegelijk, in plaats van één
@@ -3988,9 +3657,6 @@ async function init() {
   document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
   document.getElementById('cap-meetdienst').value = state.capaciteit.meetdienst;
   document.getElementById('cap-mio').value = state.capaciteit.mio;
-  document.getElementById('sharepoint-site-url').value = state.sharePointConfig.siteUrl;
-  document.getElementById('sharepoint-library-name').value = state.sharePointConfig.libraryName;
-  document.getElementById('sharepoint-enabled-checkbox').checked = state.sharePointConfig.enabled;
   setupTabNav();
 }
 

@@ -284,27 +284,6 @@ code {
 }
 .table-search:focus { border-color: var(--series-1); }
 
-.bulk-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 12px;
-  padding: 10px 14px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--series-1) 10%, var(--surface-1));
-  border: 1px solid color-mix(in srgb, var(--series-1) 35%, var(--border));
-}
-.bulk-bar select {
-  font-family: inherit;
-  font-size: 0.85rem;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--surface-1);
-  color: var(--text-primary);
-}
-
 textarea#paste-input {
   width: 100%;
   font-family: ui-monospace, monospace;
@@ -517,13 +496,6 @@ button {
   margin-left: 4px;
 }
 
-.mutations-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 26px;
-}
-.mutations-grid h3 { font-size: 0.95rem; margin-bottom: 10px; font-weight: 700; }
-
 .charts-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
@@ -551,7 +523,6 @@ table th {
   white-space: nowrap;
 }
 table th:hover { color: var(--series-1); }
-table th.checkbox-col, table td.checkbox-col { width: 32px; cursor: default; }
 table tbody tr { transition: background-color var(--ease); }
 table tbody tr:hover { background: color-mix(in srgb, var(--text-primary) 3.5%, transparent); }
 table tbody tr.row-alert { background: color-mix(in srgb, var(--status-critical) 7%, transparent); }
