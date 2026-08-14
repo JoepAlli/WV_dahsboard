@@ -105,25 +105,15 @@
         </section>
 
         <details class="details-card details-toggle">
-          <summary>📊 Trends &amp; grafieken bekijken</summary>
+          <summary>📊 Verdeling per regio bekijken</summary>
           <div class="details-toggle-body">
-            <div class="charts-grid">
-              <section class="card">
-                <div class="card-header">
-                  <h2>🗺️ Open storingen per regio</h2>
-                  <button class="btn-link toggle-table" data-target="regio-chart">Toon als tabel</button>
-                </div>
-                <div id="regio-chart"></div>
-              </section>
-
-              <section class="card">
-                <div class="card-header">
-                  <h2>📈 Trend over tijd</h2>
-                  <button class="btn-link toggle-table" data-target="trend-chart">Toon als tabel</button>
-                </div>
-                <div id="trend-chart"></div>
-              </section>
-            </div>
+            <section class="card">
+              <div class="card-header">
+                <h2>🗺️ Open storingen per regio</h2>
+                <button class="btn-link toggle-table" data-target="regio-chart">Toon als tabel</button>
+              </div>
+              <div id="regio-chart"></div>
+            </section>
 
           </div>
         </details>
@@ -172,6 +162,35 @@
         <button type="button" class="filter-tab" data-cluster-mode="straat">Straat</button>
       </div>
       <div id="cluster-body"></div>
+    </section>
+
+    <section class="card" id="trend-card">
+      <div class="card-header">
+        <h2>📈 Verloop van de werkvoorraad</h2>
+        <button class="btn-link toggle-table" data-target="trend-chart">Toon als tabel</button>
+      </div>
+      <p class="muted small">Hoeveel storingen er per dag open stonden. Zo zie je of een gebied structureel voller loopt dan een ander, in plaats van alleen de stand van vandaag.</p>
+      <div class="filter-tabs recidive-mode" id="trend-groep">
+        <button type="button" class="filter-tab active" data-trend-groep="regio">Per regio</button>
+        <button type="button" class="filter-tab" data-trend-groep="gebied">Per gebiedscode</button>
+      </div>
+      <div class="filter-tabs recidive-mode" id="trend-periode">
+        <button type="button" class="filter-tab active" data-trend-periode="30">Laatste 30 dagen</button>
+        <button type="button" class="filter-tab" data-trend-periode="90">Laatste 90 dagen</button>
+        <button type="button" class="filter-tab" data-trend-periode="alles">Alles</button>
+      </div>
+      <div id="trend-chart"></div>
+    </section>
+
+    <section class="card" id="inuit-card">
+      <h2>⚖️ Erbij en eraf per gebied</h2>
+      <p class="muted small">Per gebied de beginstand, hoeveel storingen er in de periode bij kwamen, hoeveel er opgelost zijn en wat er onder de streep overblijft. Gebieden die volliepen staan bovenaan.</p>
+      <div class="filter-tabs recidive-mode" id="inuit-periode">
+        <button type="button" class="filter-tab" data-inuit-periode="7">Laatste 7 dagen</button>
+        <button type="button" class="filter-tab active" data-inuit-periode="30">Laatste 30 dagen</button>
+        <button type="button" class="filter-tab" data-inuit-periode="90">Laatste 90 dagen</button>
+      </div>
+      <div id="inuit-body"></div>
     </section>
 
     <section class="card">

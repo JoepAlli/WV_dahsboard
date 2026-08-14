@@ -618,10 +618,13 @@ const state = {
   historieSortState: { key: 'eerst', dir: -1 },
   recidiveMode: 'straat',
   clusterMode: 'pc4',
+  inUitPeriode: '30',
   mioLeeftijdFilter: 'alles',
   recidiveSortState: { key: 'aantal', dir: -1 },
   regioViewMode: 'chart',
   trendViewMode: 'chart',
+  trendGroep: 'regio',
+  trendPeriode: '30',
   statDetailFilter: null,
   statDetailOrders: null,
   ovBlockStatus: {},
@@ -1396,6 +1399,120 @@ function renderDoorlooptijdCard() {
     <div class="value">${avg.toFixed(1)} dagen</div>
     <div class="muted small">Gemiddelde doorlooptijd van ${durations.length} storing${durations.length === 1 ? '' : 'en'} die sinds het begin van de metingen uit de lijst zijn verdwenen (van eerst gezien tot niet meer aanwezig).</div>
     ${trendHtml}`;
+}
+
+/* ---------- Instroom en uitstroom per gebied ---------- */
+
+// Waar groeit de voorraad en waar loopt 'ie leeg. Per gebied de beginstand, wat
+// erbij kwam, wat eruit ging en de eindstand — het verloop van het gebied in
+// één regel.
+//
+// Instroom en uitstroom staan links en rechts van een middenlijn in plaats van
+// naast elkaar: zo zie je in één oogopslag of een gebied netto vol- of
+// leegloopt, ook zonder de getallen te lezen. Richting is daarmee het
+// hoofdsignaal en kleur alleen ondersteunend — de gebruikte paars/groen-
+// combinatie is gecontroleerd met scripts/validate_palette.js uit de
+// dataviz-skill (CVD-scheiding ruim voldoende).
+const INUIT_PERIODES = [
+  { key: '7', label: 'Laatste 7 dagen', dagen: 7 },
+  { key: '30', label: 'Laatste 30 dagen', dagen: 30 },
+  { key: '90', label: 'Laatste 90 dagen', dagen: 90 },
+];
+
+function buildInUitPerGebied() {
+  const periode = INUIT_PERIODES.find(p => p.key === state.inUitPeriode) || INUIT_PERIODES[1];
+  const snaps = chronoSnapshots();
+  if (snaps.length < 2) return null;
+  const laatsteDag = snaps[snaps.length - 1].week;
+  const venster = snaps.filter(sn => dagenTussen(sn.week, laatsteDag) <= periode.dagen);
+  if (venster.length < 2) return null;
+
+  const gebiedVan = (s) => s.gebiedscode || 'Onbekend';
+  const stats = {};
+  const ensure = (g) => {
+    if (!stats[g]) stats[g] = { gebied: g, begin: 0, in: 0, uit: 0, eind: 0 };
+    return stats[g];
+  };
+
+  // Beginstand: de situatie op de eerste dag van het venster.
+  typeFiltered(venster[0].storingen).forEach(s => { ensure(gebiedVan(s)).begin++; });
+
+  // Instroom/uitstroom worden toegeschreven aan het gebied van de storing zelf,
+  // gemeten over opeenvolgende meetdagen binnen het venster.
+  for (let i = 1; i < venster.length; i++) {
+    const vorige = new Map(typeFiltered(venster[i - 1].storingen).map(s => [s.order, s]));
+    const huidige = new Map(typeFiltered(venster[i].storingen).map(s => [s.order, s]));
+    huidige.forEach((s, order) => { if (!vorige.has(order)) ensure(gebiedVan(s)).in++; });
+    vorige.forEach((s, order) => { if (!huidige.has(order)) ensure(gebiedVan(s)).uit++; });
+  }
+
+  typeFiltered(venster[venster.length - 1].storingen).forEach(s => { ensure(gebiedVan(s)).eind++; });
+
+  const rijen = Object.values(stats)
+    .map(r => Object.assign({}, r, { netto: r.in - r.uit, regio: regioGroupLabel(regioGroupOf({ gebiedscode: r.gebied })) }))
+    .filter(r => r.begin > 0 || r.in > 0 || r.uit > 0 || r.eind > 0)
+    .sort((a, b) => b.netto - a.netto || b.eind - a.eind);
+
+  return { rijen, periode, van: venster[0].week, tot: laatsteDag };
+}
+
+function renderInUitCard() {
+  const container = document.getElementById('inuit-body');
+  if (!container) return;
+  document.querySelectorAll('#inuit-periode button[data-inuit-periode]').forEach(b => b.classList.toggle('active', b.dataset.inuitPeriode === state.inUitPeriode));
+
+  const data = buildInUitPerGebied();
+  if (!data || data.rijen.length === 0) {
+    container.innerHTML = '<p class="empty-note">Nog te weinig meetdagen in deze periode om instroom en uitstroom te kunnen bepalen.</p>';
+    return;
+  }
+  const { rijen, periode, van, tot } = data;
+  const maxZij = Math.max(1, ...rijen.map(r => Math.max(r.in, r.uit)));
+  const groeiers = rijen.filter(r => r.netto > 0);
+  const krimpers = rijen.filter(r => r.netto < 0);
+
+  const kop = `<p class="prognose-headline">`
+    + (groeiers.length > 0
+        ? `<strong class="prognose-bad">${esc(groeiers[0].gebied)}</strong> groeide het hardst: ${groeiers[0].in} erbij, ${groeiers[0].uit} eruit (netto +${groeiers[0].netto}).`
+        : 'Geen enkel gebied is in deze periode gegroeid.')
+    + (krimpers.length > 0
+        ? ` <strong class="prognose-good">${esc(krimpers[krimpers.length - 1].gebied)}</strong> liep het meest leeg (netto ${krimpers[krimpers.length - 1].netto}).`
+        : '')
+    + `</p><p class="muted small">${esc(van)} t/m ${esc(tot)} — elke storing telt mee bij het gebied waar 'ie op dat moment onder viel.</p>`;
+
+  const rows = rijen.map(r => {
+    const inPct = Math.round((r.in / maxZij) * 100);
+    const uitPct = Math.round((r.uit / maxZij) * 100);
+    const nettoCls = r.netto > 0 ? 'prognose-bad' : r.netto < 0 ? 'prognose-good' : '';
+    return `<tr>
+      <td>${esc(r.gebied)}</td>
+      <td class="muted small">${esc(r.regio)}</td>
+      <td class="num">${r.begin}</td>
+      <td class="inuit-cel">
+        <div class="inuit-balk">
+          <div class="inuit-uit"><span style="width:${uitPct}%" title="${r.uit} opgelost"></span></div>
+          <div class="inuit-as"></div>
+          <div class="inuit-in"><span style="width:${inPct}%" title="${r.in} nieuw"></span></div>
+        </div>
+      </td>
+      <td class="num">${r.uit}</td>
+      <td class="num">${r.in}</td>
+      <td class="num ${nettoCls}"><strong>${r.netto > 0 ? '+' : ''}${r.netto}</strong></td>
+      <td class="num">${r.eind}</td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `${kop}
+    <div class="table-scroll">
+      <table class="inuit-tabel">
+        <thead><tr>
+          <th>Gebied</th><th>Regio</th><th class="num">Begin</th>
+          <th class="inuit-kop"><span class="inuit-kop-uit">← opgelost</span><span class="inuit-kop-in">nieuw →</span></th>
+          <th class="num">Uit</th><th class="num">In</th><th class="num">Netto</th><th class="num">Eind</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 /* ---------- Clusters: openstaande storingen die dicht bij elkaar liggen ---------- */
@@ -2841,35 +2958,98 @@ function renderRegioChart(current) {
 
 /* ---------- Rendering: trend chart ---------- */
 
+// Verloop van de openstaande werkvoorraad. Twee dingen die eerder misgingen:
+//
+// 1. De breedte groeide mee met het aantal meetdagen (dagen x 70px) terwijl de
+//    SVG op width="100%" stond. Bij veertig dagen werd een canvas van ~2900px
+//    in een halve kolom geperst, dus hoe meer historie je opbouwde, hoe kleiner
+//    de grafiek werd. Nu staat er een minimumbreedte op en schuift de kaart
+//    horizontaal mee als het niet past, zodat de schaal leesbaar blijft.
+// 2. De grafiek volgde de regio-filtertabs van het Data-tabblad. Hier op
+//    Gebieden staan die tabs niet, dus een filter dat je daar had staan zou
+//    stilletjes doorwerken. Deze kaart toont daarom altijd alles.
+const TREND_PERIODES = [
+  { key: '30', label: 'Laatste 30 dagen', dagen: 30 },
+  { key: '90', label: 'Laatste 90 dagen', dagen: 90 },
+  { key: 'alles', label: 'Alles', dagen: null },
+];
+const TREND_GEBIED_KLEUREN = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)', 'var(--series-5)', 'var(--series-6)', 'var(--series-7)', 'var(--series-8)'];
+const TREND_MAX_REEKSEN = 8;
+
+// Beperkt de reeksen tot de acht drukste gebieden; de rest gaat samen in
+// "Overig". Meer dan acht lijnen door elkaar is niet meer te volgen, en de
+// dataviz-richtlijn schrijft ook voor dat een negende reeks wordt samengevat
+// in plaats van dat er een nieuwe kleur bij wordt verzonnen.
+function trendReeksen(perDag) {
+  if (state.trendGroep === 'gebied') {
+    const totalen = {};
+    perDag.forEach(list => list.forEach(s => {
+      const g = s.gebiedscode || 'Onbekend';
+      totalen[g] = (totalen[g] || 0) + 1;
+    }));
+    const alle = Object.keys(totalen).sort((a, b) => totalen[b] - totalen[a]);
+    const top = alle.slice(0, TREND_MAX_REEKSEN);
+    const rest = new Set(alle.slice(TREND_MAX_REEKSEN));
+    const namen = top.slice().sort();
+    if (rest.size > 0) namen.push('Overig');
+    const kleur = {};
+    namen.forEach((n, i) => { kleur[n] = n === 'Overig' ? 'var(--series-other)' : TREND_GEBIED_KLEUREN[i % TREND_GEBIED_KLEUREN.length]; });
+    return {
+      namen,
+      kleur,
+      label: (n) => n,
+      van: (s) => { const g = s.gebiedscode || 'Onbekend'; return rest.has(g) ? 'Overig' : g; },
+    };
+  }
+  const namen = sortByGroupOrder(Array.from(new Set(perDag.flatMap(list => list.map(s => regioGroupOf(s))))));
+  return { namen, kleur: REGIO_GROUP_COLOR, label: regioGroupLabel, van: regioGroupOf };
+}
+
 function renderTrendChart(snapshots) {
   const container = document.getElementById('trend-chart');
-  if (snapshots.length < 2) {
-    container.innerHTML = '<p class="empty-note">Verwerk minstens twee weken om een trend te zien.</p>';
+  if (!container) return;
+  document.querySelectorAll('#trend-groep button[data-trend-groep]').forEach(b => b.classList.toggle('active', b.dataset.trendGroep === state.trendGroep));
+  document.querySelectorAll('#trend-periode button[data-trend-periode]').forEach(b => b.classList.toggle('active', b.dataset.trendPeriode === state.trendPeriode));
+
+  const periode = TREND_PERIODES.find(p => p.key === state.trendPeriode) || TREND_PERIODES[0];
+  let snaps = snapshots;
+  if (periode.dagen !== null && snaps.length > 0) {
+    const laatste = snaps[snaps.length - 1].week;
+    snaps = snaps.filter(sn => dagenTussen(sn.week, laatste) <= periode.dagen);
+  }
+  if (snaps.length < 2) {
+    container.innerHTML = '<p class="empty-note">Verwerk minstens twee dagen binnen deze periode om een verloop te zien.</p>';
     return;
   }
 
-  // Volgt de actieve filtertab: bij "Totaal" alle regio's naast elkaar, bij een
-  // gekozen regio alleen die ene lijn.
-  const visiblePerSnapshot = snapshots.map(sn => filterByActive(typeFiltered(sn.storingen)));
-  const regios = sortByGroupOrder(Array.from(new Set(visiblePerSnapshot.flatMap(list => list.map(s => regioGroupOf(s))))));
+  const perDag = snaps.map(sn => typeFiltered(sn.storingen));
+  const { namen, kleur, label, van } = trendReeksen(perDag);
   const series = {};
-  regios.forEach(r => { series[r] = visiblePerSnapshot.map(list => list.filter(s => regioGroupOf(s) === r).length); });
+  namen.forEach(n => { series[n] = perDag.map(list => list.filter(s => van(s) === n).length); });
 
   if (state.trendViewMode === 'table') {
-    let head = `<th>Week</th>` + regios.map(r => `<th class="num">${esc(regioGroupLabel(r))}</th>`).join('');
-    let rows = snapshots.map((sn, wi) => `<tr><td>${esc(sn.week)}</td>${regios.map(r => `<td class="num">${series[r][wi]}</td>`).join('')}</tr>`).join('');
-    container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+    const head = `<th>Dag</th>` + namen.map(n => `<th class="num">${esc(label(n))}</th>`).join('');
+    const rows = snaps.map((sn, i) => `<tr><td>${esc(sn.week)}</td>${namen.map(n => `<td class="num">${series[n][i]}</td>`).join('')}</tr>`).join('');
+    container.innerHTML = `<div class="table-scroll"><table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
     return;
   }
 
-  const leftPad = 40, rightPad = 100, topPad = 16, plotH = 200, bottomPad = 34;
-  const plotW = Math.max(360, snapshots.length * 70);
+  // Bij vier reeksen of minder krijgt elke lijn zijn naam aan het eind (dan
+  // hoef je niet heen en weer te kijken naar de legenda); bij meer reeksen
+  // zouden die labels over elkaar heen vallen en volstaat de legenda.
+  const directLabels = namen.length <= 4;
+  const leftPad = 44, rightPad = directLabels ? 116 : 24, topPad = 18, plotH = 300, bottomPad = 40;
+  // Minstens 26px per meetpunt zodat de datumlabels niet op elkaar komen; past
+  // het geheel niet, dan schuift de kaart horizontaal in plaats van in te
+  // krimpen — dat laatste was juist het probleem.
+  const stapX = Math.max(26, Math.min(70, 760 / Math.max(1, snaps.length - 1)));
+  const plotW = Math.max(420, (snaps.length - 1) * stapX);
   const chartW = leftPad + plotW + rightPad;
   const chartH = topPad + plotH + bottomPad;
-  const allValues = regios.flatMap(r => series[r]);
+  const allValues = namen.flatMap(n => series[n]);
   const { min: axisMin, max: axisMax, step, ticks } = niceAxisRange(Math.min(...allValues), Math.max(1, ...allValues), 5);
   const scaleY = plotH / (axisMax - axisMin);
-  const stepX = snapshots.length > 1 ? plotW / (snapshots.length - 1) : 0;
+  const stepX = snaps.length > 1 ? plotW / (snaps.length - 1) : 0;
   const y = v => topPad + plotH - (v - axisMin) * scaleY;
 
   let gridSvg = '';
@@ -2877,40 +3057,44 @@ function renderTrendChart(snapshots) {
     const val = axisMin + step * g;
     const gy = y(val);
     gridSvg += `<line class="grid-line" x1="${leftPad}" x2="${leftPad + plotW}" y1="${gy}" y2="${gy}" />`;
-    gridSvg += `<text x="${leftPad - 8}" y="${gy + 3}" text-anchor="end">${Math.round(val)}</text>`;
+    gridSvg += `<text x="${leftPad - 8}" y="${gy + 4}" text-anchor="end">${Math.round(val)}</text>`;
   }
-  let xLabels = snapshots.map((sn, wi) => `<text x="${leftPad + wi * stepX}" y="${topPad + plotH + 20}" text-anchor="middle">${esc(sn.week.slice(5))}</text>`).join('');
+  // Niet elke dag een datumlabel als er veel dagen zijn — anders overlappen ze.
+  const elkeN = Math.ceil(snaps.length / 14);
+  const xLabels = snaps.map((sn, i) => (i % elkeN === 0 || i === snaps.length - 1)
+    ? `<text x="${leftPad + i * stepX}" y="${topPad + plotH + 22}" text-anchor="middle">${esc(sn.week.slice(5))}</text>` : '').join('');
 
-  let lines = '';
-  let markers = '';
-  regios.forEach(r => {
-    const color = REGIO_GROUP_COLOR[r];
-    const pts = series[r].map((v, wi) => `${leftPad + wi * stepX},${y(v)}`).join(' ');
-    lines += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />`;
-    series[r].forEach((v, wi) => {
-      const cx = leftPad + wi * stepX, cy = y(v);
-      markers += `<circle class="pt" data-regio="${esc(regioGroupLabel(r))}" data-week="${esc(snapshots[wi].week)}" data-val="${v}" cx="${cx}" cy="${cy}" r="4" fill="${color}" />`;
+  let lines = '', markers = '';
+  namen.forEach(n => {
+    const color = kleur[n] || 'var(--series-other)';
+    const pts = series[n].map((v, i) => `${leftPad + i * stepX},${y(v)}`).join(' ');
+    lines += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />`;
+    series[n].forEach((v, i) => {
+      markers += `<circle class="pt" data-reeks="${esc(label(n))}" data-week="${esc(snaps[i].week)}" data-val="${v}" cx="${leftPad + i * stepX}" cy="${y(v)}" r="4" fill="${color}" />`;
     });
-    const lastX = leftPad + (series[r].length - 1) * stepX;
-    const lastY = y(series[r][series[r].length - 1]);
-    lines += `<text x="${lastX + 8}" y="${lastY + 4}" style="fill:${color};font-weight:600;">${esc(regioGroupLabel(r))}</text>`;
+    if (directLabels) {
+      const lastY = y(series[n][series[n].length - 1]);
+      lines += `<text x="${leftPad + plotW + 8}" y="${lastY + 4}" style="fill:${color};font-weight:700;">${esc(label(n))}</text>`;
+    }
   });
 
   container.innerHTML = `
-    <svg class="chart-svg" viewBox="0 0 ${chartW} ${chartH}" width="100%" height="${chartH}">
-      <line class="axis-line" x1="${leftPad}" x2="${leftPad}" y1="${topPad}" y2="${topPad + plotH}" />
-      <line class="axis-line" x1="${leftPad}" x2="${leftPad + plotW}" y1="${topPad + plotH}" y2="${topPad + plotH}" />
-      ${gridSvg}
-      ${lines}
-      ${markers}
-      ${xLabels}
-    </svg>
+    <div class="chart-scroll">
+      <svg class="chart-svg" viewBox="0 0 ${chartW} ${chartH}" style="width:100%;min-width:${Math.round(chartW)}px;height:${chartH}px">
+        <line class="axis-line" x1="${leftPad}" x2="${leftPad}" y1="${topPad}" y2="${topPad + plotH}" />
+        <line class="axis-line" x1="${leftPad}" x2="${leftPad + plotW}" y1="${topPad + plotH}" y2="${topPad + plotH}" />
+        ${gridSvg}
+        ${lines}
+        ${markers}
+        ${xLabels}
+      </svg>
+    </div>
     <div class="legend">
-      ${regios.map(r => `<span class="legend-item"><span class="legend-swatch" style="background:${REGIO_GROUP_COLOR[r]}"></span>${esc(regioGroupLabel(r))}</span>`).join('')}
+      ${namen.map(n => `<span class="legend-item"><span class="legend-swatch" style="background:${kleur[n] || 'var(--series-other)'}"></span>${esc(label(n))}</span>`).join('')}
     </div>`;
 
   container.querySelectorAll('.pt').forEach(pt => {
-    pt.addEventListener('mouseenter', e => showTooltip(e, `<strong>${esc(pt.dataset.regio)}</strong><br>${esc(pt.dataset.week)}: ${pt.dataset.val} open`));
+    pt.addEventListener('mouseenter', e => showTooltip(e, `<strong>${esc(pt.dataset.reeks)}</strong><br>${esc(pt.dataset.week)}: ${pt.dataset.val} open`));
     pt.addEventListener('mousemove', moveTooltip);
     pt.addEventListener('mouseleave', hideTooltip);
   });
@@ -3160,6 +3344,7 @@ function renderDashboardFromState() {
   renderTrendChart(perDag); // idem, filtert zelf op state.activeFilter
   renderGebiedPlaatsenCard();
   renderClusterCard();
+  renderInUitCard();
   renderWvGebiedCard();
   renderPrognose(latestFiltered);
   renderHistorie();
@@ -3531,6 +3716,16 @@ function wireEvents() {
       btn.textContent = '⚠️ Kopiëren mislukt';
     }
     setTimeout(() => { btn.textContent = original; }, 2000);
+  });
+
+  document.querySelectorAll('#trend-groep button[data-trend-groep]').forEach(btn => {
+    btn.addEventListener('click', () => { state.trendGroep = btn.dataset.trendGroep; renderTrendChart(chronoSnapshots()); });
+  });
+  document.querySelectorAll('#trend-periode button[data-trend-periode]').forEach(btn => {
+    btn.addEventListener('click', () => { state.trendPeriode = btn.dataset.trendPeriode; renderTrendChart(chronoSnapshots()); });
+  });
+  document.querySelectorAll('#inuit-periode button[data-inuit-periode]').forEach(btn => {
+    btn.addEventListener('click', () => { state.inUitPeriode = btn.dataset.inuitPeriode; renderInUitCard(); });
   });
 
   document.querySelectorAll('#cluster-mode button[data-cluster-mode]').forEach(btn => {
