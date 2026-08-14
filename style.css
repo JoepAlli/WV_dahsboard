@@ -880,20 +880,45 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .chart-scroll { overflow-x: auto; padding-bottom: 4px; }
 
 /* Erbij/eraf: uitstroom naar links, instroom naar rechts vanaf een middenlijn.
-   Richting is het hoofdsignaal, kleur ondersteunt alleen. */
-.inuit-tabel td.inuit-cel { min-width: 220px; width: 40%; }
-.inuit-balk { display: flex; align-items: center; height: 16px; }
-.inuit-balk .inuit-uit,
-.inuit-balk .inuit-in { flex: 1; height: 100%; display: flex; }
-.inuit-balk .inuit-uit { justify-content: flex-end; }
-.inuit-balk .inuit-uit span,
-.inuit-balk .inuit-in span { display: block; height: 100%; border-radius: 3px; }
-.inuit-balk .inuit-uit span { background: var(--series-1); }
-.inuit-balk .inuit-in span { background: var(--series-2); }
-.inuit-as { width: 2px; height: 100%; background: var(--baseline); flex-shrink: 0; margin: 0 3px; }
-.inuit-kop { min-width: 220px; }
-.inuit-kop-uit { color: var(--series-1); font-weight: 700; margin-right: 14px; }
-.inuit-kop-in { color: var(--series-2); font-weight: 700; }
+   Richting is het hoofdsignaal, kleur ondersteunt alleen.
+
+   Kop en balken delen exact dezelfde flex-indeling (twee gelijke helften), en
+   de as staat als pseudo-element op precies 50% van de cel. Daardoor loopt de
+   nullijn als één doorlopende streep door de hele kolom en staan de labels
+   "opgelost" en "nieuw" recht boven de kant die ze beschrijven — eerder stond
+   de koptekst links uitgelijnd terwijl de balken vanuit het midden vertrokken. */
+.inuit-tabel th.inuit-kop,
+.inuit-tabel td.inuit-cel {
+  position: relative;
+  min-width: 240px;
+  width: 42%;
+}
+.inuit-tabel th.inuit-kop::before,
+.inuit-tabel td.inuit-cel::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--baseline);
+}
+.inuit-balk {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 16px;
+}
+.inuit-balk > * { flex: 1 1 50%; min-width: 0; }
+.inuit-uit { display: flex; justify-content: flex-end; height: 100%; padding-right: 4px; }
+.inuit-in { display: flex; height: 100%; padding-left: 4px; }
+.inuit-uit span,
+.inuit-in span { display: block; height: 100%; border-radius: 3px; }
+.inuit-uit span { background: var(--series-1); }
+.inuit-in span { background: var(--series-2); }
+.inuit-kop-uit { color: var(--series-1); font-weight: 700; text-align: right; padding-right: 4px; }
+.inuit-kop-in { color: var(--series-2); font-weight: 700; text-align: left; padding-left: 4px; }
 
 /* Staafje naast het opgehoopte aantal: de verhouding tussen de statussen is
    sneller te zien dan de getallen zelf. */

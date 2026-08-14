@@ -1491,7 +1491,6 @@ function renderInUitCard() {
       <td class="inuit-cel">
         <div class="inuit-balk">
           <div class="inuit-uit"><span style="width:${uitPct}%" title="${r.uit} opgelost"></span></div>
-          <div class="inuit-as"></div>
           <div class="inuit-in"><span style="width:${inPct}%" title="${r.in} nieuw"></span></div>
         </div>
       </td>
@@ -1507,7 +1506,7 @@ function renderInUitCard() {
       <table class="inuit-tabel">
         <thead><tr>
           <th>Gebied</th><th>Regio</th><th class="num">Begin</th>
-          <th class="inuit-kop"><span class="inuit-kop-uit">← opgelost</span><span class="inuit-kop-in">nieuw →</span></th>
+          <th class="inuit-kop"><div class="inuit-balk"><span class="inuit-kop-uit">← opgelost</span><span class="inuit-kop-in">nieuw →</span></div></th>
           <th class="num">Uit</th><th class="num">In</th><th class="num">Netto</th><th class="num">Eind</th>
         </tr></thead>
         <tbody>${rows}</tbody>
