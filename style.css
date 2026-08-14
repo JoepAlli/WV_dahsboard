@@ -874,6 +874,8 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 .recidive-mode { margin-bottom: 16px; }
 
 .mio-leeftijd { margin: 4px 0 12px; }
+.mio-maand { margin: 0 0 18px; }
+.mio-maand table { margin-top: 8px; }
 
 /* De trendgrafiek houdt een minimale pixelbreedte en schuift horizontaal als
    dat niet past — anders wordt 'ie ingedrukt naarmate er meer historie is. */

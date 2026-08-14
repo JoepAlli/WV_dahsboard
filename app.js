@@ -1086,6 +1086,75 @@ const MIO_LEEFTIJD_FILTERS = [
   { key: '30', label: 'Laatste 30 dagen', dagen: 30 },
 ];
 
+// Per maand hoeveel "mast geen spanning" er binnenkwamen, hoeveel er opgelost
+// zijn en wat er aan het eind van die maand open stond. Dat laatste is geen
+// optelsom van de eerste twee over de maanden heen: een storing die in maart
+// binnenkomt en in mei wordt opgelost, staat in maart en april ook nog open.
+//
+// Let op de eerste maand: alles wat al liep toen de metingen begonnen krijgt
+// die startdatum als "eerst gezien", dus die maand telt te veel instroom. Dat
+// wordt bij de tabel ook vermeld in plaats van stilzwijgend meegerekend.
+function buildMioPerMaand() {
+  const snaps = chronoSnapshots();
+  if (snaps.length === 0) return [];
+  const startMaand = snaps[0].week.slice(0, 7);
+
+  const maanden = {};
+  const ensure = (m) => {
+    if (!maanden[m]) maanden[m] = { maand: m, nieuw: 0, opgelost: 0, eind: 0 };
+    return maanden[m];
+  };
+
+  const gezien = new Set();
+  snaps.forEach((sn, i) => {
+    const maand = sn.week.slice(0, 7);
+    const mio = typeFiltered(sn.storingen).filter(isMastGeenSpanning);
+    const huidige = new Set(mio.map(s => s.order));
+    mio.forEach(s => {
+      if (!gezien.has(s.order)) { gezien.add(s.order); ensure(maand).nieuw++; }
+    });
+    if (i > 0) {
+      typeFiltered(snaps[i - 1].storingen).filter(isMastGeenSpanning).forEach(s => {
+        if (!huidige.has(s.order)) ensure(maand).opgelost++;
+      });
+    }
+    // De laatste meetdag binnen een maand bepaalt de eindstand van die maand.
+    ensure(maand).eind = huidige.size;
+  });
+
+  return Object.values(maanden)
+    .sort((a, b) => a.maand.localeCompare(b.maand))
+    .map(m => Object.assign({}, m, { onvolledig: m.maand === startMaand }));
+}
+
+const MAAND_NAMEN = ['januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
+function maandLabel(ym) {
+  const [jaar, maand] = ym.split('-');
+  return `${MAAND_NAMEN[parseInt(maand, 10) - 1]} ${jaar}`;
+}
+
+function mioPerMaandHtml() {
+  const rijen = buildMioPerMaand();
+  if (rijen.length === 0) return '';
+  const body = rijen.map(m => `<tr>
+    <td>${esc(maandLabel(m.maand))}${m.onvolledig ? ' <span class="muted small">(deels)</span>' : ''}</td>
+    <td class="num">${m.nieuw}</td>
+    <td class="num">${m.opgelost}</td>
+    <td class="num">${m.eind}</td>
+  </tr>`).join('');
+  const totaalNieuw = rijen.reduce((sum, m) => sum + m.nieuw, 0);
+  return `<details class="details-card mio-maand">
+      <summary>📅 Per maand bekijken</summary>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Maand</th><th class="num">Nieuw</th><th class="num">Opgelost</th><th class="num">Open aan eind</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+      <p class="muted small">${totaalNieuw} masten sinds het begin van de metingen. "Open aan eind" is de stand op de laatste meetdag van die maand — dat is geen optelsom van nieuw en opgelost, want een mast die in de ene maand binnenkomt en in een latere wordt opgelost staat er tussendoor ook nog open.${rijen[0].onvolledig ? ` De eerste maand (${esc(maandLabel(rijen[0].maand))}) staat op "deels": alles wat al liep toen de metingen begonnen kreeg die startdatum, dus daar telt de instroom te hoog.` : ''}</p>
+    </details>`;
+}
+
 function renderStatDetail(current, mutations) {
   const container = document.getElementById('overdue-detail');
   const filterKey = state.statDetailFilter;
@@ -1104,6 +1173,7 @@ function renderStatDetail(current, mutations) {
   const toonLeeftijdFilter = filterKey === 'mastGeenSpanning';
   let leeftijdBalk = '';
   let leeftijdNoot = '';
+  let maandBlok = '';
 
   if (hasList) {
     const orderSet = new Set(state.statDetailOrders || []);
@@ -1126,6 +1196,7 @@ function renderStatDetail(current, mutations) {
       leeftijdBalk = `<div class="filter-tabs mio-leeftijd" id="mio-leeftijd">`
         + MIO_LEEFTIJD_FILTERS.map(f => `<button type="button" class="filter-tab${f.key === gekozen.key ? ' active' : ''}" data-mio-leeftijd="${f.key}">${esc(f.label)}</button>`).join('')
         + `</div>`;
+      maandBlok = mioPerMaandHtml();
       leeftijdNoot = `<p class="muted small">${list.length} van de ${totaalVoorFilter} openstaande masten`
         + `${gekozen.dagen === null ? '' : gekozen.dagen === 0 ? ' zijn vandaag voor het eerst gezien' : ` zijn in de laatste ${gekozen.dagen} dagen voor het eerst gezien`}.`
         + ` "Eerst gezien" is de dag waarop de storing in dit dashboard verscheen, niet de werkelijke meldingsdatum.`
@@ -1179,6 +1250,7 @@ function renderStatDetail(current, mutations) {
     <div class="tile-trend-chart">${chartHtml}</div>
     ${leeftijdBalk}
     ${leeftijdNoot}
+    ${maandBlok}
     ${body}`;
 
   container.querySelectorAll('#mio-leeftijd button[data-mio-leeftijd]').forEach(btn => {
