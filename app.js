@@ -621,6 +621,7 @@ const state = {
   inUitPeriode: '30',
   mioLeeftijdFilter: 'alles',
   recidiveSortState: { key: 'aantal', dir: -1 },
+  recidiveOpen: new Set(),
   regioViewMode: 'chart',
   trendViewMode: 'chart',
   trendGroep: 'regio',
@@ -2873,7 +2874,7 @@ function buildRecidiveStats(mode) {
       g = { key, city: r.city || 'Onbekend', street: straat, asset: r.asset || '—', assetType: r.assetType || '', gebiedscode: r.gebiedscode || '', orders: [], adressen: new Set() };
       groepen.set(key, g);
     }
-    g.orders.push({ order: r.order, eerst: r.eerst, open: r.open, doorlooptijd: r.looptijd });
+    g.orders.push(r);
     g.adressen.add(r.street || '');
     if (!g.gebiedscode && r.gebiedscode) g.gebiedscode = r.gebiedscode;
   });
@@ -2881,9 +2882,10 @@ function buildRecidiveStats(mode) {
   return Array.from(groepen.values())
     .filter(g => g.orders.length >= 2)
     .map(g => {
-      const data = g.orders.slice().sort((a, b) => a.eerst.localeCompare(b.eerst));
-      const eerste = data[0].eerst;
-      const laatste = data[data.length - 1].eerst;
+      const data = g.orders.slice().sort((a, b) => b.eerst.localeCompare(a.eerst));
+      const opEerst = data.slice().sort((a, b) => a.eerst.localeCompare(b.eerst));
+      const eerste = opEerst[0].eerst;
+      const laatste = opEerst[opEerst.length - 1].eerst;
       const spanDagen = dagenTussen(eerste, laatste);
       const afgerond = data.filter(o => !o.open);
       return {
@@ -2900,14 +2902,47 @@ function buildRecidiveStats(mode) {
         // Gemiddelde tijd tussen twee opeenvolgende storingen op deze plek.
         tussentijd: data.length > 1 ? spanDagen / (data.length - 1) : null,
         nuOpen: data.filter(o => o.open).length,
-        doorlooptijd: afgerond.length ? afgerond.reduce((sum, o) => sum + o.doorlooptijd, 0) / afgerond.length : null,
+        doorlooptijd: afgerond.length ? afgerond.reduce((sum, o) => sum + o.looptijd, 0) / afgerond.length : null,
+        storingen: data,
       };
     });
 }
 
+// De sleutelkolom is een knop: die klapt de onderliggende storingen uit. Zonder
+// die lijst zie je wél dát een plek drie keer is gestoord, maar niet welke
+// storingen dat waren — en juist dat bepaalt of er iets structureel aan de hand
+// is of dat het drie losse toevalligheden zijn.
+function recidiveSleutelCel(r, tekst) {
+  const open = state.recidiveOpen.has(r.key);
+  return `<td><button type="button" class="recidive-toggle${open ? ' open' : ''}" data-recidive-key="${esc(r.key)}"`
+    + ` aria-expanded="${open}" title="${open ? 'Storingen verbergen' : 'Bekijk de storingen op deze plek'}">`
+    + `<span class="recidive-caret" aria-hidden="true">${open ? '▾' : '▸'}</span>${esc(tekst)}</button></td>`;
+}
+
+function recidiveDetailHtml(r) {
+  const rijen = r.storingen.map(s => `<tr>
+    <td>${orderLinkHtml(s.order)}</td>
+    <td>${esc(s.street)}, ${esc(s.postcode)}</td>
+    <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}</td>
+    <td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>
+    <td>${esc(s.eerst)}</td>
+    <td>${s.open ? '<span class="ov-status-pill ov-status-nieuw">Nog open</span>' : `<span class="status-pill">Opgelost ${esc(s.laatst)}</span>`}</td>
+    <td class="num">${s.looptijd} dgn</td>
+  </tr>`).join('');
+  return `<div class="recidive-detail">
+      <p class="muted small">Alle storingen op deze plek, nieuwste eerst. Klik een ordernummer voor de volledige tijdlijn.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Order</th><th>Adres</th><th>Type</th><th>Asset</th><th>Eerst gezien</th><th>Stand</th><th class="num">Looptijd</th></tr></thead>
+          <tbody>${rijen}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 const RECIDIVE_COLUMNS_STRAAT = [
   { key: 'city', label: 'Plaats', cell: r => `<td>${esc(r.city)}</td>` },
-  { key: 'street', label: 'Straat', cell: r => `<td>${esc(r.street)}</td>` },
+  { key: 'street', label: 'Straat', cell: r => recidiveSleutelCel(r, r.street) },
   { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
   { key: 'aantal', label: 'Storingen', num: true, cell: r => `<td class="num"><strong>${r.aantal}</strong></td>` },
   { key: 'adressen', label: 'Adressen', num: true, cell: r => `<td class="num">${r.adressen}</td>` },
@@ -2919,7 +2954,7 @@ const RECIDIVE_COLUMNS_STRAAT = [
 ];
 
 const RECIDIVE_COLUMNS_ASSET = [
-  { key: 'asset', label: 'Asset', cell: r => `<td>${esc(r.asset)}${r.assetType ? ' ' + esc(r.assetType) : ''}</td>` },
+  { key: 'asset', label: 'Asset', cell: r => recidiveSleutelCel(r, r.asset + (r.assetType ? ' ' + r.assetType : '')) },
   { key: 'city', label: 'Plaats', cell: r => `<td>${esc(r.city)}</td>` },
   { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
   { key: 'aantal', label: 'Storingen', num: true, cell: r => `<td class="num"><strong>${r.aantal}</strong></td>` },
@@ -2943,7 +2978,10 @@ function renderRecidiveCard() {
     return;
   }
   const rows = sortByState(stats, state.recidiveSortState);
-  renderFullTable(container, rows, state.recidiveMode === 'asset' ? RECIDIVE_COLUMNS_ASSET : RECIDIVE_COLUMNS_STRAAT, state.recidiveSortState);
+  renderFullTable(container, rows, state.recidiveMode === 'asset' ? RECIDIVE_COLUMNS_ASSET : RECIDIVE_COLUMNS_STRAAT, state.recidiveSortState, {
+    isExpanded: (r) => state.recidiveOpen.has(r.key),
+    detailCell: recidiveDetailHtml,
+  });
 }
 
 function renderHistorie() {
@@ -3192,11 +3230,19 @@ function renderFullTable(container, rows, columns, sortState, opts) {
     const active = sortState.key === c.key ? (sortState.dir === 1 ? ' ↑' : ' ↓') : '';
     return `<th data-key="${c.key}" class="${c.num ? 'num' : ''}">${esc(c.label)}${active}</th>`;
   }).join('');
+  const kolomAantal = columns.length + (opts.leadHead ? 1 : 0);
   const body = rows.map(row => {
     const lead = opts.leadCell ? opts.leadCell(row) : '';
     const cells = columns.map(c => c.cell(row)).join('');
     const cls = opts.rowClass ? opts.rowClass(row) : '';
-    return `<tr${cls ? ` class="${cls}"` : ''}>${lead}${cells}</tr>`;
+    const hoofdrij = `<tr${cls ? ` class="${cls}"` : ''}>${lead}${cells}</tr>`;
+    // Uitgeklapte rij: één extra rij eronder die de volle tabelbreedte pakt.
+    // Zo blijft de tabel sorteerbaar (dat zou verloren gaan als elke groep een
+    // eigen <details>-blok werd) terwijl de details één klik weg zijn.
+    if (opts.detailCell && opts.isExpanded && opts.isExpanded(row)) {
+      return hoofdrij + `<tr class="detail-row"><td colspan="${kolomAantal}">${opts.detailCell(row)}</td></tr>`;
+    }
+    return hoofdrij;
   }).join('');
   container.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
@@ -3757,6 +3803,14 @@ function wireEvents() {
   });
 
   document.getElementById('recidive-body').addEventListener('click', e => {
+    const toggle = e.target.closest('.recidive-toggle');
+    if (toggle) {
+      const key = toggle.dataset.recidiveKey;
+      if (state.recidiveOpen.has(key)) state.recidiveOpen.delete(key);
+      else state.recidiveOpen.add(key);
+      renderRecidiveCard();
+      return;
+    }
     const th = e.target.closest('th[data-key]');
     if (!th) return;
     if (state.recidiveSortState.key === th.dataset.key) state.recidiveSortState.dir *= -1;
@@ -3809,6 +3863,9 @@ function wireEvents() {
   document.querySelectorAll('#recidive-mode button[data-recidive-mode]').forEach(btn => {
     btn.addEventListener('click', () => {
       state.recidiveMode = btn.dataset.recidiveMode;
+      // De sleutels zijn per weergave anders, dus een uitgeklapte straat zou
+      // in de assetweergave nergens meer op passen.
+      state.recidiveOpen = new Set();
       // De sorteersleutels verschillen per weergave; terug naar de standaard
       // voorkomt dat er op een kolom gesorteerd blijft die er niet meer is.
       state.recidiveSortState = { key: 'aantal', dir: -1 };

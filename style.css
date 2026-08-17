@@ -875,6 +875,33 @@ table td.num, table th.num { font-variant-numeric: tabular-nums; }
 
 .mio-leeftijd { margin: 4px 0 12px; }
 .mio-maand { margin: 0 0 18px; }
+
+/* Herhaallocaties: de sleutelkolom is een uitklapknop. Ziet eruit als de
+   ordernummer-links elders, met een driehoekje dat de stand aangeeft. */
+.recidive-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--brand-primary);
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+.recidive-toggle:hover { text-decoration: underline; }
+.recidive-toggle:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; border-radius: 3px; }
+.recidive-caret { font-size: 0.8em; color: var(--text-secondary); }
+
+/* De detailrij pakt de volle tabelbreedte en wijkt qua achtergrond af, zodat
+   duidelijk is dat 'ie bij de rij erboven hoort en geen losse groep is. */
+tr.detail-row > td {
+  background: var(--page-plane);
+  padding: 4px 14px 14px;
+}
+.recidive-detail > p { margin: 10px 0 8px; }
 .mio-maand table { margin-top: 8px; }
 
 /* De trendgrafiek houdt een minimale pixelbreedte en schuift horizontaal als
