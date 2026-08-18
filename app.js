@@ -1599,9 +1599,9 @@ function renderInUitCard() {
 // de meeste combinaties op; een volledige postcode is een straatblok; en op
 // straatnaam vang je ook de gevallen waar één straat meerdere postcodes heeft.
 const CLUSTER_MODI = {
-  pc4: { label: 'Postcodegebied', kolom: 'Postcode (4 cijfers)' },
-  pc6: { label: 'Volledige postcode', kolom: 'Postcode' },
-  straat: { label: 'Straat', kolom: 'Straat' },
+  pc4: { label: 'Postcodegebied', meervoud: 'postcodegebieden', kolom: 'Postcode (4 cijfers)' },
+  pc6: { label: 'Volledige postcode', meervoud: 'volledige postcodes', kolom: 'Postcode' },
+  straat: { label: 'Straat', meervoud: 'straten', kolom: 'Straat' },
 };
 
 function pc4Van(postcode) {
@@ -1615,7 +1615,14 @@ function buildClusters(mode) {
   const open = typeFiltered(snaps[snaps.length - 1].storingen);
 
   const groepen = new Map();
+  // Alle openstaande storingen per plaats, dus inclusief de losse — anders kun
+  // je bij een plaats niet zien hoeveel er buiten de clusters vallen.
+  const openPerPlaats = new Map();
   let zonderLocatie = 0;
+  open.forEach(s => {
+    const plaats = s.city || 'Onbekend';
+    openPerPlaats.set(plaats, (openPerPlaats.get(plaats) || 0) + 1);
+  });
   open.forEach(s => {
     let sleutel = null;
     if (mode === 'pc4') sleutel = pc4Van(s.postcode);
@@ -1654,14 +1661,46 @@ function buildClusters(mode) {
     })
     .sort((a, b) => b.aantal - a.aantal || (a.vroegste ?? 999) - (b.vroegste ?? 999) || a.city.localeCompare(b.city));
 
-  return { clusters, totaal: open.length, zonderLocatie };
+  return { clusters, plaatsen: clustersPerPlaats(clusters, openPerPlaats), totaal: open.length, zonderLocatie };
+}
+
+// De clusters zelf staan op postcode-/straatniveau, en dat is precies de korrel
+// waarop je inplant. Maar om te bepalen wáár je een ploeg heen stuurt denk je
+// eerst in plaatsen: "Leiderdorp, daar staan er twaalf". Daarom liggen de
+// clusters van dezelfde plaats bij elkaar, met de plaats als eerste niveau.
+function clustersPerPlaats(clusters, openPerPlaats) {
+  const perPlaats = new Map();
+  clusters.forEach(c => {
+    let p = perPlaats.get(c.city);
+    if (!p) { p = { city: c.city, clusters: [] }; perPlaats.set(c.city, p); }
+    p.clusters.push(c);
+  });
+  return Array.from(perPlaats.values())
+    .map(p => {
+      const som = (veld) => p.clusters.reduce((n, c) => n + c[veld], 0);
+      const deadlines = p.clusters.map(c => c.vroegste).filter(d => d !== null);
+      const open = openPerPlaats.get(p.city) || som('aantal');
+      const inCluster = som('aantal');
+      return {
+        city: p.city,
+        clusters: p.clusters,
+        open,
+        inCluster,
+        los: Math.max(0, open - inCluster),
+        mio: som('mio'),
+        verlopen: som('verlopen'),
+        geblokkeerd: som('geblokkeerd'),
+        vroegste: deadlines.length ? Math.min(...deadlines) : null,
+      };
+    })
+    .sort((a, b) => b.open - a.open || b.inCluster - a.inCluster || a.city.localeCompare(b.city));
 }
 
 // Platte tekst van de clusters, om in een mail of Teams-bericht te plakken.
 // De interactieve versie zit al in de teamexport, maar voor "hier is je lijstje
 // voor morgen" is een blok tekst praktischer dan een bestand.
 function buildClusterText() {
-  const { clusters, totaal, zonderLocatie } = buildClusters(state.clusterMode);
+  const { clusters, plaatsen, totaal, zonderLocatie } = buildClusters(state.clusterMode);
   const snaps = chronoSnapshots();
   const datum = snaps.length ? snaps[snaps.length - 1].week : '';
   const kop = `NUS-clusters — ${datum} (${CLUSTER_MODI[state.clusterMode].label.toLowerCase()})`;
@@ -1671,26 +1710,35 @@ function buildClusterText() {
   const regels = [
     kop,
     '',
-    `${inCluster} van de ${totaal} openstaande storingen liggen in ${clusters.length} ${clusters.length === 1 ? 'cluster' : 'clusters'} van twee of meer.`,
+    `${inCluster} van de ${totaal} openstaande storingen liggen in ${clusters.length} ${clusters.length === 1 ? 'cluster' : 'clusters'} van twee of meer, verspreid over ${plaatsen.length} ${plaatsen.length === 1 ? 'plaats' : 'plaatsen'}.`,
     `${totaal - inCluster} ${totaal - inCluster === 1 ? 'staat' : 'staan'} op zichzelf${zonderLocatie > 0 ? ` (${zonderLocatie} zonder bruikbare locatiegegevens)` : ''}.`,
     '',
+    'Per plaats:',
   ];
-  clusters.forEach(c => {
-    const merk = [];
-    if (c.mio > 0) merk.push(`${c.mio}x mast geen spanning`);
-    if (c.verlopen > 0) merk.push(`${c.verlopen}x verlopen`);
-    if (c.geblokkeerd > 0) merk.push(`${c.geblokkeerd}x geblokkeerd`);
-    regels.push(`${c.city} — ${c.sleutel}  (${c.aantal} storingen${merk.length ? ', ' + merk.join(', ') : ''})`);
-    c.storingen.forEach(s => {
-      const dagen = typeof s.daysLeft !== 'number' ? 'dagen onbekend'
-        : s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen`
-        : s.daysLeft === 0 ? 'verloopt vandaag'
-        : `nog ${s.daysLeft} dgn`;
-      const extra = [isMastGeenSpanning(s) ? 'mast geen spanning' : s.type, s.ovStatus || 'status onbekend'];
-      if (isOvBlocked(s)) extra.push('geblokkeerd');
-      regels.push(`  ${s.order}  ${s.street}, ${s.postcode}  — ${dagen}  (${extra.join(', ')})`);
+  plaatsen.forEach(p => {
+    regels.push(`  ${p.city}: ${p.open} open, ${p.inCluster} in ${p.clusters.length} ${p.clusters.length === 1 ? 'cluster' : 'clusters'}`);
+  });
+  regels.push('');
+
+  plaatsen.forEach(p => {
+    regels.push(`=== ${p.city.toUpperCase()} — ${p.inCluster} storingen in ${p.clusters.length} ${p.clusters.length === 1 ? 'cluster' : 'clusters'} ===`);
+    p.clusters.forEach(c => {
+      const merk = [];
+      if (c.mio > 0) merk.push(`${c.mio}x mast geen spanning`);
+      if (c.verlopen > 0) merk.push(`${c.verlopen}x verlopen`);
+      if (c.geblokkeerd > 0) merk.push(`${c.geblokkeerd}x geblokkeerd`);
+      regels.push(`  ${c.sleutel}  (${c.aantal} storingen${merk.length ? ', ' + merk.join(', ') : ''})`);
+      c.storingen.forEach(s => {
+        const dagen = typeof s.daysLeft !== 'number' ? 'dagen onbekend'
+          : s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen`
+          : s.daysLeft === 0 ? 'verloopt vandaag'
+          : `nog ${s.daysLeft} dgn`;
+        const extra = [isMastGeenSpanning(s) ? 'mast geen spanning' : s.type, s.ovStatus || 'status onbekend'];
+        if (isOvBlocked(s)) extra.push('geblokkeerd');
+        regels.push(`    ${s.order}  ${s.street}, ${s.postcode}  — ${dagen}  (${extra.join(', ')})`);
+      });
+      regels.push('');
     });
-    regels.push('');
   });
   return regels.join('\n').trimEnd();
 }
@@ -1702,7 +1750,7 @@ function renderClusterCard() {
     btn.classList.toggle('active', btn.dataset.clusterMode === state.clusterMode);
   });
 
-  const { clusters, totaal, zonderLocatie } = buildClusters(state.clusterMode);
+  const { clusters, plaatsen, totaal, zonderLocatie } = buildClusters(state.clusterMode);
   if (totaal === 0) {
     container.innerHTML = '<p class="empty-note">Nog geen openstaande storingen om te clusteren.</p>';
     return;
@@ -1714,39 +1762,63 @@ function renderClusterCard() {
 
   const inCluster = clusters.reduce((sum, c) => sum + c.aantal, 0);
   const mioInCluster = clusters.reduce((sum, c) => sum + c.mio, 0);
-  const kop = `<p class="prognose-headline"><strong>${inCluster}</strong> van de ${totaal} openstaande storingen liggen in <strong>${clusters.length}</strong> ${clusters.length === 1 ? 'cluster' : 'clusters'} van twee of meer`
-    + `${mioInCluster > 0 ? `, waarvan ${mioInCluster} van het type "mast geen spanning"` : ''}. `
-    + `De overige ${totaal - inCluster} ${totaal - inCluster === 1 ? 'staat' : 'staan'} op zichzelf${zonderLocatie > 0 ? ` (${zonderLocatie} zonder bruikbare locatiegegevens)` : ''}.</p>`;
+  const kop = `<p class="prognose-headline"><strong>${inCluster}</strong> van de ${totaal} openstaande storingen liggen in <strong>${clusters.length}</strong> ${clusters.length === 1 ? 'cluster' : 'clusters'} van twee of meer, verspreid over <strong>${plaatsen.length}</strong> ${plaatsen.length === 1 ? 'plaats' : 'plaatsen'}`
+    + `${mioInCluster > 0 ? `; ${mioInCluster} daarvan ${mioInCluster === 1 ? 'is' : 'zijn'} van het type "mast geen spanning"` : ''}. `
+    + `De overige ${totaal - inCluster} ${totaal - inCluster === 1 ? 'staat' : 'staan'} op zichzelf${zonderLocatie > 0 ? ` (${zonderLocatie} zonder bruikbare locatiegegevens)` : ''}. `
+    + `Klap een plaats uit voor de ${esc(CLUSTER_MODI[state.clusterMode].meervoud)} daarbinnen.</p>`;
 
-  const rijen = clusters.map(c => {
-    const deadline = c.vroegste === null ? '—'
-      : c.vroegste < 0 ? `<span class="prognose-bad">${Math.abs(c.vroegste)} dgn verlopen</span>`
-      : `nog ${c.vroegste} dgn`;
+  const deadlineHtml = (dagen) => dagen === null ? '—'
+    : dagen < 0 ? `<span class="prognose-bad">${Math.abs(dagen)} dgn verlopen</span>`
+    : dagen === 0 ? '<span class="prognose-bad">vandaag</span>'
+    : `nog ${dagen} dgn`;
+  const merkTekst = (o) => {
     const merk = [];
-    if (c.mio > 0) merk.push(`${c.mio}× mast geen spanning`);
-    if (c.verlopen > 0) merk.push(`${c.verlopen}× verlopen`);
-    if (c.geblokkeerd > 0) merk.push(`${c.geblokkeerd}× geblokkeerd`);
-    const detailRijen = c.storingen.map(s => `
-      <tr>
-        <td>${orderLinkHtml(s.order)}</td>
-        <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-        <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}</td>
-        <td>${ovStatusPillHtml(s)}</td>
-        <td class="num">${renderDaysPill(s)}</td>
-      </tr>`).join('');
+    if (o.mio > 0) merk.push(`${o.mio}× mast geen spanning`);
+    if (o.verlopen > 0) merk.push(`${o.verlopen}× verlopen`);
+    if (o.geblokkeerd > 0) merk.push(`${o.geblokkeerd}× geblokkeerd`);
+    return merk;
+  };
+
+  const rijen = plaatsen.map(p => {
+    const clusterBlokken = p.clusters.map(c => {
+      const merk = merkTekst(c);
+      const detailRijen = c.storingen.map(s => `
+        <tr>
+          <td>${orderLinkHtml(s.order)}</td>
+          <td>${esc(s.street)}, ${esc(s.postcode)}</td>
+          <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}</td>
+          <td>${ovStatusPillHtml(s)}</td>
+          <td class="num">${renderDaysPill(s)}</td>
+        </tr>`).join('');
+      return `
+        <details class="cluster-item">
+          <summary>
+            <span class="cluster-titel">${esc(c.sleutel)}</span>
+            <span class="cluster-aantal">${c.aantal} storingen</span>
+            <span class="cluster-meta">${merk.length ? esc(merk.join(' · ')) + ' · ' : ''}krapste deadline: ${deadlineHtml(c.vroegste)}${state.clusterMode !== 'straat' && c.straten > 1 ? ` · ${c.straten} straten` : ''}</span>
+          </summary>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Order</th><th>Adres</th><th>Type</th><th>Status</th><th class="num">Dagen</th></tr></thead>
+              <tbody>${detailRijen}</tbody>
+            </table>
+          </div>
+        </details>`;
+    }).join('');
+
+    const merk = merkTekst(p);
+    const clusterTekst = `${p.clusters.length} ${p.clusters.length === 1 ? 'cluster' : 'clusters'}`;
+    const meta = p.los > 0
+      ? `${p.inCluster} in ${clusterTekst} · ${p.los} los`
+      : `allemaal in ${clusterTekst}`;
     return `
-      <details class="cluster-item">
+      <details class="cluster-plaats">
         <summary>
-          <span class="cluster-titel">${esc(c.city)} — ${esc(c.sleutel)}</span>
-          <span class="cluster-aantal">${c.aantal} storingen</span>
-          <span class="cluster-meta">${merk.length ? esc(merk.join(' · ')) + ' · ' : ''}krapste deadline: ${deadline}${state.clusterMode !== 'straat' && c.straten > 1 ? ` · ${c.straten} straten` : ''}</span>
+          <span class="cluster-titel">${esc(p.city)}</span>
+          <span class="cluster-aantal">${p.open} ${p.open === 1 ? 'storing' : 'storingen'}</span>
+          <span class="cluster-meta">${esc(meta)}${merk.length ? ' · ' + esc(merk.join(' · ')) : ''} · krapste deadline: ${deadlineHtml(p.vroegste)}</span>
         </summary>
-        <div class="table-scroll">
-          <table>
-            <thead><tr><th>Order</th><th>Adres</th><th>Type</th><th>Status</th><th class="num">Dagen</th></tr></thead>
-            <tbody>${detailRijen}</tbody>
-          </table>
-        </div>
+        <div class="cluster-plaats-body">${clusterBlokken}</div>
       </details>`;
   }).join('');
 

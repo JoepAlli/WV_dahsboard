@@ -965,8 +965,37 @@ tr.detail-row > td {
   border-radius: 999px;
 }
 
-/* Clusters: elk cluster is een uitklapbaar blok met de orders erin, zodat de
-   lijst overzichtelijk blijft maar de details één klik weg zijn. */
+/* Clusters in twee niveaus: eerst de plaats (waar stuur ik iemand heen), daarin
+   de postcodegebieden of straten (wat plan ik samen), en daarin de orders. Het
+   plaatsniveau is zwaarder aangezet zodat de lijst met plaatsen leest als een
+   overzicht, en het clusterniveau als de uitwerking daarvan. */
+.cluster-plaats {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+  background: color-mix(in srgb, var(--brand-highlight) 45%, var(--surface-1));
+  overflow: hidden;
+}
+.cluster-plaats > summary {
+  cursor: pointer;
+  padding: 14px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+}
+.cluster-plaats > summary:hover { background: var(--brand-highlight); }
+.cluster-plaats > summary .cluster-titel { font-size: 1.02rem; }
+.cluster-plaats > summary .cluster-aantal {
+  background: var(--brand-primary-dark);
+  color: var(--surface-1);
+}
+.cluster-plaats[open] > summary { border-bottom: 1px solid var(--border); }
+.cluster-plaats-body { padding: 12px 14px 4px; }
+.cluster-plaats-body .cluster-item:last-child { margin-bottom: 8px; }
+
+/* Elk cluster is een uitklapbaar blok met de orders erin, zodat de lijst
+   overzichtelijk blijft maar de details één klik weg zijn. */
 .cluster-item {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
