@@ -620,6 +620,7 @@ const state = {
   recidiveMode: 'straat',
   clusterMode: 'pc4',
   kaartPlaats: null,
+  kaartView: null,
   inUitPeriode: '30',
   mioLeeftijdFilter: 'alles',
   recidiveSortState: { key: 'aantal', dir: -1 },
@@ -1880,7 +1881,7 @@ const KAART_MARGE = 46;
 const KAART_MAX_HOOGTE = 560;
 const KM_PER_GRAAD = 111.32;
 
-function kaartProjectie(punten) {
+function kaartAutoView(punten) {
   const latMid = punten.reduce((s, p) => s + p.lat, 0) / punten.length;
   const kx = Math.cos(latMid * Math.PI / 180);
   const xs = punten.map(p => p.lon * kx);
@@ -1898,15 +1899,82 @@ function kaartProjectie(punten) {
   const hoogte = Math.min(KAART_MAX_HOOGTE, Math.max(300, (y1 - y0) * schaal + 2 * KAART_MARGE));
   // Verticaal binnen de beschikbare hoogte passen zonder de verhouding te
   // verstoren: dezelfde schaal, alleen gecentreerd.
-  const schaalDef = Math.min(schaal, (hoogte - 2 * KAART_MARGE) / (y1 - y0));
-  const dx = (KAART_BREEDTE - (x1 - x0) * schaalDef) / 2;
-  const dy = (hoogte - (y1 - y0) * schaalDef) / 2;
+  const k = Math.min(schaal, (hoogte - 2 * KAART_MARGE) / (y1 - y0));
   return {
+    kx,
     hoogte,
-    kmPerPixel: 1 / (schaalDef / KM_PER_GRAAD),
-    x: (p) => (p.lon * kx - x0) * schaalDef + dx,
-    y: (p) => (-p.lat - y0) * schaalDef + dy,
+    k,
+    // Linkerbovenhoek van het beeld in wereldcoordinaten, zo gekozen dat de
+    // punten gecentreerd staan.
+    viewX: x0 - (KAART_BREEDTE - (x1 - x0) * k) / 2 / k,
+    viewY: y0 - (hoogte - (y1 - y0) * k) / 2 / k,
   };
+}
+
+// Het beeld dat nu getekend moet worden: de automatische uitsnede, tenzij er
+// is gezoomd of gesleept. De hoogte en de kx-correctie komen altijd uit de
+// automatische berekening, zodat het kaartvlak niet van formaat verspringt
+// tijdens het zoomen.
+function kaartView(punten) {
+  const auto = kaartAutoView(punten);
+  const v = state.kaartView;
+  const actief = v && Object.assign({}, auto, { k: v.k, viewX: v.viewX, viewY: v.viewY });
+  const view = actief || auto;
+  return {
+    auto,
+    hoogte: auto.hoogte,
+    k: view.k,
+    viewX: view.viewX,
+    viewY: view.viewY,
+    kmPerPixel: KM_PER_GRAAD / view.k,
+    zoom: view.k / auto.k,
+    x: (p) => (p.lon * auto.kx - view.viewX) * view.k,
+    y: (p) => (-p.lat - view.viewY) * view.k,
+    // Terug van beeldpunt naar wereldcoordinaat, nodig om rond de muisaanwijzer
+    // in te zoomen.
+    wereldX: (sx) => sx / view.k + view.viewX,
+    wereldY: (sy) => sy / view.k + view.viewY,
+  };
+}
+
+// Het beeld mag nooit zo ver weg schuiven dat er niets meer te zien is: zowel
+// bij zoomen als bij slepen wordt de uitsnede teruggeduwd binnen de plaatsen
+// plus een marge. Anders kijk je na een paar keer scrollen naar een leeg vlak
+// en is "Hele gebied" de enige weg terug.
+function kaartKlem(k, viewX, viewY, punten, auto) {
+  const xs = punten.map(p => p.lon * auto.kx);
+  const ys = punten.map(p => -p.lat);
+  const margeX = Math.max((Math.max(...xs) - Math.min(...xs)) * 0.15, 2 / KM_PER_GRAAD);
+  const margeY = Math.max((Math.max(...ys) - Math.min(...ys)) * 0.15, 2 / KM_PER_GRAAD);
+  const bx0 = Math.min(...xs) - margeX, bx1 = Math.max(...xs) + margeX;
+  const by0 = Math.min(...ys) - margeY, by1 = Math.max(...ys) + margeY;
+  const zichtB = KAART_BREEDTE / k, zichtH = auto.hoogte / k;
+  return {
+    k,
+    // Past het hele gebied in beeld, dan centreren; anders binnen de grenzen
+    // houden.
+    viewX: zichtB >= bx1 - bx0 ? (bx0 + bx1) / 2 - zichtB / 2 : Math.min(Math.max(viewX, bx0), bx1 - zichtB),
+    viewY: zichtH >= by1 - by0 ? (by0 + by1) / 2 - zichtH / 2 : Math.min(Math.max(viewY, by0), by1 - zichtH),
+  };
+}
+
+// Zoomen rond een vast punt: de wereldcoordinaat onder de muis moet na het
+// zoomen nog steeds onder de muis liggen, anders schuift de kaart onder je
+// handen weg.
+const KAART_ZOOM_MIN = 1;
+const KAART_ZOOM_MAX = 40;
+function kaartZoomNaar(punten, factor, ankerX, ankerY) {
+  const view = kaartView(punten);
+  const nieuweK = Math.min(view.auto.k * KAART_ZOOM_MAX, Math.max(view.auto.k * KAART_ZOOM_MIN, view.k * factor));
+  if (nieuweK === view.k) return false;
+  const wx = view.wereldX(ankerX), wy = view.wereldY(ankerY);
+  state.kaartView = kaartKlem(nieuweK, wx - ankerX / nieuweK, wy - ankerY / nieuweK, punten, view.auto);
+  return true;
+}
+
+function kaartVerschuif(punten, dxPixels, dyPixels) {
+  const view = kaartView(punten);
+  state.kaartView = kaartKlem(view.k, view.viewX - dxPixels / view.k, view.viewY - dyPixels / view.k, punten, view.auto);
 }
 
 // Taartpunt voor het aandeel "mast geen spanning" binnen een plaats. Groen en
@@ -2025,15 +2093,43 @@ function renderKaartCard() {
     return;
   }
 
-  const proj = kaartProjectie(punten);
+  container.innerHTML = kaartKopHtml(punten, totaal)
+    + kaartToolbarHtml()
+    + `<div class="kaart-vlakje" id="kaart-vlakje">${kaartSvgHtml(punten)}</div>`
+    + kaartLegendaHtml()
+    + kaartDetailHtml(punten, zonderPositie)
+    + kaartVoetHtml(zonderPositie);
+}
+
+// Alleen het kaartvlak opnieuw tekenen. Bij zoomen en slepen gebeurt dat tot
+// tientallen keren per seconde; de lijst eronder en de koppen hoeven daar niet
+// aan mee te doen (en zouden anders hun scrollpositie kwijtraken).
+function renderKaartVlak() {
+  const vlak = document.getElementById('kaart-vlakje');
+  if (!vlak) return;
+  const { punten } = buildKaartPunten();
+  if (punten.length === 0) return;
+  vlak.innerHTML = kaartSvgHtml(punten);
+  const herstel = document.getElementById('kaart-herstel');
+  if (herstel) herstel.disabled = !state.kaartView;
+}
+
+function kaartSvgHtml(punten) {
+  const view = kaartView(punten);
   const maxAantal = Math.max(...punten.map(p => p.aantal));
-  const straal = (n) => Math.max(6, 28 * Math.sqrt(n / maxAantal));
+  // De stippen groeien niet mee met de zoom: dan zou inzoomen op een dichte
+  // groep niets oplossen. Ze worden juist iets kleiner naarmate je verder
+  // inzoomt, zodat overlappende plaatsen uit elkaar komen.
+  const krimp = 1 / Math.max(1, Math.pow(view.zoom, 0.25));
+  const straal = (n) => Math.max(6, 28 * Math.sqrt(n / maxAantal) * krimp);
 
   // Grootste cirkels eerst, zodat kleine plaatsen er niet onder verdwijnen
-  // wanneer twee dorpen dicht bij elkaar liggen.
+  // wanneer twee dorpen dicht bij elkaar liggen. Wat buiten beeld valt wordt
+  // overgeslagen: dat scheelt tekenwerk en houdt de labelplaatsing vrij.
   const geordend = punten.slice().sort((a, b) => b.aantal - a.aantal)
-    .map(p => ({ p, cx: proj.x(p), cy: proj.y(p), r: straal(p.aantal) }));
-  const labels = kaartLabelPlaatsing(geordend, proj.hoogte);
+    .map(p => ({ p, cx: view.x(p), cy: view.y(p), r: straal(p.aantal) }))
+    .filter(m => m.cx > -60 && m.cx < KAART_BREEDTE + 60 && m.cy > -40 && m.cy < view.hoogte + 40);
+  const labels = kaartLabelPlaatsing(geordend, view.hoogte);
 
   const markers = geordend.map((m, i) => {
     const { p, cx, cy, r } = m;
@@ -2049,27 +2145,70 @@ function renderKaartCard() {
     </g>`;
   }).join('');
 
-  const svg = `<svg class="kaart-svg" viewBox="0 0 ${KAART_BREEDTE} ${Math.round(proj.hoogte)}" role="img" aria-label="Kaart met openstaande storingen per plaats">
-    ${kaartRaster(proj.kmPerPixel, proj.hoogte)}
-    ${kaartSchaalbalk(proj.kmPerPixel, proj.hoogte)}
+  const buiten = punten.length - geordend.length;
+  // Je kunt inzoomen op een stuk land waar toevallig niets openstaat. Dan is
+  // een lege kaart verwarrend, dus staat er wat er aan de hand is en hoe je
+  // terugkomt.
+  const buitenBeeld = buiten === 0 ? ''
+    : geordend.length === 0
+      ? `<text class="kaart-leeg" x="${KAART_BREEDTE / 2}" y="${(view.hoogte / 2).toFixed(0)}">Geen plaatsen in dit deel van de kaart \u2014 klik op "Hele gebied"</text>`
+      : `<text class="kaart-buiten" x="${KAART_BREEDTE - 12}" y="18">${buiten} ${buiten === 1 ? 'plaats' : 'plaatsen'} buiten beeld</text>`;
+
+  return `<svg class="kaart-svg" viewBox="0 0 ${KAART_BREEDTE} ${Math.round(view.hoogte)}" role="img" aria-label="Kaart met openstaande storingen per plaats">
+    ${kaartRaster(view.kmPerPixel, view.hoogte)}
+    ${kaartSchaalbalk(view.kmPerPixel, view.hoogte)}
+    ${buitenBeeld}
     ${markers}
   </svg>`;
+}
 
+// Sleeptoestand en tekenverzoek staan buiten de renderfuncties, zodat zoomen
+// en slepen niet meer werk doen dan één hertekening per beeldopbouw.
+const kaartSleep = { actief: false, gesleept: false, x: 0, y: 0, schaal: 1 };
+let kaartTekenVerzoek = null;
+function kaartTeken() {
+  if (kaartTekenVerzoek) return;
+  kaartTekenVerzoek = requestAnimationFrame(() => {
+    kaartTekenVerzoek = null;
+    renderKaartVlak();
+  });
+}
+
+// Muispositie omgerekend naar de coordinaten van de viewBox: de SVG wordt op
+// schermbreedte geschaald, dus de pixels op het scherm zijn niet die van de
+// tekening.
+function kaartMuisPositie(svg, e) {
+  const vak = svg.getBoundingClientRect();
+  const schaal = KAART_BREEDTE / vak.width;
+  return { x: (e.clientX - vak.left) * schaal, y: (e.clientY - vak.top) * schaal };
+}
+
+function kaartToolbarHtml() {
+  return `<div class="kaart-knoppen">
+    <button type="button" class="kaart-knop" data-kaart-zoom="in" aria-label="Inzoomen">+</button>
+    <button type="button" class="kaart-knop" data-kaart-zoom="uit" aria-label="Uitzoomen">\u2212</button>
+    <button type="button" class="btn-link" id="kaart-herstel"${state.kaartView ? '' : ' disabled'}>Hele gebied</button>
+    <span class="muted small">Scrollen zoomt, slepen verschuift</span>
+  </div>`;
+}
+
+function kaartKopHtml(punten, totaal) {
   const opKaart = punten.reduce((n, p) => n + p.aantal, 0);
-  const kop = `<p class="prognose-headline"><strong>${opKaart}</strong> van de ${totaal} openstaande storingen, verdeeld over <strong>${punten.length}</strong> ${punten.length === 1 ? 'plaats' : 'plaatsen'}. De grootte van een stip is het aantal storingen; klik een plaats aan voor de lijst.</p>`;
+  return `<p class="prognose-headline"><strong>${opKaart}</strong> van de ${totaal} openstaande storingen, verdeeld over <strong>${punten.length}</strong> ${punten.length === 1 ? 'plaats' : 'plaatsen'}. De grootte van een stip is het aantal storingen; klik een plaats aan voor de lijst.</p>`;
+}
 
-  const legenda = `<div class="kaart-legenda">
+function kaartLegendaHtml() {
+  return `<div class="kaart-legenda">
     <span><i class="kaart-vlak kaart-vlak-overig"></i>overige storingen</span>
     <span><i class="kaart-vlak kaart-vlak-mio"></i>mast geen spanning</span>
     <span><i class="kaart-vlak kaart-vlak-verlopen"></i>plaats met verlopen storingen</span>
   </div>`;
+}
 
+function kaartVoetHtml(zonderPositie) {
   const ontbreekt = zonderPositie.length === 0 ? '' :
     `<p class="muted small">Zonder positie op de kaart: ${esc(zonderPositie.map(p => `${p.plaats} (${p.aantal})`).join(', '))}. Deze plaatsnamen staan niet in de ingebouwde plaatsentabel.</p>`;
-
-  const bron = '<p class="muted small">Stippen staan op het centrum van de plaats, niet op het adres van de storing — voor de precieze ligging binnen een plaats: zie de clusters hieronder. Plaatscoordinaten: GeoNames, CC BY 4.0.</p>';
-
-  container.innerHTML = kop + `<div class="kaart-vlakje">${svg}</div>` + legenda + kaartDetailHtml(punten, zonderPositie) + ontbreekt + bron;
+  return ontbreekt + '<p class="muted small">Stippen staan op het centrum van de plaats, niet op het adres van de storing — voor de precieze ligging binnen een plaats: zie de clusters hieronder. Plaatscoordinaten: GeoNames, CC BY 4.0.</p>';
 }
 
 // De lijst achter een aangeklikte plaats. Bewust in dezelfde kaart en niet als
@@ -4625,6 +4764,20 @@ function wireEvents() {
     };
     kaartBody.addEventListener('click', (e) => {
       if (e.target.closest('#kaart-sluit')) { state.kaartPlaats = null; renderKaartCard(); return; }
+      if (e.target.closest('#kaart-herstel')) { state.kaartView = null; renderKaartCard(); return; }
+      const zoomKnop = e.target.closest('[data-kaart-zoom]');
+      if (zoomKnop) {
+        const { punten } = buildKaartPunten();
+        if (punten.length) {
+          // Vanuit een knop is er geen muispositie, dus rond het midden zoomen.
+          kaartZoomNaar(punten, zoomKnop.dataset.kaartZoom === 'in' ? 1.5 : 1 / 1.5,
+            KAART_BREEDTE / 2, kaartAutoView(punten).hoogte / 2);
+          renderKaartVlak();
+        }
+        return;
+      }
+      // Na slepen mag de losgelaten muisknop geen plaats openen.
+      if (kaartSleep.gesleept) { kaartSleep.gesleept = false; return; }
       const punt = e.target.closest('[data-kaart-plaats]');
       if (punt) kies(punt.dataset.kaartPlaats);
     });
@@ -4635,6 +4788,44 @@ function wireEvents() {
       e.preventDefault();
       kies(punt.dataset.kaartPlaats);
     });
+
+    // Scrollen zoomt rond de muisaanwijzer. Het kaartvlak vangt dat af (dus de
+    // pagina scrollt niet mee) — hetzelfde gedrag als elke andere kaart.
+    kaartBody.addEventListener('wheel', (e) => {
+      const svg = e.target.closest('.kaart-svg');
+      if (!svg) return;
+      e.preventDefault();
+      const { punten } = buildKaartPunten();
+      if (!punten.length) return;
+      const p = kaartMuisPositie(svg, e);
+      if (kaartZoomNaar(punten, e.deltaY < 0 ? 1.18 : 1 / 1.18, p.x, p.y)) kaartTeken();
+    }, { passive: false });
+
+    // Slepen verschuift het beeld. Via pointer-events, zodat het op een
+    // aanraakscherm net zo werkt als met de muis.
+    kaartBody.addEventListener('pointerdown', (e) => {
+      const svg = e.target.closest('.kaart-svg');
+      if (!svg || e.button !== 0) return;
+      kaartSleep.actief = true;
+      kaartSleep.gesleept = false;
+      kaartSleep.x = e.clientX;
+      kaartSleep.y = e.clientY;
+      kaartSleep.schaal = KAART_BREEDTE / svg.getBoundingClientRect().width;
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (!kaartSleep.actief) return;
+      const dx = (e.clientX - kaartSleep.x) * kaartSleep.schaal;
+      const dy = (e.clientY - kaartSleep.y) * kaartSleep.schaal;
+      if (!kaartSleep.gesleept && Math.hypot(dx, dy) < 4) return;
+      kaartSleep.gesleept = true;
+      kaartSleep.x = e.clientX;
+      kaartSleep.y = e.clientY;
+      const { punten } = buildKaartPunten();
+      if (!punten.length) return;
+      kaartVerschuif(punten, dx, dy);
+      kaartTeken();
+    });
+    window.addEventListener('pointerup', () => { kaartSleep.actief = false; });
   }
 
   document.querySelectorAll('#recidive-mode button[data-recidive-mode]').forEach(btn => {

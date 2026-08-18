@@ -1255,6 +1255,41 @@ tr.detail-row > td {
   min-width: 520px;
   height: auto;
 }
+.kaart-knoppen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+.kaart-knop {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.kaart-knop:hover { background: var(--brand-highlight); }
+.kaart-knoppen .btn-link[disabled] { opacity: 0.45; cursor: default; }
+.kaart-knoppen .muted { margin-left: auto; }
+
+.kaart-svg { touch-action: none; cursor: grab; }
+.kaart-svg:active { cursor: grabbing; }
+.kaart-buiten {
+  fill: var(--text-muted);
+  font-size: 11px;
+  text-anchor: end;
+}
+.kaart-leeg {
+  fill: var(--text-secondary);
+  font-size: 13px;
+  text-anchor: middle;
+}
 .kaart-punt { cursor: pointer; }
 .kaart-bol { fill: var(--series-1); }
 .kaart-ring {
