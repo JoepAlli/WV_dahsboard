@@ -1239,3 +1239,89 @@ tr.detail-row > td {
   gap: 26px;
   margin-top: 22px;
 }
+
+/* Kaart: stippenkaart van de openstaande storingen per plaats. Alle kleuren via
+   de bestaande tokens, zodat de kaart in licht en donker meeloopt. */
+.kaart-vlakje {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  padding: 6px;
+  overflow-x: auto;
+}
+.kaart-svg {
+  display: block;
+  width: 100%;
+  min-width: 520px;
+  height: auto;
+}
+.kaart-punt { cursor: pointer; }
+.kaart-bol { fill: var(--series-1); }
+.kaart-ring {
+  fill: none;
+  stroke: var(--surface-1);
+  stroke-width: 1.5;
+}
+.kaart-punt.heeft-verlopen .kaart-ring {
+  stroke: var(--status-critical);
+  stroke-width: 2.5;
+}
+.kaart-punt.actief .kaart-ring {
+  stroke: var(--text-primary);
+  stroke-width: 3;
+}
+.kaart-punt:hover .kaart-bol,
+.kaart-punt:focus-visible .kaart-bol { fill: var(--brand-primary-dark); }
+.kaart-punt:focus-visible { outline: none; }
+.kaart-punt:focus-visible .kaart-ring { stroke: var(--text-primary); stroke-width: 3; }
+.kaart-raster line { stroke: var(--gridline); stroke-width: 1; }
+.kaart-label {
+  fill: var(--text-primary);
+  font-size: 11px;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--surface-1);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.kaart-schaal line { stroke: var(--baseline); stroke-width: 1.5; }
+.kaart-schaal text { fill: var(--text-secondary); font-size: 11px; }
+
+.kaart-legenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 10px 0 4px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.kaart-legenda span { display: inline-flex; align-items: center; gap: 6px; }
+.kaart-vlak {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.kaart-vlak-overig { background: var(--series-1); }
+.kaart-vlak-mio { background: var(--series-2); }
+.kaart-vlak-verlopen {
+  background: var(--series-1);
+  box-shadow: 0 0 0 2px var(--status-critical);
+}
+
+.kaart-detail {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--brand-highlight) 45%, var(--surface-1));
+  overflow: hidden;
+}
+.kaart-detail-kop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  padding: 12px 16px 8px;
+}
+.kaart-detail-kop .btn-link { margin-left: auto; }
+.kaart-detail .table-scroll { padding: 0 12px 12px; }

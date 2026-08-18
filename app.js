@@ -619,6 +619,7 @@ const state = {
   historieSortState: { key: 'eerst', dir: -1 },
   recidiveMode: 'straat',
   clusterMode: 'pc4',
+  kaartPlaats: null,
   inUitPeriode: '30',
   mioLeeftijdFilter: 'alles',
   recidiveSortState: { key: 'aantal', dir: -1 },
@@ -1586,6 +1587,524 @@ function renderInUitCard() {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+}
+
+/* ---------- Kaart: openstaande storingen per plaats ---------- */
+
+// Een echte kaart met tegels (OpenStreetMap en soortgelijke) kan niet: het
+// dashboard moet het zonder internet doen, ook als statische export bij een
+// WV'er op de laptop. Wat wel kan is de plaatsen zelf in het bestand bakken en
+// die op ware geografische positie tekenen. Dat levert een stippenkaart op:
+// geen straatbeeld, wel de juiste onderlinge ligging en afstanden, en dat is
+// precies wat je nodig hebt om een rit van de Meetdienst te plannen.
+//
+// De lijst uit ISH geeft geen coordinaten, alleen een plaatsnaam. De kaart is
+// daarom zo nauwkeurig als het plaatsniveau: alle storingen in Leiden staan op
+// het centrum van Leiden. Voor "wat ligt bij elkaar in de regio" is dat genoeg;
+// voor "wat ligt bij elkaar binnen een plaats" is de clusterkaart hieronder de
+// juiste plek.
+//
+// De tabel bevat alle plaatsen in en rond het werkgebied (Noord- en
+// Zuid-Holland ruim genomen) plus elke grotere plaats daarbuiten, met
+// alternatieve schrijfwijzen. Formaat per plaats: naam:lat:lon, waarbij lat en
+// lon gehele tienduizendsten van een graad zijn, verminderd met 500000
+// respectievelijk 30000 om de tekst kort te houden.
+// Bron: GeoNames (cities500), CC BY 4.0 — https://www.geonames.org/
+const PLAATS_GEO_LAT0 = 500000;
+const PLAATS_GEO_LON0 = 30000;
+const PLAATS_GEO_RUW = `
+aagtdorn:26900:17042;aagtdorp:26900:17042;aalsmeer:22592:17597;aalsmeerderbrug:22742:17500;abbenes:22350:15917;
+abcoude:22725:19694;abkad:22725:19694;abkawdh:22725:19694;abkoude:22725:19694;adegeest:21362:14525;
+aemstelredamme:23740:18897;aemsterdam:23740:18897;aimstardaima:23740:18897;akersloot:25608:17333;
+alfen:21292:16555;alkeumaleu:26317:17486;alkmaar:26317:17486;alkmaer:26317:17486;alkmar:26317:17486;
+alkmaras:26317:17486;almelo:23567:36625;almere duin:23418:21413;almere stad:23703:22141;alphen:21292:16555;
+alphen aan de rijn:21292:16555;alphen aan den rijn:21292:16555;alphen aan der rijn:21292:16555;alsmer:22592:17597;
+amasataradama:23740:18897;amastaradama:23740:18897;amastararyama:23740:18897;ameide:19550:19625;
+amersfoort:21550:23875;amestelledamme:23740:18897;amesterda:23740:18897;amesterdam:23740:18897;
+amesterdao:23740:18897;amistardam:23740:18897;ammerstol:19275:18083;ams:23740:18897;amseutelbein:23008:18639;
+amseuteleudam:23740:18897;amseutereudam:23740:18897;amstadem:23740:18897;amstardam:23740:18897;
+amstardama:23740:18897;amstartam:23740:18897;amstedam:23740:18897;amstehrdam:23740:18897;amsteladamum:23740:18897;
+amstelhoek:22308:18333;amstelodamum:23740:18897;amstelodhamon:23740:18897;amstelveen:23008:18639;
+amstelven:23008:18639;amstelveyn:23008:18639;amstelvin:23008:18639;amsterda:23740:18897;amsterdam:23740:18897;
+amsterdam duivendrecht:23294:19396;amsterdam zuidoost:23075:19722;amsterdama:23740:18897;amsterdamas:23740:18897;
+amsterdame:23740:18897;amsterdami:23740:18897;amsterdamo:23740:18897;amsterdams:23740:18897;
+amsterdamu:23740:18897;amsterdan:23740:18897;amsterntam:23740:18897;amsterodam:23740:18897;amstrdam:23740:18897;
+amstyerdam:23740:18897;amsut erudam:23740:18897;amszterdam:23740:18897;amusitedan:23740:18897;
+amusuterudamu:23740:18897;amusuterufen:23008:18639;ankeveense rade:22589:21016;anstardyam:23740:18897;
+apeldoorn:22100:29694;arnhem:19800:29111;arukumaru:26317:17486;askhrmrhwrn:26008:18917;askhydam:19192:13889;
+askhyfnyngn:21046:12756;aspyrdyk:26508:19431;assen:29967:35625;assendelft:24683:17431;
+astyn hlnd jnwby:20033:17819;aud losdrekht:22067:20806;auderkerk kaj amstel:22950:19075;
+auderkerkas prie amstelio:22950:19075;authorn:22375:18264;autxeyst:25292:17097;avenhorn:26175:19514;
+awdrkrk:22950:19075;awthwrn:22375:18264;awtkhyst:25292:17097;awtrkht:20908:21222;baambrugge:22458:19889;
+baarn:22117:22875;badhoevedorp:23372:17852;bakkum:25595:16572;bakum:25595:16572;bakwm:25595:16572;
+barendrecht:18567:15347;barneveld:21400:25847;beets:25883:19778;beinsdorp:22867:15958;bennebroek:23208:15986;
+benthuizen:20775:15444;bentveld:23650:15722;berchen:26692:17042;bergen:26692:17042;bergen binnen:26692:17042;
+bergen op zoom:14950:12917;bergschenhoek:19900:14986;bergsenkhuk:19900:14986;bergstoep:19225:17847;
+berkel en rodenrijs:19931:14787;berkenwoude:19450:17069;berkhout:26408:20014;berverwyk:24833:16569;
+berxen:26692:17042;best:15075:23903;beuloekeolleon:21742:20014;beuningen:18608:27667;bevervejk:24833:16569;
+beverwijk:24833:16569;beverwyk:24833:16569;beyverveyk:24833:16569;bilthoven:21300:22014;binnenhof:21642:15364;
+bjussjum:22733:21611;bleiswijk:20108:15319;bloemendaal:24025:16222;bloemendaalseweg:20288:16944;
+bodegraven:20825:17500;borne:23014:37482;borssele:14233:7347;boskoop:20750:16556;boskop:20750:16556;
+boxtel:15908:23292;breda:15866:17760;breukelen:21742:20014;broek:24342:19958;broek in waterland:24342:19958;
+broek op langedijk:26742:18056;broek op langendijk:26742:18056;brummen:20900:31556;brunssum:9467:29708;
+bunnik:20667:21986;bussum:22733:21611;busum:22733:21611;butterhuizen:26500:18167;bwrmyrand:25050:19597;
+bwswm:22733:21611;byfyrfayk:24833:16569;byrkhn:26692:17042;cabauw:19642:18986;cadoelen:24175:19056;
+capelle:19292:15778;capelle aan de ijssel:19292:15778;capelle aan de yssel:19292:15778;
+capelle aan den ijssel:19292:15778;capelle aan den yssel:19292:15778;capelle west:19167:15667;
+castricum:25483:16694;chaarlem:23808:16368;chage:20767:12986;chaounta:20167:17083;commandeurs:25090:16584;
+cruquius:23358:16347;culemborg:19550:22278;dalfsen:25117:32569;damsko:23740:18897;dapperbuurt:23622:19280;
+de bilt:21100:21806;de engel:22417:15375;de glip:23308:16111;de goorn:26258:19472;de haach:20767:12986;
+de hagen:19938:21026;de kieviet:21233:13584;de kievit:21233:13584;de kvakelis:22392:17931;de kwakel:22392:17931;
+de lier:19750:12486;de maer:25190:16817;de meern:20817:20361;de rijp:25567:18458;de uithof:20853:21746;
+delfshaven:19049:14532;delft:20067:13556;delfzijl:33300:39181;den haag:20767:12986;den helder:29599:17593;
+den ilp:24542:19069;derufuto shi:20067:13556;deventer:22550:31639;diemen:23396:19626;diemerbrug:23396:19626;
+dijmen:23396:19626;dimen:23396:19626;dlpt:20067:13556;doetinchem:19650:32889;dongen:16267:19389;
+dordrecht:18100:16736;drachten:31125:30989;driebruggen:20442:18000;driehuis:24467:16375;
+driemanspolder:20518:14850;driemond:23058:20167;dronten:25250:27181;duindorp:20908:12604;duinzigt:21049:13249;
+duiven:19467:30139;duivendrecht:23294:19396;dymyn:23396:19626;edam:25122:20481;edamu:25122:20481;ede:20333:26583;
+egmond aan de hoef:26233:16528;egmond aan den hoef:26233:16528;egmond aan zee:26204:16271;
+egmond binnen:25958:16556;egmond op den hoef:26233:16528;ehdam:25122:20481;ehjmjojden:24603:16105;
+ehjtgest:25292:17097;ehjtkhorn:22375:18264;eindhoven:14408:24778;elburg:24475:28431;elst:19192:28417;
+emmeloord:27108:27486;emmen:27792:39069;emstaradyama:23740:18897;engel:22417:15375;enschede:22183:38958;
+epe:23475:29833;essesteijn:20853:13726;everdingen:19650:21556;feifuhaizen:23508:16778;feijenoord:19117:15065;
+fijenoord:19117:15065;forubyurufu:20742:13597;forum hadriani:20742:13597;furotoserumeru:25825:18500;
+fwrbrkh:20742:13597;fwrbwrkh:20742:13597;fysb:23075:20417;gaaga:20767:12986;garlem:23808:16368;gauda:20167:17083;
+gaudanum:20167:17083;geertruidenberg:17017:18569;geldermalsen:18808:22889;geldrop:14217:25597;geleen:9742:28292;
+gemeente loenen:22100:20222;gemeente utrecht:20908:21222;gemstede:23499:16230;ghwda:20167:17083;ghwdt:20167:17083;
+glip:23308:16111;goda:20167:17083;goes:15042:8889;goirle:15208:20667;goorn:26258:19472;gorinchem:18365:19724;
+gorn:26425:20597;gouda:20167:17083;gouderak:19842:16778;goudschesluis:21194:16690;gouse sluis:21194:16690;
+gouwsche sluis:21194:16690;gouwsluis:21194:16690;graaf:19808:19792;graft:25608:18306;graftyk:25542:17958;
+grauwaart:20969:20579;grocchermer:25825:18500;groenekan:21233:21528;groenswaard:20515:16454;groningen:32192:35667;
+groot ammers:19233:18236;groot ijsselmonde:18826:15494;grootschermer:25825:18500;grotskhermer:25825:18500;
+guda:20167:17083;haag:20767:12986;haaga:20767:12986;haaksbergen:21567:37389;haarlem:23808:16368;
+haarlemi:23808:16368;haarlemo:23808:16368;haarlim:23808:16368;haastrecht:20007:17764;hag:20767:12986;
+haga:20767:12986;hagestein:19808:21222;hago:20767:12986;hague:20767:12986;haleulleom:23808:16368;
+halfweg:23825:17542;hao teng:20283:21681;haralema:23808:16368;hardenberg:25758:36194;harderwijk:23417:26208;
+harlama:23808:16368;harlem:23808:16368;harlema:23808:16368;harlemas:23808:16368;harlemum:23808:16368;
+harlm:23808:16368;harmelen:20900:19611;haruremu:23808:16368;hauda:20167:17083;hauten:20283:21681;
+hauteon:20283:21681;hawtn:20283:21681;heemskerk:25111:16717;heemskerkerduin:25075:16319;heemstede:23499:16230;
+heerenveen:29593:29185;heerhugowaard:26714:18486;heerlen:8837:29815;heeswijk:20517:19694;
+hei en boeicop:19446:20820;heigeu:20767:12986;heilo:26025:16882;heiloo:26025:16882;heimseutedeo:23499:16230;
+hellevoetsluis:18333:11333;helmond:14817:26611;hem:26608:21833;hemstede:23499:16230;hemusutede:23499:16230;
+hendrik ido ambacht:18442:16389;hengelo:22658:37931;hensbroek:26583:18847;heymsteyde:23499:16230;
+heyrhuxovard:26714:18486;hiemstee:23499:16230;hilfertsom:22233:21764;hillegom:22908:15833;hilversum:22233:21764;
+hilversumse meent:22712:21373;hilvertsheim:22233:21764;hoarn:26425:20597;hoensbroek:9239:29253;
+hofgeest:24433:16583;hoge mors:21562:14603;holeun:26425:20597;hollandsche rading:21750:21778;
+hondshorledijk:20067:12244;honselerdijk:20067:12244;honselersdijk:20067:12244;hoofddorp:23025:16889;
+hoogeveen:27225:34764;hoogezand:31617:37611;hoogmade:21692:15819;hoogmaden:21692:15819;hoogvliet:18633:13625;
+hoorn:26425:20597;horn:26425:20597;horstermeer:22500:20778;horun:26425:20597;houten:20283:21681;
+huizen:22992:22417;hwrn:26425:20597;hwrstrmyr:22500:20778;hwtn:20283:21681;hylfrswm:22233:21764;
+hymstydh:23499:16230;ijmond:24603:16105;ijmuiden:24603:16105;ijselstein:20200:20431;ijsselstein:20200:20431;
+ilp:24542:19069;ilpendam:24633:19500;imuiden:24603:16105;issel stejn:20200:20431;jandam:24385:18264;
+kabauw:19642:18986;kadoelen:24175:19056;kampen:25550:29111;kapelle:19292:15778;kapelleoanden eiseol:19292:15778;
+kastrikjum:25483:16694;kastrikum:25483:16694;kastrkwm:25483:16694;kasutorikumu:25483:16694;
+katendrecht:19007:14825;katijk aan zee:22033:13986;katwijk:21942:14222;katwijk aan de rijn:21942:14222;
+katwijk aan den rijn:21942:14222;katwijk aan zee:22033:13986;katwyk aan zee:22033:13986;kerkehout:21102:13796;
+kerkelanden:22176:21358;kerkrade:8658:30625;khaarlem:23808:16368;khag:20767:12986;khaga:20767:12986;
+khalveg:25242:19278;kharlem:23808:16368;khawda:20167:17083;kheemskerk:25111:16717;khemstede:23499:16230;
+kherkhjugovard:26714:18486;khilversjum:22233:21764;khilversum:22233:21764;khogmade:21692:15819;khorn:26425:20597;
+kievit:21233:13584;kijkduin:20677:12219;knollendam:25175:17917;kop van zuid:19055:14871;kop van zujd:19055:14871;
+kortenhoef:22392:21069;kortenkhov:22392:21069;korteraar:21733:17319;krimpen:19167:16028;
+krimpen aan de yssel:19167:16028;krimpen aan den ijssel:19167:16028;krimpen aan den yssel:19167:16028;
+kudelstaart:22342:17514;kudelstart:22342:17514;kudelstartas:22342:17514;kwadijk:25283:19806;kwake:22392:17931;
+kwakel:22392:17931;kwakl:22392:17931;kwintsheul:20133:12556;lahay:20767:12986;lahey:20767:12986;lahh:20767:12986;
+lai dun:21583:14931;laitan:21583:14931;lajden:21583:14931;landsmeer:24308:19153;landsmer:24308:19153;
+landsmeyr:24308:19153;landsmyr:24308:19153;landvoort:23713:15331;langeheit:24920:17585;langeraar:21933:17111;
+lansmar:24308:19153;laydn:21583:14931;laydrdwrb:21583:15292;laydyn:21583:14931;leerdam:18933:20917;
+leeuwarden:32027:28097;leida:21583:14931;leiden:21583:14931;leidenas:21583:14931;leidene:21583:14931;
+leideni:21583:14931;leideon:21583:14931;leiderdorp:21583:15292;leidsche rijn:20950:20461;leie:21583:14931;
+leien:21583:14931;leimuiden:22242:16694;leinten:21583:14931;lejda:21583:14931;lejdehn:21583:14931;
+lejden:21583:14931;lejdeni:21583:14931;lejderdorp:21583:15292;lejderdorpe:21583:15292;lelystad:25083:24750;
+leusden:21325:24319;leyde:21583:14931;leyden:21583:14931;leyderdorp:21583:15292;leymuiden:22242:16694;
+lid:21800:14319;lier:19750:12486;liesveld:19325:18319;lijnden:23525:17569;limmen:25692:16944;
+linschoten:20625:19153;liserbroek:22567:15722;liserbrukas:22567:15722;lisse:22600:15569;lisserbroek:22567:15722;
+lisserbruk:22567:15722;loasdrecht:22172:20690;loenen:22100:20222;loenen aan de vecht:22100:20222;
+loon op zand:16275:20750;loosdrecht:22172:20690;lopik:19725:19486;lopikerkapel:19917:20458;losser:22608:40042;
+loteleudam:19225:14792;lugdunum:21583:14931;lugdunum batavorum:21583:14931;lunetten:20618:21347;
+lusdrikht:22172:20690;lydn:21583:14931;lysrbrwk:22567:15722;lyydn:21583:14931;maarsen:21392:20417;
+maarssen:21392:20417;maarsseveen:21409:20734;maartensdijk:21550:21750;maasdijk:19592:12139;maasland:19342:12722;
+maassluis:19233:12500;maastricht:8483:26889;magaalada utrecht:20908:21222;marken:24583:21028;marsyn:21392:20417;
+medemblik:27717:21056;meern:20817:20361;meppel:26958:31944;merenwijk:21766:15089;middelburg:15000:6139;
+middelie:25323:20184;middenbeemster:25492:19125;mijdrecht:22067:18625;mokum:23740:18897;mokum aleph:23740:18897;
+monnickendam:24583:20375;monnickenwerf:24583:21028;monnikendam:24583:20375;monnikenwerf:24583:21028;
+monnikkendam:24583:20375;montfoort:20458:19528;mudrecht:22067:18625;muiden:23300:20694;muiderberg:23258:21208;
+naaldwijk:19942:12097;naarden:22958:21625;naldvejk:19942:12097;nieuw loosdrecht:21992:21389;
+nieuw maarseveen:21409:20734;nieuw vennep:22642:16306;nieuwe wetering:22075:16181;nieuwegein:20292:20806;
+nieuwegein zuid:20109:20929;nieuwegen:20292:20806;nieuwer amstel:23008:18639;nieuwerbrug:20783:18139;
+nieuwerbrug aan den rijn:20783:18139;nieuwerkerk:19683:16097;nieuwerkerk aan de ijssel:19683:16097;
+nieuwerkerk aan de yssel:19683:16097;nieuwerkerk aan den ijssel:19683:16097;nieuwerkerk aan den yssel:19683:16097;
+nieuwkoop:21508:17764;nieuwland:19017:20139;nieuwpoort:19358:18681;nieuwveen:21967:17569;nijkerk:22200:24861;
+nijmegen:18425:28528;nijverdal:23600:34681;noord hofland:21406:14586;noord schalkwijk:23611:16548;
+noord scharwoude:26983:18111;noordeinde:20167:14833;noordeloos:19033:19417;noordwijk:22340:14447;
+noordwijk binnen:22340:14447;noordwijkerhout:22617:14931;nootdorp:20450:13958;nte bilt:21100:21806;
+ntelpht:20067:13556;nuenen:14700:25528;nywbrbrwg:20817:18028;obdam:26758:19069;obdamas:26758:19069;
+oegstgeest:21800:14694;oestgeest:21800:14694;oisterwijk:15792:21889;oldenzaal:23133:39292;ommoord:19595:15453;
+oog in al:20864:20847;oostdorp:21499:13932;oosteinde:22792:17958;oosterblokker:26692:21181;oosterhout:16450:18597;
+oosterzij:25850:17056;oosthuizen:25725:19958;oostknollendam:25175:17917;op buuren:21277:20585;
+oranjewijk:20492:16537;oss:17650:25181;oterleek:26367:18347;oud beijerland:18242:14125;oud loosdrecht:22067:20806;
+oud zuilen:21275:20681;oude wetering:22142:16444;ouder amstel:22950:19075;ouderkerk:22950:19075;
+ouderkerk aan de amstel:22950:19075;ouderkerk aan de ijssel:19342:16361;ouderkerk aan de yssel:19342:16361;
+ouderkerk aan den amstel:22950:19075;ouderkerk aan den ijsel:19342:16361;ouderkerk aan den ijssel:19342:16361;
+ouderkerk aan den yssel:19342:16361;oudewater:20250:18681;outrechte:20908:21222;overschie:19386:14277;
+overveen:23917:16139;owtrext:20908:21222;palenstein:20558:15087;pankras:26600:17833;papendrecht:18317:16875;
+papenveer:21850:17250;phuraha uta:22217:14847;pijnacker:20195:14295;pjurmerend:25050:19597;
+plaspoelpolder:20388:13315;poeldijk:20242:12194;pollendam:24950:20708;purmerein:25050:19597;purmerend:25050:19597;
+purumerento:25050:19597;putten:22592:26069;pwileumeleonteu:25050:19597;pwrbwrk:20742:13597;pwrmrnd:25050:19597;
+pynakker:20195:14295;qfa:22592:17597;qhz:23025:16889;quda:20167:17083;qyi:22233:21764;raalte:23858:32750;
+raiden:21583:14931;raisenfuto:22583:17139;ratehrdam:19225:14792;rattartem:19225:14792;reeuwijk:20467:17250;
+reinsburgum:21900:14417;reisenhautas:22583:17139;rejsenkhaut:22583:17139;ridderkerk:18725:16028;
+rijnsaterwoude:21958:16708;rijnsburg:21900:14417;rijnxaterwoude:21958:16708;rijp:25567:18458;
+rijpwetering:21925:15833;rijsenhout:22583:17139;rijssen:23067:35181;rijswijk:20363:13250;
+roelofarendsveen:22033:16333;roermond:11942:29875;roosendaal:15308:14653;rotaradema:19225:14792;
+roterdam:19225:14792;roterdama:19225:14792;roterdamas:19225:14792;roterdami:19225:14792;roterdamo:19225:14792;
+roterdan:19225:14792;roterdao:19225:14792;roterntam:19225:14792;roterodamum:19225:14792;rotterdam:19225:14792;
+rotterudamu:19225:14792;rozenburg:19042:12486;rtm:19225:14792;rtrdam:19225:14792;rwtrdam:19225:14792;
+rwtrdm:19225:14792;rynsburch:21900:14417;ryznhl:22583:17139;s gravenhage:20767:12986;s gravenland:19234:15531;
+s hertogenbosch:16992:23042;sassenheim:22250:15222;sassenkhejm:22250:15222;schalkwijk:23611:16548;
+schellinkhout:26350:21208;schermerhorn:26008:18917;scheveningen:21046:12756;schidamas:19192:13889;
+schiebroek:19584:14712;schiedam:19192:13889;schijndel:16225:24319;schipluiden:19758:13139;
+schoonerwoerd:19208:21167;schoonhoven:19475:18486;schoonrewoerd:19208:21167;sconhouen:19475:18486;
+seuhebening eon:21046:12756;sheveningen:21046:12756;shion:20142:13250;sint pancras:26600:17833;
+sint pankras:26600:17833;sion:20142:13250;sionas:20142:13250;sittard:9983:28694;sjeveninge:21046:12756;
+skeveningen:21046:12756;skhermergorn:26008:18917;skheveningen:21046:12756;skhidam:19192:13889;
+skhipljojden:19758:13139;ski dam:19192:13889;skiedam:19192:13889;skwwnyngn:21046:12756;sliedrecht:18208:17764;
+sneek:30330:26589;snelrewaard:20275:19083;soest:21733:22917;spaarndam:24125:16833;spangen:19169:14354;
+spechtenkamp:21393:20176;spierdijk:26508:19431;spijkenisse:18450:13292;spoorwijk:20535:13134;
+stadskanaal:29895:39504;statenkwartier:20931:12758;steenbergen:15842:13194;stein:20033:17819;stolwijk:19725:17736;
+stompetoren:26133:18208;strijp:20308:13014;suhefeningen:21046:12756;sutain:20033:17819;sxidam:19192:13889;
+sywn hlnd:20142:13250;tegelen:13442:31361;ter aar:21658:17069;terbregge:19533:15154;terneuzen:13358:8278;
+the hague:20767:12986;tiel:18867:24292;tilburg:15555:20913;tubbergen:24075:37847;tuindorp:19303:13784;
+uden:16608:26194;uitgeest:25292:17097;uithof:20853:21746;uithoorn:22375:18264;uitweg:19825:20167;urk:26625:26014;
+utc:20908:21222;utert:20908:21222;utgeast:25292:17097;uthoarn:22375:18264;utrech:20908:21222;utrecht:20908:21222;
+utrechtas:20908:21222;utrehkht:20908:21222;utreht:20908:21222;utrehta:20908:21222;utrehto:20908:21222;
+utrei:20908:21222;utrekhata:20908:21222;utrekht:20908:21222;utrekht khot:20908:21222;utrekhta:20908:21222;
+utreque:20908:21222;utrext:20908:21222;valkenburg:21800:14319;valkenswaard:13508:24597;varmond:21967:15028;
+veendam:31067:38792;veenendaal:20286:25589;veghel:16167:25486;vejfgejzen:23508:16778;veldhuizen:20754:20123;
+velsen:24600:16500;velsen zuid:24600:16500;velserbroek:24328:16616;velzen:24600:16500;venlo:13700:31681;
+venneperdorp:22642:16306;venray:15250:29750;verden:20850:18833;vesp:23075:20417;vest graftdejk:25542:17958;
+veysp:23075:20417;vianen:19925:20917;vijfheizenas:23508:16778;vijfhuizen:23508:16778;vinkeveen:22151:19337;
+vlaardinge:19125:13417;vlaardingen:19125:13417;vleuten:21058:20153;vlietwijk:21244:14574;vlissingen:14425:5736;
+vlist:19800:18194;vogelenzang:23192:15778;vogelwijk:20763:12479;volendam:24950:20708;volendamas:24950:20708;
+vondelwijk:20550:16531;voorburg:20742:13597;voorhout:22217:14847;voorschoten:21275:14486;voorweg:20892:16208;
+vorbiurgas:20742:13597;vorbjurg:20742:13597;vorburg:20742:13597;vorburga:20742:13597;vorkhaut:22217:14847;
+vreeswijk:20109:20929;vught:16533:22875;vurden:20850:18833;waalwijk:16825:20708;waarder:20608:18208;
+waddinxveen:20450:16514;wageningen:19700:26667;warden:25650:20264;warder:25650:20264;warmond:21967:15028;
+wassenaar:21458:14028;waterakkers:25044:16561;weerestein:23038:15886;weert:12517:27069;weesp:23075:20417;
+weijpoort:20817:18028;west graftdijk:25542:17958;west grastdijk:25542:17958;westbroek:21500:21250;
+westwoud:26850:21347;wierden:23592:35931;wijchen:18092:27250;wijdenes:26350:21569;wijdewormer:25002:18924;
+wijk aan zee:24936:15941;wilnis:21967:18972;winterswijk:19725:37194;witeuleheuteu:20908:21222;woerden:20850:18833;
+woerdenscheverlaat:21550:18639;woerdenschverlaat:21550:18639;woerdense verlaat:21550:18639;
+woerdsche verlaat:21550:18639;wormer:24950:18056;woubrugge:21700:16361;wwlndm:24950:20708;
+wwrdnsh frlat:21550:18639;xamstexrdam:23740:18897;ymuiden:24603:16105;ypenburg:20410:13698;yutirekiti:20908:21222;
+yutorehito:20908:21222;yutrekhata:20908:21222;yutrekhta:20908:21222;ywtrkht:20908:21222;ywtrykht:20908:21222;
+zaandam:24385:18264;zaandijk:24749:18069;zaanstad:24531:18136;zaltbommel:18100:22444;zan dan:24385:18264;
+zandam:24385:18264;zandamas:24385:18264;zandamu:24385:18264;zandvoort:23713:15331;zandweg oostwaard:21364:20520;
+zaydskhrmr:25850:17792;zegveld:21150:18361;zeist:20900:22333;zejdskhermer:25850:17792;zeutermaer:20575:14931;
+zevenaar:19300:30708;zevenhoven:21817:17792;zijderveld:19417:21403;zoetermeer:20575:14931;zoeterwoude:21200:14958;
+zoeterwoude dorp:21200:14958;zuid scharwoude:26867:18083;zuidbakkum:25595:16572;zuidbuurt:21083:15042;
+zuidschermer:25850:17792;zuidzijde:20800:17722;zuilen:21275:20681;zutphen:21383:32014;zvansguk:23125:16167;
+zvanshukas:23125:16167;zwaagdijk west:26750:20542;zwaanshoek:23125:16167;zwagdayk wst:26750:20542;
+zwanenburg:23800:17458;zwijndrecht:18175:16333;zwolle:25125:30944;zwtrmyyr:20575:14931
+`;
+
+function plaatsSleutel(naam) {
+  return (naam || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+let plaatsGeoCache = null;
+function plaatsGeoTabel() {
+  if (plaatsGeoCache) return plaatsGeoCache;
+  plaatsGeoCache = new Map();
+  PLAATS_GEO_RUW.split(/[;\n]+/).forEach(regel => {
+    const d = regel.split(':');
+    if (d.length !== 3) return;
+    plaatsGeoCache.set(d[0], {
+      lat: (parseInt(d[1], 10) + PLAATS_GEO_LAT0) / 1e4,
+      lon: (parseInt(d[2], 10) + PLAATS_GEO_LON0) / 1e4,
+    });
+  });
+  return plaatsGeoCache;
+}
+
+function geoVanPlaats(plaats) {
+  return plaatsGeoTabel().get(plaatsSleutel(plaats)) || null;
+}
+
+// Per plaats de openstaande storingen van de nieuwste dag, met positie erbij.
+// Plaatsen die niet in de tabel staan gaan niet verloren maar komen als
+// aparte melding onder de kaart te staan — anders zou je stilzwijgend werk
+// kwijtraken, en dat is het laatste wat een planningshulpmiddel mag doen.
+function buildKaartPunten() {
+  const snaps = chronoSnapshots();
+  if (snaps.length === 0) return { punten: [], zonderPositie: [], totaal: 0, datum: '' };
+  const open = typeFiltered(snaps[snaps.length - 1].storingen);
+
+  const perPlaats = new Map();
+  open.forEach(s => {
+    const naam = (s.city || '').trim() || 'Onbekend';
+    let p = perPlaats.get(naam);
+    if (!p) { p = { plaats: naam, storingen: [] }; perPlaats.set(naam, p); }
+    p.storingen.push(s);
+  });
+
+  const punten = [];
+  const zonderPositie = [];
+  perPlaats.forEach(p => {
+    const dagen = p.storingen.map(s => (typeof s.daysLeft === 'number' ? s.daysLeft : null)).filter(d => d !== null);
+    const rij = {
+      plaats: p.plaats,
+      aantal: p.storingen.length,
+      mio: p.storingen.filter(isMastGeenSpanning).length,
+      verlopen: p.storingen.filter(s => s.overdue).length,
+      geblokkeerd: p.storingen.filter(isOvBlocked).length,
+      vroegste: dagen.length ? Math.min(...dagen) : null,
+      storingen: p.storingen.slice().sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999)),
+    };
+    const geo = geoVanPlaats(p.plaats);
+    if (geo) { rij.lat = geo.lat; rij.lon = geo.lon; punten.push(rij); }
+    else zonderPositie.push(rij);
+  });
+
+  punten.sort((a, b) => b.aantal - a.aantal || a.plaats.localeCompare(b.plaats));
+  zonderPositie.sort((a, b) => b.aantal - a.aantal || a.plaats.localeCompare(b.plaats));
+  return { punten, zonderPositie, totaal: open.length, datum: snaps[snaps.length - 1].week };
+}
+
+// Equirectangulaire projectie: op de schaal van een regio is dat nauwkeurig
+// genoeg, mits de lengtegraden worden ingekort met de cosinus van de breedte —
+// anders wordt de kaart in oost-westrichting uitgerekt en kloppen de afstanden
+// die je er visueel van afleest niet meer.
+const KAART_BREEDTE = 760;
+const KAART_MARGE = 46;
+const KAART_MAX_HOOGTE = 560;
+const KM_PER_GRAAD = 111.32;
+
+function kaartProjectie(punten) {
+  const latMid = punten.reduce((s, p) => s + p.lat, 0) / punten.length;
+  const kx = Math.cos(latMid * Math.PI / 180);
+  const xs = punten.map(p => p.lon * kx);
+  const ys = punten.map(p => -p.lat);
+  // Bij een enkele plaats of een rijtje op één lijn is er geen spreiding om op
+  // te schalen; dan een vaste marge van ruwweg 5 km aanhouden.
+  const minSpan = 5 / KM_PER_GRAAD;
+  let x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = Math.min(...ys), y1 = Math.max(...ys);
+  if (x1 - x0 < minSpan) { const m = (x0 + x1) / 2; x0 = m - minSpan / 2; x1 = m + minSpan / 2; }
+  if (y1 - y0 < minSpan) { const m = (y0 + y1) / 2; y0 = m - minSpan / 2; y1 = m + minSpan / 2; }
+
+  const vlak = KAART_BREEDTE - 2 * KAART_MARGE;
+  const schaal = vlak / (x1 - x0);
+  const hoogte = Math.min(KAART_MAX_HOOGTE, Math.max(300, (y1 - y0) * schaal + 2 * KAART_MARGE));
+  // Verticaal binnen de beschikbare hoogte passen zonder de verhouding te
+  // verstoren: dezelfde schaal, alleen gecentreerd.
+  const schaalDef = Math.min(schaal, (hoogte - 2 * KAART_MARGE) / (y1 - y0));
+  const dx = (KAART_BREEDTE - (x1 - x0) * schaalDef) / 2;
+  const dy = (hoogte - (y1 - y0) * schaalDef) / 2;
+  return {
+    hoogte,
+    kmPerPixel: 1 / (schaalDef / KM_PER_GRAAD),
+    x: (p) => (p.lon * kx - x0) * schaalDef + dx,
+    y: (p) => (-p.lat - y0) * schaalDef + dy,
+  };
+}
+
+// Taartpunt voor het aandeel "mast geen spanning" binnen een plaats. Groen en
+// paars zijn het al gevalideerde kleurenpaar uit de rest van het dashboard
+// (scripts/validate_palette.js), dus ook onder kleurenblindheid te scheiden.
+function kaartTaartPad(cx, cy, r, deel) {
+  if (deel <= 0) return '';
+  if (deel >= 1) return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--series-2)"></circle>`;
+  const hoek = deel * 2 * Math.PI;
+  const x1 = cx + r * Math.sin(hoek);
+  const y1 = cy - r * Math.cos(hoek);
+  const groot = hoek > Math.PI ? 1 : 0;
+  return `<path d="M ${cx} ${cy} L ${cx} ${cy - r} A ${r} ${r} 0 ${groot} 1 ${x1.toFixed(1)} ${y1.toFixed(1)} Z" fill="var(--series-2)"></path>`;
+}
+
+// Een raster van hele kilometers. Zonder ondergrond is een stippenkaart lastig
+// te lezen — het raster geeft de lege ruimte betekenis: je ziet in één oogopslag
+// hoe ver twee plaatsen uit elkaar liggen zonder de schaalbalk erbij te pakken.
+function kaartRaster(kmPerPixel, hoogte) {
+  const stap = kaartNetteAfstand(kmPerPixel) / kmPerPixel;
+  if (!isFinite(stap) || stap < 20) return '';
+  const lijnen = [];
+  for (let x = stap; x < KAART_BREEDTE; x += stap) lijnen.push(`<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${hoogte}"></line>`);
+  for (let y = stap; y < hoogte; y += stap) lijnen.push(`<line x1="0" y1="${y.toFixed(1)}" x2="${KAART_BREEDTE}" y2="${y.toFixed(1)}"></line>`);
+  return `<g class="kaart-raster">${lijnen.join('')}</g>`;
+}
+
+// Een "nette" afstand (1, 2, 5, 10 ... km) die ongeveer een vijfde van de kaart
+// beslaat — zowel voor de schaalbalk als voor de rasterstap.
+function kaartNetteAfstand(kmPerPixel) {
+  const kandidaten = [1, 2, 5, 10, 20, 50];
+  const doel = (KAART_BREEDTE - 2 * KAART_MARGE) * 0.22 * kmPerPixel;
+  return kandidaten.reduce((b, k) => (Math.abs(k - doel) < Math.abs(b - doel) ? k : b), kandidaten[0]);
+}
+
+function kaartSchaalbalk(kmPerPixel, hoogte) {
+  const km = kaartNetteAfstand(kmPerPixel);
+  const px = km / kmPerPixel;
+  const x = KAART_MARGE, y = hoogte - 18;
+  return `<g class="kaart-schaal">
+    <line x1="${x}" y1="${y}" x2="${x + px}" y2="${y}"></line>
+    <line x1="${x}" y1="${y - 4}" x2="${x}" y2="${y + 4}"></line>
+    <line x1="${x + px}" y1="${y - 4}" x2="${x + px}" y2="${y + 4}"></line>
+    <text x="${x + px + 8}" y="${y + 4}">${km} km</text>
+  </g>`;
+}
+
+// Labels botsen zodra twee plaatsen dicht bij elkaar liggen — Leiden en
+// Leiderdorp schelen maar 2,5 km. Daarom per plaats acht richtingen op drie
+// afstanden proberen en de eerste nemen die helemaal vrij is; lukt dat
+// nergens, dan de positie met de minste overlap. Een label weglaten is geen
+// optie: dan raak je op de kaart een plaats kwijt.
+const KAART_LETTER = 5.9; // gemiddelde breedte per teken bij 11px
+const KAART_LABEL_HOEKEN = [90, 270, 0, 180, 45, 135, 315, 225];
+const KAART_LABEL_AFSTANDEN = [8, 20, 34];
+
+function kaartLabelPlaatsing(markers, hoogte) {
+  const bezet = [];
+  return markers.map(m => {
+    const tekst = `${m.p.plaats} \u00b7 ${m.p.aantal}`;
+    const breedte = tekst.length * KAART_LETTER;
+    const opties = [];
+    KAART_LABEL_AFSTANDEN.forEach(extra => {
+      KAART_LABEL_HOEKEN.forEach(hoek => {
+        const rad = hoek * Math.PI / 180;
+        const d = m.r + extra;
+        const px = m.cx + Math.cos(rad) * d;
+        const py = m.cy + Math.sin(rad) * d;
+        // Recht boven/onder komt het label gecentreerd; opzij hangt het aan de
+        // buitenkant, zodat het van de cirkel af leest.
+        const anker = Math.abs(Math.cos(rad)) < 0.3 ? 'middle' : (Math.cos(rad) > 0 ? 'start' : 'end');
+        const y = Math.abs(Math.cos(rad)) < 0.3 ? (Math.sin(rad) > 0 ? py + 10 : py - 3) : py + 4;
+        const bx = anker === 'middle' ? px - breedte / 2 : (anker === 'start' ? px : px - breedte);
+        opties.push({ x: px, y, anker, bx });
+      });
+    });
+
+    // Overlap in vierkante pixels: nul is vrij, en anders wint de positie die
+    // het minste botst. Zo valt een label nooit stilzwijgend bovenop een ander.
+    const overlap = (a, b) => Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1))
+      * Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1));
+    const kosten = (o) => {
+      const vak = { x1: o.bx, y1: o.y - 10, x2: o.bx + breedte, y2: o.y + 3 };
+      let som = 0;
+      if (vak.x1 < 2 || vak.x2 > KAART_BREEDTE - 2 || vak.y1 < 2 || vak.y2 > hoogte - 22) som += 4000;
+      markers.forEach(a => {
+        if (a === m) return;
+        som += overlap(vak, { x1: a.cx - a.r, y1: a.cy - a.r, x2: a.cx + a.r, y2: a.cy + a.r });
+      });
+      bezet.forEach(b => { som += overlap(vak, b) * 2; });
+      return som;
+    };
+
+    let beste = opties[0], besteKosten = Infinity;
+    for (const o of opties) {
+      const k = kosten(o);
+      if (k === 0) { beste = o; besteKosten = 0; break; }
+      if (k < besteKosten) { beste = o; besteKosten = k; }
+    }
+    bezet.push({ x1: beste.bx, y1: beste.y - 10, x2: beste.bx + breedte, y2: beste.y + 3 });
+    return beste;
+  });
+}
+
+function renderKaartCard() {
+  const container = document.getElementById('kaart-body');
+  if (!container) return;
+  const { punten, zonderPositie, totaal } = buildKaartPunten();
+
+  if (totaal === 0) {
+    container.innerHTML = '<p class="empty-note">Nog geen openstaande storingen om op de kaart te zetten.</p>';
+    return;
+  }
+  if (punten.length === 0) {
+    container.innerHTML = `<p class="empty-note">Geen van de plaatsen in de lijst staat in de plaatsentabel, dus er valt niets te tekenen. Het gaat om: ${esc(zonderPositie.map(p => p.plaats).join(', '))}.</p>`;
+    return;
+  }
+
+  const proj = kaartProjectie(punten);
+  const maxAantal = Math.max(...punten.map(p => p.aantal));
+  const straal = (n) => Math.max(6, 28 * Math.sqrt(n / maxAantal));
+
+  // Grootste cirkels eerst, zodat kleine plaatsen er niet onder verdwijnen
+  // wanneer twee dorpen dicht bij elkaar liggen.
+  const geordend = punten.slice().sort((a, b) => b.aantal - a.aantal)
+    .map(p => ({ p, cx: proj.x(p), cy: proj.y(p), r: straal(p.aantal) }));
+  const labels = kaartLabelPlaatsing(geordend, proj.hoogte);
+
+  const markers = geordend.map((m, i) => {
+    const { p, cx, cy, r } = m;
+    const lab = labels[i];
+    const actief = state.kaartPlaats === p.plaats;
+    const titel = `${p.plaats}: ${p.aantal} open${p.mio > 0 ? `, ${p.mio}x mast geen spanning` : ''}${p.verlopen > 0 ? `, ${p.verlopen}x verlopen` : ''}`;
+    return `<g class="kaart-punt${actief ? ' actief' : ''}${p.verlopen > 0 ? ' heeft-verlopen' : ''}" data-kaart-plaats="${esc(p.plaats)}" tabindex="0" role="button" aria-label="${esc(titel)}">
+      <title>${esc(titel)}</title>
+      <circle class="kaart-bol" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}"></circle>
+      ${kaartTaartPad(cx, cy, r, p.mio / p.aantal)}
+      <circle class="kaart-ring" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}"></circle>
+      <text class="kaart-label" x="${lab.x.toFixed(1)}" y="${lab.y.toFixed(1)}" text-anchor="${lab.anker}">${esc(p.plaats)} \u00b7 ${p.aantal}</text>
+    </g>`;
+  }).join('');
+
+  const svg = `<svg class="kaart-svg" viewBox="0 0 ${KAART_BREEDTE} ${Math.round(proj.hoogte)}" role="img" aria-label="Kaart met openstaande storingen per plaats">
+    ${kaartRaster(proj.kmPerPixel, proj.hoogte)}
+    ${kaartSchaalbalk(proj.kmPerPixel, proj.hoogte)}
+    ${markers}
+  </svg>`;
+
+  const opKaart = punten.reduce((n, p) => n + p.aantal, 0);
+  const kop = `<p class="prognose-headline"><strong>${opKaart}</strong> van de ${totaal} openstaande storingen, verdeeld over <strong>${punten.length}</strong> ${punten.length === 1 ? 'plaats' : 'plaatsen'}. De grootte van een stip is het aantal storingen; klik een plaats aan voor de lijst.</p>`;
+
+  const legenda = `<div class="kaart-legenda">
+    <span><i class="kaart-vlak kaart-vlak-overig"></i>overige storingen</span>
+    <span><i class="kaart-vlak kaart-vlak-mio"></i>mast geen spanning</span>
+    <span><i class="kaart-vlak kaart-vlak-verlopen"></i>plaats met verlopen storingen</span>
+  </div>`;
+
+  const ontbreekt = zonderPositie.length === 0 ? '' :
+    `<p class="muted small">Zonder positie op de kaart: ${esc(zonderPositie.map(p => `${p.plaats} (${p.aantal})`).join(', '))}. Deze plaatsnamen staan niet in de ingebouwde plaatsentabel.</p>`;
+
+  const bron = '<p class="muted small">Stippen staan op het centrum van de plaats, niet op het adres van de storing — voor de precieze ligging binnen een plaats: zie de clusters hieronder. Plaatscoordinaten: GeoNames, CC BY 4.0.</p>';
+
+  container.innerHTML = kop + `<div class="kaart-vlakje">${svg}</div>` + legenda + kaartDetailHtml(punten, zonderPositie) + ontbreekt + bron;
+}
+
+// De lijst achter een aangeklikte plaats. Bewust in dezelfde kaart en niet als
+// aparte pop-up: je klikt hier om te zien wat er in een plaats openstaat, en
+// dan wil je de kaart ernaast houden om de volgende plaats te kunnen kiezen.
+function kaartDetailHtml(punten, zonderPositie) {
+  if (!state.kaartPlaats) return '';
+  const p = punten.concat(zonderPositie).find(x => x.plaats === state.kaartPlaats);
+  if (!p) return '';
+  const merk = [];
+  if (p.mio > 0) merk.push(`${p.mio}x mast geen spanning`);
+  if (p.verlopen > 0) merk.push(`${p.verlopen}x verlopen`);
+  if (p.geblokkeerd > 0) merk.push(`${p.geblokkeerd}x geblokkeerd`);
+  const rijen = p.storingen.map(s => `
+    <tr>
+      <td>${orderLinkHtml(s.order)}</td>
+      <td>${esc(s.street)}, ${esc(s.postcode)}</td>
+      <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}</td>
+      <td>${ovStatusPillHtml(s)}</td>
+      <td class="num">${renderDaysPill(s)}</td>
+    </tr>`).join('');
+  return `<div class="kaart-detail">
+    <div class="kaart-detail-kop">
+      <strong>${esc(p.plaats)}</strong>
+      <span class="cluster-aantal">${p.aantal} open</span>
+      ${merk.length ? `<span class="cluster-meta">${esc(merk.join(' \u00b7 '))}</span>` : ''}
+      <button type="button" class="btn-link" id="kaart-sluit">sluiten</button>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Order</th><th>Adres</th><th>Type</th><th>Status</th><th class="num">Dagen</th></tr></thead>
+        <tbody>${rijen}</tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 /* ---------- Clusters: openstaande storingen die dicht bij elkaar liggen ---------- */
@@ -3685,6 +4204,7 @@ function renderDashboardFromState() {
   renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
   renderTrendChart(perDag); // idem, filtert zelf op state.activeFilter
   renderGebiedPlaatsenCard();
+  renderKaartCard();
   renderClusterCard();
   renderInUitCard();
   renderWvGebiedCard();
@@ -4092,6 +4612,30 @@ function wireEvents() {
       renderClusterCard();
     });
   });
+
+  // Een plaats op de kaart aanklikken opent de lijst eronder; nog een keer
+  // klikken sluit hem weer, zodat de kaart als schakelaar werkt.
+  const kaartBody = document.getElementById('kaart-body');
+  if (kaartBody) {
+    const kies = (plaats) => {
+      state.kaartPlaats = state.kaartPlaats === plaats ? null : plaats;
+      renderKaartCard();
+      const detail = document.querySelector('#kaart-body .kaart-detail');
+      if (detail) detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    };
+    kaartBody.addEventListener('click', (e) => {
+      if (e.target.closest('#kaart-sluit')) { state.kaartPlaats = null; renderKaartCard(); return; }
+      const punt = e.target.closest('[data-kaart-plaats]');
+      if (punt) kies(punt.dataset.kaartPlaats);
+    });
+    kaartBody.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const punt = e.target.closest('[data-kaart-plaats]');
+      if (!punt) return;
+      e.preventDefault();
+      kies(punt.dataset.kaartPlaats);
+    });
+  }
 
   document.querySelectorAll('#recidive-mode button[data-recidive-mode]').forEach(btn => {
     btn.addEventListener('click', () => {
