@@ -144,7 +144,7 @@
       <span class="panel-icon">🗺️</span>
       <div>
         <h2>Gebieden</h2>
-        <p>Waar het werk zit. Bovenaan de clusters: openstaande storingen die dicht bij elkaar liggen en dus in één rit kunnen worden ingepland. Daaronder per gebiedscode en plaats hoeveel storingen daar ooit vandaan kwamen en hoe ze er nu voor staan — handig om structurele probleemplekken op te sporen.</p>
+        <p>Waar het werk zit. Bovenaan de clusters: openstaande storingen die dicht bij elkaar liggen en dus in één rit kunnen worden ingepland. Daaronder het verloop per gebied en de werkvoorraad per plaats — handig om te zien waar het zich opstapelt.</p>
       </div>
     </div>
 
@@ -194,7 +194,8 @@
     </section>
 
     <section class="card">
-      <h2>🗺️ Per gebiedscode en plaats</h2>
+      <h2>🗺️ Werkvoorraad per plaats</h2>
+      <p class="muted small">Hoeveel storingen er per plaats open staan, drukste bovenaan. Staat een plaats in meerdere gebiedscodes, dan klap je de plaatsnaam uit om te zien hoe het daarbinnen verdeeld is.</p>
       <div id="gebied-plaatsen-body" class="table-scroll"></div>
     </section>
   </section>
@@ -259,8 +260,9 @@
 
     <section class="card">
       <h2>🔁 Herhaallocaties</h2>
-      <p class="muted small">Plekken met twee of meer storingen sinds het begin van de metingen. Herhaling op dezelfde plek wijst op iets structureels in plaats van pech — en de gemiddelde tussentijd laat zien of het versnelt. Elke storing telt één keer mee, op de plek waar 'ie het eerst gezien werd.</p>
+      <p class="muted small">Plekken met twee of meer storingen sinds het begin van de metingen. Herhaling op dezelfde plek wijst op iets structureels in plaats van pech — en de gemiddelde tussentijd laat zien of het versnelt. Kies "Per plaats" voor het overzicht per dorp of stad, of ga een niveau dieper naar straat of asset. Klik een regel open voor wat eronder valt.</p>
       <div class="filter-tabs recidive-mode" id="recidive-mode">
+        <button type="button" class="filter-tab" data-recidive-mode="plaats">Per plaats</button>
         <button type="button" class="filter-tab active" data-recidive-mode="straat">Per straat</button>
         <button type="button" class="filter-tab" data-recidive-mode="asset">Per asset</button>
       </div>

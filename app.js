@@ -609,7 +609,8 @@ const state = {
   typeWhitelist: [],
   activeFilter: 'Totaal',
   sortState: { key: 'daysLeft', dir: 1 },
-  gebiedSortState: { key: 'regio', dir: 1 },
+  gebiedSortState: { key: 'nuOpen', dir: -1 },
+  gebiedOpen: new Set(),
   wvSortState: { key: 'nuOpen', dir: -1 },
   lastBackupAt: null,
   capaciteit: { meetdienst: 0, mio: 0 },
@@ -1811,16 +1812,51 @@ function buildGebiedPlaatsenStats() {
   return Object.values(stats);
 }
 
+// De tabel stond per (gebiedscode, plaats)-combinatie, waardoor Leiden op drie
+// regels kon staan en je zelf moest optellen om te weten hoeveel er in Leiden
+// open staat. De plaats is nu de hoofdregel — dat is de eenheid waarin je denkt
+// als je een rit plant — en de gebiedscodes eronder zijn één klik weg voor wie
+// wil weten hoe het binnen die plaats verdeeld is.
+function gebiedSleutelCel(r) {
+  const open = state.gebiedOpen.has(r.plaats);
+  const meer = r.gebieden.length > 1;
+  const tekst = esc(r.plaats) + (meer ? ` <span class="muted small">(${r.gebieden.length} gebieden)</span>` : '');
+  if (!meer) return `<td><span class="gebied-enkel">${tekst}</span></td>`;
+  return `<td><button type="button" class="recidive-toggle${open ? ' open' : ''}" data-gebied-plaats="${esc(r.plaats)}"`
+    + ` aria-expanded="${open}" title="${open ? 'Gebiedscodes verbergen' : 'Bekijk de verdeling over gebiedscodes'}">`
+    + `<span class="recidive-caret" aria-hidden="true">${open ? '▾' : '▸'}</span>${tekst}</button></td>`;
+}
+
 const GEBIED_STATS_COLUMNS = [
-  { key: 'regio', label: 'Regio', cell: r => `<td>${esc(regioGroupLabel(r.regio))}</td>` },
-  { key: 'gebiedscode', label: 'Gebiedscode', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
-  { key: 'plaats', label: 'Plaats', cell: r => `<td>${esc(r.plaats)}</td>` },
-  { key: 'totaal', label: 'Totaal ooit', num: true, cell: r => `<td class="num">${r.totaal}</td>` },
-  { key: 'nuOpen', label: 'Nu open', num: true, cell: r => `<td class="num">${r.nuOpen}</td>` },
-  { key: 'doorlooptijd', label: 'Gem. doorlooptijd', num: true, cell: r => `<td class="num">${r.doorlooptijd == null ? '—' : r.doorlooptijd.toFixed(1) + ' dgn'}</td>` },
+  { key: 'plaats', label: 'Plaats', cell: r => gebiedSleutelCel(r) },
+  { key: 'regio', label: 'Regio', cell: r => `<td>${esc(r.regioLabel)}</td>` },
+  { key: 'nuOpen', label: 'Nu open', num: true, cell: r => `<td class="num"><strong>${r.nuOpen}</strong></td>` },
+  { key: 'actieNodig', label: 'Actie nodig nu', num: true, cell: r => `<td class="num${r.actieNodig > 0 ? ' prognose-bad' : ''}">${r.actieNodig}</td>` },
   { key: 'geblokkeerd', label: 'Geblokkeerd nu', num: true, cell: r => `<td class="num">${r.geblokkeerd}</td>` },
-  { key: 'actieNodig', label: 'Actie nodig nu', num: true, cell: r => `<td class="num">${r.actieNodig}</td>` },
+  { key: 'totaal', label: 'Totaal ooit', num: true, cell: r => `<td class="num">${r.totaal}</td>` },
+  { key: 'doorlooptijd', label: 'Gem. doorlooptijd', num: true, cell: r => `<td class="num">${r.doorlooptijd == null ? '—' : r.doorlooptijd.toFixed(1) + ' dgn'}</td>` },
 ];
+
+function gebiedDetailHtml(r) {
+  const rijen = r.gebieden.slice().sort((a, b) => b.nuOpen - a.nuOpen || a.gebiedscode.localeCompare(b.gebiedscode)).map(g => `<tr>
+    <td>${esc(g.gebiedscode)}</td>
+    <td>${esc(regioGroupLabel(regioGroupOf({ gebiedscode: g.gebiedscode })))}</td>
+    <td class="num">${g.nuOpen}</td>
+    <td class="num">${g.actieNodig}</td>
+    <td class="num">${g.geblokkeerd}</td>
+    <td class="num">${g.totaal}</td>
+    <td class="num">${g.doorlooptijd == null ? '—' : g.doorlooptijd.toFixed(1) + ' dgn'}</td>
+  </tr>`).join('');
+  return `<div class="recidive-detail">
+      <p class="muted small">Verdeling binnen ${esc(r.plaats)} over de gebiedscodes.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Gebiedscode</th><th>Regio</th><th class="num">Nu open</th><th class="num">Actie nodig</th><th class="num">Geblokkeerd</th><th class="num">Totaal ooit</th><th class="num">Gem. doorlooptijd</th></tr></thead>
+          <tbody>${rijen}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
 
 function renderGebiedOnbekendNotice() {
   const el = document.getElementById('gebied-onbekend');
@@ -1842,20 +1878,53 @@ function renderGebiedPlaatsenCard() {
     container.innerHTML = '<p class="empty-note">Nog geen gebiedscodes bekend — deze verschijnen zodra je een paste met gebiedscodes verwerkt.</p>';
     return;
   }
-  const rows = stats
-    .map(s => ({
+  // Eerst per gebiedscode+plaats (zoals de berekening ze oplevert), daarna
+  // opgeteld naar plaatsniveau. De doorlooptijd wordt gewogen op het aantal
+  // metingen, niet als gemiddelde van gemiddelden — anders zou een gebiedscode
+  // met één afgeronde storing even zwaar wegen als eentje met vijftig.
+  const perPlaats = new Map();
+  stats.forEach(s => {
+    const gebied = {
       gebiedscode: s.gebiedscode,
-      plaats: s.plaats,
-      regio: regioGroupOf({ gebiedscode: s.gebiedscode }),
       totaal: s.orders.size,
       nuOpen: s.nuOpen,
       geblokkeerd: s.geblokkeerd,
       actieNodig: s.actieNodig,
+      doorlooptijden: s.doorlooptijden,
       doorlooptijd: s.doorlooptijden.length ? s.doorlooptijden.reduce((a, b) => a + b, 0) / s.doorlooptijden.length : null,
-    }))
-    .sort((a, b) => a.gebiedscode.localeCompare(b.gebiedscode) || a.plaats.localeCompare(b.plaats));
+    };
+    let p = perPlaats.get(s.plaats);
+    if (!p) {
+      p = { plaats: s.plaats, totaal: 0, nuOpen: 0, geblokkeerd: 0, actieNodig: 0, doorlooptijden: [], gebieden: [], regios: new Set() };
+      perPlaats.set(s.plaats, p);
+    }
+    p.totaal += gebied.totaal;
+    p.nuOpen += gebied.nuOpen;
+    p.geblokkeerd += gebied.geblokkeerd;
+    p.actieNodig += gebied.actieNodig;
+    p.doorlooptijden = p.doorlooptijden.concat(s.doorlooptijden);
+    p.gebieden.push(gebied);
+    p.regios.add(regioGroupOf({ gebiedscode: s.gebiedscode }));
+  });
+
+  const rows = Array.from(perPlaats.values()).map(p => ({
+    plaats: p.plaats,
+    // Een plaats kan (zeldzaam) over twee regio's verdeeld zijn; dan tonen we
+    // dat in plaats van er stilzwijgend één te kiezen.
+    regioLabel: sortByGroupOrder(Array.from(p.regios)).map(regioGroupLabel).join(' + '),
+    nuOpen: p.nuOpen,
+    actieNodig: p.actieNodig,
+    geblokkeerd: p.geblokkeerd,
+    totaal: p.totaal,
+    doorlooptijd: p.doorlooptijden.length ? p.doorlooptijden.reduce((a, b) => a + b, 0) / p.doorlooptijden.length : null,
+    gebieden: p.gebieden,
+  }));
+
   const sorted = sortByState(rows, state.gebiedSortState);
-  renderFullTable(container, sorted, GEBIED_STATS_COLUMNS, state.gebiedSortState);
+  renderFullTable(container, sorted, GEBIED_STATS_COLUMNS, state.gebiedSortState, {
+    isExpanded: (r) => r.gebieden.length > 1 && state.gebiedOpen.has(r.plaats),
+    detailCell: gebiedDetailHtml,
+  });
 }
 
 // Alleen deze 4 WV'ers zijn relevant genoeg om apart te volgen — andere
@@ -2863,6 +2932,86 @@ function straatZonderHuisnummer(street) {
   return zonder || street.trim();
 }
 
+// Samenvatting per plaats: hoeveel straten daar meer dan één storing hadden,
+// hoeveel storingen daarmee gemoeid zijn, en welk deel van alle storingen in
+// die plaats dat is. Dat laatste is het eigenlijke signaal — twintig
+// herhaalstoringen in een grote plaats zegt iets anders dan twintig in een dorp.
+// Gebaseerd op de straat-indeling, want dat is de plek waar een monteur naartoe
+// gaat; per asset zou dezelfde straat met twee verschillende masten niet als
+// herhaling tellen.
+function buildRecidivePerPlaats() {
+  const alle = buildOrderIndex();
+  const totaalPerPlaats = {};
+  alle.forEach(r => {
+    const stad = r.city || 'Onbekend';
+    totaalPerPlaats[stad] = (totaalPerPlaats[stad] || 0) + 1;
+  });
+
+  const perPlaats = new Map();
+  buildRecidiveStats('straat').forEach(g => {
+    let p = perPlaats.get(g.city);
+    if (!p) {
+      p = { key: g.city, plaats: g.city, regios: new Set(), plekken: 0, storingen: 0, nuOpen: 0, tussentijden: [], doorlooptijden: [], straten: [] };
+      perPlaats.set(g.city, p);
+    }
+    p.plekken++;
+    p.storingen += g.aantal;
+    p.nuOpen += g.nuOpen;
+    if (g.tussentijd != null) p.tussentijden.push(g.tussentijd);
+    if (g.doorlooptijd != null) p.doorlooptijden.push(g.doorlooptijd);
+    if (g.gebiedscode && g.gebiedscode !== '—') p.regios.add(regioGroupOf({ gebiedscode: g.gebiedscode }));
+    p.straten.push(g);
+  });
+
+  const gem = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
+  return Array.from(perPlaats.values()).map(p => ({
+    key: p.key,
+    plaats: p.plaats,
+    regio: p.regios.size ? sortByGroupOrder(Array.from(p.regios)).map(regioGroupLabel).join(' + ') : '—',
+    plekken: p.plekken,
+    aantal: p.storingen,
+    totaalPlaats: totaalPerPlaats[p.plaats] || p.storingen,
+    aandeel: totaalPerPlaats[p.plaats] ? p.storingen / totaalPerPlaats[p.plaats] : null,
+    nuOpen: p.nuOpen,
+    tussentijd: gem(p.tussentijden),
+    doorlooptijd: gem(p.doorlooptijden),
+    straten: p.straten,
+  }));
+}
+
+const RECIDIVE_COLUMNS_PLAATS = [
+  { key: 'plaats', label: 'Plaats', cell: r => recidiveSleutelCel(r, r.plaats) },
+  { key: 'regio', label: 'Regio', cell: r => `<td>${esc(r.regio)}</td>` },
+  { key: 'plekken', label: 'Herhaalplekken', num: true, cell: r => `<td class="num"><strong>${r.plekken}</strong></td>` },
+  { key: 'aantal', label: 'Storingen daarop', num: true, cell: r => `<td class="num">${r.aantal}</td>` },
+  { key: 'aandeel', label: 'Aandeel in plaats', num: true, cell: r => `<td class="num">${r.aandeel == null ? '—' : Math.round(r.aandeel * 100) + '%'}</td>` },
+  { key: 'nuOpen', label: 'Nu open', num: true, cell: r => `<td class="num">${r.nuOpen}</td>` },
+  { key: 'tussentijd', label: 'Gem. tussentijd', num: true, cell: r => `<td class="num">${r.tussentijd == null ? '—' : Math.round(r.tussentijd) + ' dgn'}</td>` },
+  { key: 'doorlooptijd', label: 'Gem. doorlooptijd', num: true, cell: r => `<td class="num">${r.doorlooptijd == null ? '—' : r.doorlooptijd.toFixed(0) + ' dgn'}</td>` },
+];
+
+function recidivePlaatsDetailHtml(r) {
+  const rijen = r.straten.slice().sort((a, b) => b.aantal - a.aantal || a.street.localeCompare(b.street)).map(g => `<tr>
+    <td>${esc(g.street)}</td>
+    <td>${esc(g.gebiedscode)}</td>
+    <td class="num">${g.aantal}</td>
+    <td class="num">${g.adressen}</td>
+    <td class="num">${g.tussentijd == null ? '—' : Math.round(g.tussentijd) + ' dgn'}</td>
+    <td>${esc(g.eerste)}</td>
+    <td>${esc(g.laatste)}</td>
+    <td class="num">${g.nuOpen}</td>
+  </tr>`).join('');
+  return `<div class="recidive-detail">
+      <p class="muted small">Straten in ${esc(r.plaats)} met twee of meer storingen. Wissel naar "Per straat" voor de losse orders per plek.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Straat</th><th>Gebied</th><th class="num">Storingen</th><th class="num">Adressen</th><th class="num">Gem. tussentijd</th><th>Eerste</th><th>Laatste</th><th class="num">Nu open</th></tr></thead>
+          <tbody>${rijen}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 function buildRecidiveStats(mode) {
   const groepen = new Map();
   buildOrderIndex().forEach(r => {
@@ -2972,15 +3121,19 @@ function renderRecidiveCard() {
     btn.classList.toggle('active', btn.dataset.recidiveMode === state.recidiveMode);
   });
 
-  const stats = buildRecidiveStats(state.recidiveMode);
+  const perPlaats = state.recidiveMode === 'plaats';
+  const stats = perPlaats ? buildRecidivePerPlaats() : buildRecidiveStats(state.recidiveMode);
   if (stats.length === 0) {
-    container.innerHTML = `<p class="empty-note">Nog geen ${state.recidiveMode === 'asset' ? 'asset' : 'straat'} met twee of meer storingen in de opgeslagen historie. Deze kaart wordt sterker naarmate er meer maanden zijn vastgelegd.</p>`;
+    const wat = state.recidiveMode === 'asset' ? 'asset' : state.recidiveMode === 'plaats' ? 'plaats met een straat' : 'straat';
+    container.innerHTML = `<p class="empty-note">Nog geen ${wat} met twee of meer storingen in de opgeslagen historie. Deze kaart wordt sterker naarmate er meer maanden zijn vastgelegd.</p>`;
     return;
   }
+  const kolommen = perPlaats ? RECIDIVE_COLUMNS_PLAATS
+    : state.recidiveMode === 'asset' ? RECIDIVE_COLUMNS_ASSET : RECIDIVE_COLUMNS_STRAAT;
   const rows = sortByState(stats, state.recidiveSortState);
-  renderFullTable(container, rows, state.recidiveMode === 'asset' ? RECIDIVE_COLUMNS_ASSET : RECIDIVE_COLUMNS_STRAAT, state.recidiveSortState, {
+  renderFullTable(container, rows, kolommen, state.recidiveSortState, {
     isExpanded: (r) => state.recidiveOpen.has(r.key),
-    detailCell: recidiveDetailHtml,
+    detailCell: perPlaats ? recidivePlaatsDetailHtml : recidiveDetailHtml,
   });
 }
 
@@ -3735,6 +3888,14 @@ function wireEvents() {
   });
 
   document.getElementById('gebied-plaatsen-body').addEventListener('click', e => {
+    const toggle = e.target.closest('.recidive-toggle[data-gebied-plaats]');
+    if (toggle) {
+      const plaats = toggle.dataset.gebiedPlaats;
+      if (state.gebiedOpen.has(plaats)) state.gebiedOpen.delete(plaats);
+      else state.gebiedOpen.add(plaats);
+      renderGebiedPlaatsenCard();
+      return;
+    }
     const th = e.target.closest('th[data-key]');
     if (!th) return;
     if (state.gebiedSortState.key === th.dataset.key) state.gebiedSortState.dir *= -1;
@@ -3868,7 +4029,7 @@ function wireEvents() {
       state.recidiveOpen = new Set();
       // De sorteersleutels verschillen per weergave; terug naar de standaard
       // voorkomt dat er op een kolom gesorteerd blijft die er niet meer is.
-      state.recidiveSortState = { key: 'aantal', dir: -1 };
+      state.recidiveSortState = { key: state.recidiveMode === 'plaats' ? 'plekken' : 'aantal', dir: -1 };
       renderRecidiveCard();
     });
   });
