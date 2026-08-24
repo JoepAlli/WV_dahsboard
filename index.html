@@ -54,7 +54,13 @@
 
     <section class="card" id="input-card">
       <h2>💡 OV NUSsen — nieuwe update verwerken</h2>
-      <p class="muted small">Plak hieronder de volledige lijst van open storingen zoals gekopieerd uit de Instandhoudingsapp. Meerdere plakacties op dezelfde datum gelden samen als één meetmoment.</p>
+      <p class="muted small">Plak hieronder de volledige lijst zoals gekopieerd uit de Instandhoudingsapp. De drie overzichten zijn losse lijsten: plak ze elk apart, ze vervangen elkaar niet. Meerdere plakacties op dezelfde datum gelden samen als één meetmoment.</p>
+      <div class="filter-tabs" id="lijst-soort">
+        <button type="button" class="filter-tab active" data-lijst="nus">NUS-storingen</button>
+        <button type="button" class="filter-tab" data-lijst="sanering">Saneringen</button>
+        <button type="button" class="filter-tab" data-lijst="klantaanvraag">Klantaanvragen</button>
+      </div>
+      <p class="muted small" id="lijst-herkend"></p>
       <textarea id="paste-input" rows="10" placeholder="Plak hier de volledige pagina met open storingen…"></textarea>
       <div class="input-row">
         <label for="week-date">Datum</label>

@@ -665,6 +665,10 @@ const state = {
   recidiveMode: 'straat',
   clusterMode: 'pc4',
   kaartPlaats: null,
+  lijstSoort: 'nus',
+  lijstHerkend: null,
+  lijstSaneringenInTekst: 0,
+  lijstHandmatig: false,
   kaartView: null,
   inUitPeriode: '30',
   mioLeeftijdFilter: 'alles',
@@ -1639,6 +1643,39 @@ function renderInUitCard() {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+}
+
+/* ---------- Invoer: welke lijst plak je? ---------- */
+
+// Met drie losse overzichten is "welke lijst is dit" geen detail meer: kies je
+// het verkeerde, dan lijkt de rest van die lijst opgelost. Daarom staat de
+// keuze zichtbaar boven het plakvak, wordt hij automatisch voorgesteld op basis
+// van wat er geplakt is, en zie je van elke lijst wanneer hij voor het laatst
+// is bijgewerkt — want een lijst die je een week niet plakt, blijft een week
+// lang onveranderd meetellen.
+function renderLijstKeuze() {
+  document.querySelectorAll('#lijst-soort button[data-lijst]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.lijst === state.lijstSoort);
+  });
+  const el = document.getElementById('lijst-herkend');
+  if (!el) return;
+
+  const bijgewerkt = lijstBijgewerkt();
+  const stand = LIJST_SOORTEN.map(soort => {
+    const sn = bijgewerkt[soort];
+    return `${LIJST_LABELS[soort]}: ${sn ? `${sn.storingen.length} regels van ${sn.week}` : 'nog niet geplakt'}`;
+  }).join(' · ');
+
+  let hint = '';
+  if (state.lijstHerkend) {
+    hint = state.lijstHerkend === state.lijstSoort
+      ? `<strong>Herkend als ${esc(LIJST_LABELS[state.lijstHerkend])}.</strong> Klopt dat niet? Kies hierboven zelf. `
+      : `<strong class="prognose-bad">Let op:</strong> deze tekst lijkt op ${esc(LIJST_LABELS[state.lijstHerkend])}, maar je hebt ${esc(LIJST_LABELS[state.lijstSoort])} gekozen. `;
+  }
+  if (state.lijstSaneringenInTekst > 0 && state.lijstHerkend === 'nus') {
+    hint += `Er staan ${state.lijstSaneringenInTekst} saneringen in deze tekst — komt dit uit het saneringen-overzicht, kies dan Saneringen. `;
+  }
+  el.innerHTML = hint + esc(stand);
 }
 
 /* ---------- Klantaanvragen (schakelverzoeken) ---------- */
@@ -2992,19 +3029,91 @@ function renderWvGebiedCard() {
 
 /* ---------- Historie-helpers ---------- */
 
-// Eén snapshot per kalenderdag, chronologisch. Op één dag kunnen meerdere
-// updates staan (bv. eerst de gebieds-weergave plakken en daarna de status-
-// weergave); die zijn twee blikken op dezelfde dag, geen twee momenten. Zou je
-// ze als losse stappen behandelen, dan zie je storingen "verdwijnen" en weer
-// "verschijnen" tussen twee plakacties door, en dat vervuilt elke telling die
-// naar verandering kijkt. De laatste update van een dag wint — dat is dezelfde
-// regel die het dashboard al hanteert voor "de huidige stand".
+// De Instandhoudingsapp heeft drie losse overzichten die elk apart worden
+// geplakt: de NUS-storingen, de saneringen en de klantaanvragen. Elke
+// plakactie ververst dus maar één van die drie lijsten.
+const LIJST_SOORTEN = ['nus', 'sanering', 'klantaanvraag'];
+const LIJST_LABELS = {
+  nus: 'NUS-storingen',
+  sanering: 'Saneringen',
+  klantaanvraag: 'Klantaanvragen',
+};
+
+// Voor plakacties van vóór deze indeling (en als vangnet) wordt de soort uit
+// de inhoud afgeleid. Bewust streng: alleen als ALLES in de lijst een
+// klantaanvraag of een sanering is, is het dat overzicht. Een gemengde lijst
+// geldt als de NUS-lijst — dat is het oude gedrag, en dat mag niet stilletjes
+// veranderen voor al opgeslagen data.
+function afleidenLijstSoort(storingen) {
+  if (!storingen || storingen.length === 0) return 'nus';
+  if (storingen.every(isKlantaanvraag)) return 'klantaanvraag';
+  if (storingen.every(isSanering)) return 'sanering';
+  return 'nus';
+}
+function lijstSoortVan(sn) {
+  return LIJST_SOORTEN.includes(sn.lijst) ? sn.lijst : afleidenLijstSoort(sn.storingen);
+}
+
+// Eén beeld per kalenderdag, chronologisch, samengesteld uit de drie lijsten.
+//
+// Twee dingen komen hier samen:
+//  - Op één dag staan meerdere plakacties van DEZELFDE lijst (eerst de
+//    gebieds-weergave, daarna de status-weergave). Dat zijn twee blikken op
+//    hetzelfde moment, geen twee momenten: de laatste van die dag wint.
+//  - De drie lijsten zijn losse overzichten. Een plakactie ververst alleen de
+//    lijst waar hij bij hoort; de andere twee blijven staan zoals ze het
+//    laatst geplakt waren. Zonder dat zou het plakken van de klantaanvragen
+//    de hele NUS-werkvoorraad op nul zetten — die storingen staan immers niet
+//    in dat overzicht, en "verdwenen uit de lijst" betekent normaal "opgelost".
 function chronoSnapshots(snapshots) {
-  const list = (snapshots || state.snapshots).slice()
-    .sort((a, b) => a.week.localeCompare(b.week) || a.savedAt.localeCompare(b.savedAt));
-  const perDag = new Map();
-  list.forEach(sn => perDag.set(sn.week, sn));
-  return Array.from(perDag.values());
+  const bron = snapshots || state.snapshots;
+  const eigenState = !snapshots;
+  const sleutel = bron.length + '|' + (bron.length ? bron[bron.length - 1].savedAt : '');
+  if (eigenState && chronoCacheSleutel === sleutel) return chronoCache;
+
+  const list = bron.slice().sort((a, b) => a.week.localeCompare(b.week) || a.savedAt.localeCompare(b.savedAt));
+  const laatstePerLijst = {}; // soort -> de meest recente plakactie van dat overzicht
+  const dagen = [];
+  let i = 0;
+  while (i < list.length) {
+    const dag = list[i].week;
+    let laatsteSavedAt = list[i].savedAt;
+    while (i < list.length && list[i].week === dag) {
+      laatstePerLijst[lijstSoortVan(list[i])] = list[i];
+      laatsteSavedAt = list[i].savedAt;
+      i++;
+    }
+    // Nieuwste plakactie eerst, zodat bij een ordernummer dat in twee lijsten
+    // opduikt de meest recente informatie wint.
+    const bronnen = LIJST_SOORTEN.map(soort => laatstePerLijst[soort]).filter(Boolean)
+      .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+    const gezien = new Set();
+    const storingen = [];
+    bronnen.forEach(sn => sn.storingen.forEach(st => {
+      if (gezien.has(st.order)) return;
+      gezien.add(st.order);
+      storingen.push(st);
+    }));
+    dagen.push({ week: dag, savedAt: laatsteSavedAt, storingen });
+  }
+
+  if (eigenState) { chronoCache = dagen; chronoCacheSleutel = sleutel; }
+  return dagen;
+}
+// chronoSnapshots wordt tientallen keren per hertekening aangeroepen; het
+// samenvoegen hoeft maar één keer per verandering van de opgeslagen data.
+let chronoCache = null;
+let chronoCacheSleutel = null;
+
+// Wanneer is elk overzicht voor het laatst geplakt? Met drie lijsten die
+// onafhankelijk worden ververst is dat geen detail meer: een sanering die
+// allang weg is blijft in beeld tot dat overzicht opnieuw wordt geplakt.
+function lijstBijgewerkt() {
+  const per = {};
+  state.snapshots.slice()
+    .sort((a, b) => a.week.localeCompare(b.week) || a.savedAt.localeCompare(b.savedAt))
+    .forEach(sn => { per[lijstSoortVan(sn)] = sn; });
+  return per;
 }
 
 const DAG_MS = 86400000;
@@ -4358,7 +4467,7 @@ function renderWeeksList() {
   // exacte opslagmoment (savedAt), niet op de (mogelijk niet-unieke) datum.
   const rows = state.snapshots.slice().sort((a, b) => b.week.localeCompare(a.week) || b.savedAt.localeCompare(a.savedAt)).map(sn => `
     <div class="weeks-list-row">
-      <span>Week van <strong>${esc(sn.week)}</strong> — ${sn.storingen.length} storingen (opgeslagen ${esc(fmtDate(sn.savedAt))})</span>
+      <span>Week van <strong>${esc(sn.week)}</strong> — ${sn.storingen.length} regels in ${esc(LIJST_LABELS[lijstSoortVan(sn)])} (opgeslagen ${esc(fmtDate(sn.savedAt))})</span>
       <button class="btn-link danger" data-saved-at="${esc(sn.savedAt)}">Verwijderen</button>
     </div>`).join('');
   container.innerHTML = rows;
@@ -4443,7 +4552,7 @@ function setDashboardEmpty(dashboardId, emptyId, empty) {
 function renderDashboardFromState() {
   const snaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
   state.snapshots = snaps;
-  if (snaps.length === 0) { setDashboardEmpty('dashboard', 'dashboard-empty', true); return; }
+  if (snaps.length === 0) { renderLijstKeuze(); setDashboardEmpty('dashboard', 'dashboard-empty', true); return; }
   // "Wat is er veranderd" vergelijkt met de vorige DAG, niet met de vorige
   // plakactie. Er staan meestal twee plakacties op één dag (de gebieds- en de
   // statusweergave zijn twee blikken op dezelfde lijst); vergelijken met de
@@ -4469,6 +4578,7 @@ function renderDashboardFromState() {
   renderAttentionList(latestFiltered, latestVisible);
   renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
   renderTrendChart(perDag); // idem, filtert zelf op state.activeFilter
+  renderLijstKeuze();
   renderKlantaanvraagCard();
   renderGebiedPlaatsenCard();
   renderKaartCard();
@@ -4667,6 +4777,7 @@ function wireEvents() {
     if (!week) { statusEl.textContent = 'Kies een weekdatum.'; return; }
 
     const { storingen, errors } = parseText(raw);
+    const lijst = state.lijstSoort;
     if (storingen.length === 0) {
       statusEl.textContent = 'Geen storingen herkend — controleer het formaat hieronder.';
       showParseWarning(errors, 0);
@@ -4679,6 +4790,29 @@ function wireEvents() {
     // doorlooptijd altijd de vergelijking met je vórige update, niet met
     // gisteren, ook als je vandaag al eerder bijgewerkt hebt.
     const snaps = await loadSnapshots();
+
+    // Vangnet tegen de klassieke vergissing: een ander overzicht plakken maar
+    // "NUS-storingen" laten staan. Dat zou de hele werkvoorraad wegvagen,
+    // want wat niet in de lijst staat geldt als opgelost.
+    //
+    // Eerste signaal: de tekst is onmiskenbaar één soort (alles klantaanvraag
+    // of alles sanering) en dat is niet wat er gekozen staat. Bij een gemengde
+    // lijst valt de herkenning terug op "nus" en is er niets zeker genoeg om
+    // over te waarschuwen.
+    const herkend = afleidenLijstSoort(storingen);
+    if (herkend !== 'nus' && herkend !== lijst) {
+      const door = confirm(`Deze tekst bestaat volledig uit ${LIJST_LABELS[herkend].toLowerCase()}, maar je hebt "${LIJST_LABELS[lijst]}" gekozen.\n\nOpslaan als ${LIJST_LABELS[lijst]} betekent dat alles wat nu in die lijst staat als opgelost telt. Toch doorgaan?`);
+      if (!door) { statusEl.textContent = 'Niets opgeslagen — kies hierboven de juiste lijst.'; return; }
+    }
+
+    const vorigeVanLijst = snaps.slice()
+      .sort((a, b) => a.savedAt.localeCompare(b.savedAt))
+      .filter(sn => lijstSoortVan(sn) === lijst).pop();
+    if (vorigeVanLijst && vorigeVanLijst.storingen.length >= 5 && storingen.length < vorigeVanLijst.storingen.length * 0.4) {
+      const door = confirm(`Deze plakactie bevat ${storingen.length} regels, terwijl "${LIJST_LABELS[lijst]}" er de vorige keer ${vorigeVanLijst.storingen.length} had.\n\nAlles wat niet in de lijst staat geldt als opgelost. Klopt het dat dit de volledige lijst is, en dat je de juiste lijstsoort hebt gekozen?`);
+      if (!door) { statusEl.textContent = 'Niets opgeslagen — kies eventueel eerst de juiste lijst hierboven.'; return; }
+    }
+
     enrichWithCarriedForwardOvFields(storingen, snaps);
     // De blokkade-reden staat in een aparte lijst die alleen de HUIDIGE stand
     // bewaart: hef je een blokkade op, dan is niet meer terug te zien dat 'ie
@@ -4690,7 +4824,7 @@ function wireEvents() {
       const reden = (state.ovBlockStatus[s.order] || {}).reason;
       if (reden) s.blokkadeReden = reden;
     });
-    const snapshot = { week, savedAt: new Date().toISOString(), storingen };
+    const snapshot = { week, savedAt: new Date().toISOString(), lijst, storingen };
     snaps.push(snapshot);
     try {
       await saveSnapshots(snaps);
@@ -4707,13 +4841,48 @@ function wireEvents() {
     // in zitten dan er werkelijk zijn.
     const aantalAanvragen = storingen.filter(isKlantaanvraag).length;
     const aantalSaneringen = storingen.filter(isSanering).length;
-    const delen = [`${storingen.length - aantalAanvragen} storingen verwerkt voor week ${week}`];
-    if (aantalSaneringen > 0) delen.push(`waarvan ${aantalSaneringen} ${aantalSaneringen === 1 ? 'sanering' : 'saneringen'}`);
-    if (aantalAanvragen > 0) delen.push(`plus ${aantalAanvragen} ${aantalAanvragen === 1 ? 'klantaanvraag' : 'klantaanvragen'}`);
+    const delen = [`${storingen.length} regels verwerkt in "${LIJST_LABELS[lijst]}" voor week ${week}`];
+    if (lijst === 'nus' && aantalSaneringen > 0) delen.push(`waarvan ${aantalSaneringen} ${aantalSaneringen === 1 ? 'sanering' : 'saneringen'}`);
+    if (lijst === 'nus' && aantalAanvragen > 0) delen.push(`waarvan ${aantalAanvragen} ${aantalAanvragen === 1 ? 'klantaanvraag' : 'klantaanvragen'}`);
     if (errors.length) delen.push(`${errors.length} regels niet herkend`);
     statusEl.textContent = delen.join(', ');
     textarea.value = '';
+    state.lijstHerkend = null;
+    state.lijstSaneringenInTekst = 0;
+    state.lijstHandmatig = false;
+    renderLijstKeuze();
   });
+
+  document.querySelectorAll('#lijst-soort button[data-lijst]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.lijstSoort = btn.dataset.lijst;
+      // Vanaf nu niet meer automatisch omzetten: de gebruiker weet zelf uit
+      // welk overzicht hij kopieerde.
+      state.lijstHandmatig = true;
+      renderLijstKeuze();
+    });
+  });
+
+  const pasteInput = document.getElementById('paste-input');
+  if (pasteInput) {
+    let herkenTimer = null;
+    pasteInput.addEventListener('input', () => {
+      clearTimeout(herkenTimer);
+      herkenTimer = setTimeout(() => {
+        const raw = pasteInput.value;
+        if (!raw.trim()) {
+          state.lijstHerkend = null;
+          state.lijstSaneringenInTekst = 0;
+        } else {
+          const { storingen } = parseText(raw);
+          state.lijstHerkend = storingen.length ? afleidenLijstSoort(storingen) : null;
+          state.lijstSaneringenInTekst = storingen.filter(isSanering).length;
+          if (state.lijstHerkend && !state.lijstHandmatig) state.lijstSoort = state.lijstHerkend;
+        }
+        renderLijstKeuze();
+      }, 250);
+    });
+  }
 
   document.getElementById('clear-all-btn').addEventListener('click', async () => {
     if (!confirm('Alle opgeslagen weken verwijderen? Dit kan niet ongedaan worden gemaakt.')) return;
@@ -5079,6 +5248,7 @@ function applyStaticExportData() {
 async function init() {
   document.getElementById('week-date').value = new Date().toISOString().slice(0, 10);
   wireEvents();
+  renderLijstKeuze();
   if (isStaticExport) applyStaticExportData();
   else await reloadAllStateAndRender();
   document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
