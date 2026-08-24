@@ -2869,17 +2869,20 @@ function buildWvStats() {
   const snaps = chronoSnapshots();
   const stats = {};
   const ensure = (naam) => {
-    if (!stats[naam]) stats[naam] = { wvNaam: naam, orders: new Set(), doorlooptijden: [], nuOpen: 0, nieuwVenster: 0, opgelostVenster: 0, regios: {} };
+    if (!stats[naam]) stats[naam] = { wvNaam: naam, orders: new Set(), doorlooptijden: [], nuOpen: 0, nieuwVenster: 0, opgelostVenster: 0, perRegio: {} };
     return stats[naam];
   };
-  if (snaps.length === 0) return [];
+  if (snaps.length === 0) return { rijen: [], regios: [], openTotaal: 0, openMetWv: 0 };
+  // Dezelfde types als de rest van het dashboard, zodat het aantal van een
+  // WV'er optelt bij "Totaal open" en niet stiekem iets anders telt.
+  const zichtbaar = (sn) => typeFiltered(sn.storingen);
   const laatsteDag = snaps[snaps.length - 1].week;
   const inVenster = (dag) => dagenTussen(dag, laatsteDag) <= WV_VENSTER_DAGEN;
 
   const firstSeen = {}; // order -> { week, wvNaam }
   snaps.forEach((sn, i) => {
     const curOrders = new Set();
-    sn.storingen.forEach(s => {
+    zichtbaar(sn).forEach(s => {
       const naam = findRelevantWvNaam(s);
       if (!naam) return;
       curOrders.add(s.order);
@@ -2889,13 +2892,9 @@ function buildWvStats() {
         firstSeen[s.order] = { week: sn.week, wvNaam: naam };
         if (inVenster(sn.week)) e.nieuwVenster++;
       }
-      // In welke regio deze WV'er feitelijk werkt — nodig om te weten wie je
-      // met wie mág vergelijken (zie renderWvGebiedCard).
-      const regio = regioGroupOf(s);
-      e.regios[regio] = (e.regios[regio] || 0) + 1;
     });
     if (i > 0) {
-      snaps[i - 1].storingen.forEach(s => {
+      zichtbaar(snaps[i - 1]).forEach(s => {
         const naam = findRelevantWvNaam(s);
         if (!naam || curOrders.has(s.order)) return;
         const fs = firstSeen[s.order];
@@ -2907,25 +2906,57 @@ function buildWvStats() {
     }
   });
 
-  // Huidige werkvoorraad uit de nieuwste dag.
-  snaps[snaps.length - 1].storingen.forEach(s => {
+  // De huidige werkvoorraad, met de regio-uitsplitsing van datzelfde moment.
+  // Bewust de stand van vandaag en niet een optelling over alle dagen: iemand
+  // die drie maanden geleden veel in Haarlem deed en nu alleen Leiden, moet
+  // hier als "nu Leiden" te zien zijn.
+  const nu = zichtbaar(snaps[snaps.length - 1]);
+  const regiosAanwezig = new Set();
+  let openMetWv = 0;
+  nu.forEach(s => {
     const naam = findRelevantWvNaam(s);
-    if (naam) ensure(naam).nuOpen++;
+    if (!naam) return;
+    openMetWv++;
+    const e = ensure(naam);
+    e.nuOpen++;
+    const regio = regioGroupLabel(regioGroupOf(s));
+    regiosAanwezig.add(regio);
+    e.perRegio[regio] = (e.perRegio[regio] || 0) + 1;
   });
 
-  return Object.values(stats);
+  const rijen = Object.values(stats);
+  return {
+    rijen,
+    regios: sortByGroupOrder(Array.from(regiosAanwezig).map(r => r.replace(/^Regio /, ''))).map(regioGroupLabel),
+    openTotaal: nu.length,
+    openMetWv,
+  };
 }
 
-const WV_STATS_COLUMNS = [
-  { key: 'wvNaam', label: "WV'er", cell: r => `<td>${esc(r.wvNaam)}</td>` },
-  { key: 'regio', label: 'Werkt in', cell: r => `<td>${esc(r.regio)}</td>` },
-  { key: 'nuOpen', label: 'Nu open', num: true, cell: r => `<td class="num"><strong>${r.nuOpen}</strong></td>` },
-  { key: 'aandeel', label: 'Aandeel in regio', num: true, cell: r => `<td class="num">${r.aandeel == null ? '—' : Math.round(r.aandeel * 100) + '%'}</td>` },
-  { key: 'nieuwVenster', label: `Nieuw (${WV_VENSTER_DAGEN} dgn)`, num: true, cell: r => `<td class="num">${r.nieuwVenster}</td>` },
-  { key: 'opgelostVenster', label: `Opgelost (${WV_VENSTER_DAGEN} dgn)`, num: true, cell: r => `<td class="num">${r.opgelostVenster}</td>` },
-  { key: 'totaal', label: 'Totaal ooit', num: true, cell: r => `<td class="num">${r.totaal}</td>` },
-  { key: 'doorlooptijd', label: 'Gem. doorlooptijd', num: true, cell: r => `<td class="num muted">${r.doorlooptijd == null ? '—' : r.doorlooptijd.toFixed(1) + ' dgn'}</td>` },
-];
+// De kolommen hangen af van de regio's waar op dit moment werk ligt: het gaat
+// er juist om dat je ziet wat iemand in élke regio oppakt, niet alleen in de
+// regio waar hij het meeste doet.
+function buildWvColumns(regios) {
+  const kolommen = [
+    { key: 'wvNaam', label: "WV'er", cell: r => `<td>${esc(r.wvNaam)}</td>` },
+    { key: 'nuOpen', label: 'Nu open (totaal)', num: true, cell: r => `<td class="num"><strong>${r.nuOpen}</strong></td>` },
+  ];
+  regios.forEach(regio => {
+    const sleutel = 'regio_' + regio;
+    kolommen.push({
+      key: sleutel, label: regio, num: true,
+      cell: r => `<td class="num${r[sleutel] ? '' : ' muted'}">${r[sleutel] || 0}</td>`,
+    });
+  });
+  kolommen.push(
+    { key: 'aandeel', label: 'Aandeel', num: true, cell: r => `<td class="num">${r.aandeel == null ? '—' : Math.round(r.aandeel * 100) + '%'}</td>` },
+    { key: 'nieuwVenster', label: `Nieuw (${WV_VENSTER_DAGEN} dgn)`, num: true, cell: r => `<td class="num">${r.nieuwVenster}</td>` },
+    { key: 'opgelostVenster', label: `Opgelost (${WV_VENSTER_DAGEN} dgn)`, num: true, cell: r => `<td class="num">${r.opgelostVenster}</td>` },
+    { key: 'totaal', label: 'Totaal ooit', num: true, cell: r => `<td class="num">${r.totaal}</td>` },
+    { key: 'doorlooptijd', label: 'Gem. doorlooptijd', num: true, cell: r => `<td class="num muted">${r.doorlooptijd == null ? '—' : r.doorlooptijd.toFixed(1) + ' dgn'}</td>` },
+  );
+  return kolommen;
+}
 
 // De data staat in de IndexedDB van één browser op één machine. Gaat dat
 // profiel verloren, dan is alles weg — een gedownload bestand is het enige
@@ -2974,57 +3005,62 @@ function renderWvGebiedCard() {
   // #wv-gebied-card), maar dit zorgt ervoor dat de namen sowieso nooit in de
   // HTML terechtkomen, ongeacht CSS.
   if (isStaticExport) { container.innerHTML = ''; return; }
-  const stats = buildWvStats();
-  if (stats.length === 0) {
+  const { rijen, regios, openTotaal, openMetWv } = buildWvStats();
+  if (rijen.length === 0) {
     container.innerHTML = '<p class="empty-note">Nog geen storingen gevonden voor de gevolgde WV\'ers.</p>';
     return;
   }
 
-  const dominanteRegio = (regios) => {
-    const namen = Object.keys(regios);
-    if (namen.length === 0) return 'Onbekend';
-    return regioGroupLabel(namen.sort((a, b) => regios[b] - regios[a])[0]);
-  };
-  const basis = stats.map(s => ({
-    wvNaam: s.wvNaam,
-    regio: dominanteRegio(s.regios),
-    nuOpen: s.nuOpen,
-    nieuwVenster: s.nieuwVenster,
-    opgelostVenster: s.opgelostVenster,
-    totaal: s.orders.size,
-    doorlooptijd: s.doorlooptijden.length ? s.doorlooptijden.reduce((a, b) => a + b, 0) / s.doorlooptijden.length : null,
-  }));
+  // Het aandeel is het aandeel in het werk dat bij de gevolgde WV'ers ligt,
+  // over alle regio's heen. Eerder werd dit per regio berekend; dat maakte het
+  // werk van iemand die in twee regio's actief is onzichtbaar in de ene helft.
+  const samenOpen = rijen.reduce((n, r) => n + r.nuOpen, 0);
+  const rows = rijen.map(r => {
+    const rij = {
+      wvNaam: r.wvNaam,
+      nuOpen: r.nuOpen,
+      aandeel: samenOpen > 0 ? r.nuOpen / samenOpen : null,
+      nieuwVenster: r.nieuwVenster,
+      opgelostVenster: r.opgelostVenster,
+      totaal: r.orders.size,
+      doorlooptijd: r.doorlooptijden.length ? r.doorlooptijden.reduce((a, b) => a + b, 0) / r.doorlooptijden.length : null,
+    };
+    regios.forEach(regio => { rij['regio_' + regio] = r.perRegio[regio] || 0; });
+    return rij;
+  }).sort((a, b) => b.nuOpen - a.nuOpen || a.wvNaam.localeCompare(b.wvNaam));
 
-  // Het aandeel wordt bínnen de regio berekend. Iemand die in zijn eentje een
-  // regio doet heeft per definitie 100% en is niet te vergelijken met een
-  // regio die door twee mensen wordt gedeeld; door per regio te delen gaat de
-  // vergelijking alleen over mensen die hetzelfde werkgebied delen.
-  const openPerRegio = {};
-  basis.forEach(r => { openPerRegio[r.regio] = (openPerRegio[r.regio] || 0) + r.nuOpen; });
-  const rows = basis.map(r => Object.assign({}, r, {
-    aandeel: openPerRegio[r.regio] > 0 ? r.nuOpen / openPerRegio[r.regio] : null,
-  })).sort((a, b) => a.regio.localeCompare(b.regio) || b.nuOpen - a.nuOpen);
+  // Twee dingen die je als teamleider wilt weten: hoeveel van de werkvoorraad
+  // ligt überhaupt bij deze mensen, en is het eerlijk verdeeld.
+  const zonderWv = openTotaal - openMetWv;
+  const dekking = `<li>Samen ${samenOpen} van de ${openTotaal} openstaande storingen op naam`
+    + (zonderWv > 0 ? ` — ${zonderWv} ${zonderWv === 1 ? 'staat' : 'staan'} op iemand buiten deze groep of hebben geen naam.` : '.')
+    + '</li>';
 
-  // Kopregel: alleen zinvol waar meerdere mensen dezelfde regio delen.
-  const gedeeld = {};
-  rows.forEach(r => { (gedeeld[r.regio] = gedeeld[r.regio] || []).push(r); });
-  const oordelen = Object.keys(gedeeld).sort().map(regio => {
-    const groep = gedeeld[regio].slice().sort((a, b) => b.nuOpen - a.nuOpen);
-    if (groep.length < 2) return `<li>${esc(regio)}: alleen ${esc(groep[0].wvNaam)} — geen vergelijking mogelijk.</li>`;
-    const hoog = groep[0], laag = groep[groep.length - 1];
-    if (hoog.nuOpen === laag.nuOpen) return `<li>${esc(regio)}: gelijk verdeeld (${hoog.nuOpen} elk).</li>`;
+  const gesorteerd = rows.slice().sort((a, b) => b.nuOpen - a.nuOpen);
+  const hoog = gesorteerd[0], laag = gesorteerd[gesorteerd.length - 1];
+  let verdeling;
+  if (rows.length < 2) {
+    verdeling = `<li>Alleen ${esc(hoog.wvNaam)} heeft werk op naam — geen vergelijking mogelijk.</li>`;
+  } else if (hoog.nuOpen === laag.nuOpen) {
+    verdeling = `<li>Gelijk verdeeld: ${hoog.nuOpen} elk.</li>`;
+  } else {
     const verschil = hoog.nuOpen - laag.nuOpen;
-    const factor = laag.nuOpen > 0 ? (hoog.nuOpen / laag.nuOpen) : null;
+    const factor = laag.nuOpen > 0 ? hoog.nuOpen / laag.nuOpen : null;
     const scheef = factor === null || factor >= 1.5;
-    return `<li>${esc(regio)}: <strong class="${scheef ? 'prognose-bad' : ''}">${esc(hoog.wvNaam)} ${hoog.nuOpen}</strong> tegenover ${esc(laag.wvNaam)} ${laag.nuOpen}`
-      + ` — ${verschil} storing${verschil === 1 ? '' : 'en'} verschil${factor !== null ? `, ${factor.toFixed(1)}×` : ''}.</li>`;
-  }).join('');
+    verdeling = `<li><strong class="${scheef ? 'prognose-bad' : ''}">${esc(hoog.wvNaam)} ${hoog.nuOpen}</strong> tegenover ${esc(laag.wvNaam)} ${laag.nuOpen}`
+      + ` — ${verschil} storing${verschil === 1 ? '' : 'en'} verschil${factor !== null ? `, ${factor.toFixed(1)}×` : ''}.`
+      + (scheef ? ' Dat is scheef genoeg om te herverdelen.' : '')
+      + '</li>';
+  }
 
-  container.innerHTML = `<ul class="wv-oordeel">${oordelen}</ul>`;
+  container.innerHTML = `<ul class="wv-oordeel">${dekking}${verdeling}</ul>`;
   const tabel = document.createElement('div');
   container.appendChild(tabel);
+  const kolommen = buildWvColumns(regios);
+  // Na een regiowissel kan er op een kolom gesorteerd staan die er niet meer is.
+  if (!kolommen.some(k => k.key === state.wvSortState.key)) state.wvSortState = { key: 'nuOpen', dir: -1 };
   const sorted = sortByState(rows, state.wvSortState);
-  renderFullTable(tabel, sorted, WV_STATS_COLUMNS, state.wvSortState);
+  renderFullTable(tabel, sorted, kolommen, state.wvSortState);
 }
 
 /* ---------- Historie-helpers ---------- */
