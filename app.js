@@ -76,6 +76,25 @@ function normalizeOvStatus(raw) {
 // spatie), dus dit kan nooit een ordernummer raken.
 const COUNT_HEADER_RE = /^\d+\s+\S.*$/;
 
+// Klantaanvragen (schakelverzoeken) staan in de Instandhoudingsapp onder hun
+// eigen kopregel — "3 Nieuwe klantaanvragen", waarbij het getal per keer
+// verschilt — en zijn verder identiek opgebouwd aan een storing: type,
+// locatie, order, asset, dagen, gewenste datum. Ze horen niet bij de
+// NUS-werkvoorraad (een aanvraag met nog 361 dagen zou elk cijfer scheeftrekken)
+// maar moeten wel worden ingepland, dus ze worden apart bijgehouden.
+//
+// Twee onafhankelijke signalen, want een plakactie hoeft de kopregel niet mee
+// te nemen: de kopregel zet alles erna op klantaanvraag, en een type dat met
+// "Schakelen" begint is er altijd een — ook los geplakt.
+const KLANTAANVRAAG_HEADER_RE = /klantaanvra/i;
+const KLANTAANVRAAG_TYPE_RE = /^schakelen\b/i;
+
+// Saneringen staan er precies zo in als elke andere storing (type "LS
+// storing/schade"); het enige verschil is een losse regel "1" achter de naam
+// van de uitvoerder. Die regel is dus geen naam en geen vlaggetje, maar de
+// markering zelf.
+const SANERING_MARKER_RE = /^1$/;
+
 // Parseert precies één storing vanaf lines[start] en geeft { storing, next } terug,
 // waarbij `next` de regel-index is waar de volgende storing begint. Er wordt geen
 // lege regel tussen storingen verondersteld: veel paste-bronnen plakken alles
@@ -104,7 +123,7 @@ function parseOneEntry(lines, start) {
     i++;
     asset = lines[i++];
     if (!asset) throw new Error('Assetnummer ontbreekt');
-    if (lines[i] && /^(MSR|LSKN|LSKOV)$/i.test(lines[i])) {
+    if (lines[i] && /^(MSR|MSRG|LSKN|LSKOV)$/i.test(lines[i])) {
       assetType = lines[i++].toUpperCase();
     }
   } else if (lines[i] && COORDS_LABEL_RE.test(lines[i])) {
@@ -142,8 +161,12 @@ function parseOneEntry(lines, start) {
   }
 
   const flagLineRe = /^[A-Z]+$/;
+  const sanering = middleLines.some(l => SANERING_MARKER_RE.test(l));
   const flagLines = middleLines.filter(l => flagLineRe.test(l));
-  const nameLines = middleLines.filter(l => !flagLineRe.test(l));
+  // De sanering-markering telt niet als naam: anders zou bij een storing met
+  // alleen een uitvoerder ("Marc van Veen" + "1") die uitvoerder als WV'er
+  // worden gelezen.
+  const nameLines = middleLines.filter(l => !flagLineRe.test(l) && !SANERING_MARKER_RE.test(l));
 
   let wvNaam = null;
   if (nameLines.length >= 2) wvNaam = nameLines[0]; // 1e naam = WV'er; 2e = uitvoerder (genegeerd)
@@ -154,7 +177,7 @@ function parseOneEntry(lines, start) {
 
   const storing = {
     type, city, street, postcode, order, asset, assetType,
-    wvNaam, names: nameLines, flags, daysLeft, overdue, executionDate, executionDateRaw,
+    wvNaam, names: nameLines, flags, daysLeft, overdue, executionDate, executionDateRaw, sanering,
   };
   return { storing, next: i };
 }
@@ -173,6 +196,7 @@ function parseText(raw) {
   let i = 0;
   let currentGebiedscode = null;
   let currentOvStatus = null;
+  let currentSoort = 'storing';
   while (i < lines.length) {
     // Combineer alle skip-checks in één lus: een gebiedscode/status kan vlak na
     // een titel-/tellingregel staan (of andersom), dus we blijven controleren tot
@@ -181,16 +205,23 @@ function parseText(raw) {
     // blijven ook los van elkaar "sticky" gelden tot de volgende regel van dat
     // type verschijnt.
     while (i < lines.length && (GEBIEDSCODE_RE.test(lines[i]) || OV_STATUS_RE.test(lines[i]) || COUNT_HEADER_RE.test(lines[i]))) {
-      if (GEBIEDSCODE_RE.test(lines[i])) currentGebiedscode = lines[i];
-      else if (OV_STATUS_RE.test(lines[i])) currentOvStatus = normalizeOvStatus(lines[i]);
+      if (GEBIEDSCODE_RE.test(lines[i])) { currentGebiedscode = lines[i]; currentSoort = 'storing'; }
+      else if (OV_STATUS_RE.test(lines[i])) { currentOvStatus = normalizeOvStatus(lines[i]); currentSoort = 'storing'; }
+      // Een gebiedscode of status komt alleen in de storingenlijst voor, dus
+      // die zetten de soort terug; een tellingregel bepaalt welk blok volgt.
+      else currentSoort = KLANTAANVRAAG_HEADER_RE.test(lines[i]) ? 'klantaanvraag' : 'storing';
       i++;
     }
     if (i >= lines.length) break;
     const start = i;
     try {
       const { storing, next } = parseOneEntry(lines, i);
-      storing.gebiedscode = currentGebiedscode;
-      storing.ovStatus = currentOvStatus;
+      const aanvraag = currentSoort === 'klantaanvraag' || KLANTAANVRAAG_TYPE_RE.test(storing.type);
+      storing.soort = aanvraag ? 'klantaanvraag' : 'storing';
+      // Een klantaanvraag heeft geen OV-status en geen gebiedscode; die van de
+      // storingen ervoor mogen er niet aan blijven plakken.
+      storing.gebiedscode = aanvraag ? null : currentGebiedscode;
+      storing.ovStatus = aanvraag ? null : currentOvStatus;
       storingen.push(storing);
       i = next;
     } catch (e) {
@@ -547,7 +578,21 @@ function searchFiltered(list, query) { return list.filter(s => matchesSearch(s, 
 
 // Alleen storingen met een type in de whitelist tellen mee (zie "Type-filter").
 function isTypeIncluded(s) { return state.typeWhitelist.includes(s.type); }
-function typeFiltered(list) { return list.filter(isTypeIncluded); }
+
+// Klantaanvragen zijn geen NUS-storingen: ze horen in geen enkel storingscijfer
+// thuis (een schakelverzoek met nog 361 dagen zou elke telling, grafiek en
+// prognose scheeftrekken). Ze worden hier op één plek buitengesloten, zodat
+// alles wat via typeFiltered loopt automatisch klopt; ze krijgen hun eigen
+// kaart op de Data-tab.
+function isKlantaanvraag(s) { return s.soort === 'klantaanvraag'; }
+function isSanering(s) { return !!s.sanering; }
+function typeFiltered(list) { return list.filter(s => !isKlantaanvraag(s) && isTypeIncluded(s)); }
+
+// Een sanering staat er hetzelfde in als elke andere "LS storing/schade", dus
+// zonder markering zie je in een lijst niet welke het zijn.
+function saneringBadgeHtml(s) {
+  return isSanering(s) ? ' <span class="badge badge-sanering">sanering</span>' : '';
+}
 
 // De grens voor "Bijna verlopen" (serious) is instelbaar (zie Instellingen);
 // "Aandacht" (warning) begint waar die grens ophoudt en loopt door tot 3
@@ -791,6 +836,7 @@ function statTileFilters() {
     bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' && !isOvBlocked(s) },
     geblokkeerd: { title: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt)', test: s => isOvBlocked(s) },
     mastGeenSpanning: { title: 'Mast geen spanning', test: s => isMastGeenSpanning(s) },
+    sanering: { title: 'Sanering', test: s => isSanering(s) },
   };
   OV_STATUS_ORDER.forEach(status => {
     filters[OV_STATUS_FILTER_KEYS[status]] = { title: `Status: ${status}`, test: s => s.ovStatus === status && !isOvBlocked(s) };
@@ -821,13 +867,15 @@ const OV_STATUS_ICONS = { 'Nieuw': '🆕', 'In onderzoek': '🔍', 'Onderzoek co
 // momenten heen — inclusief meerdere updates op één dag. Alleen deze
 // tegels hebben er daarnaast ook een rij-per-storing-tabel bij (de rest
 // duplicerde toch al wat "Aandacht deze week"/"Volledige lijst" al tonen).
-const OV_DETAIL_LIST_KEYS = new Set([...Object.values(OV_STATUS_FILTER_KEYS), 'geblokkeerd', 'mastGeenSpanning']);
+const OV_DETAIL_LIST_KEYS = new Set([...Object.values(OV_STATUS_FILTER_KEYS), 'geblokkeerd', 'mastGeenSpanning', 'sanering']);
 const OV_TILE_TITLES = {
   totaal: 'Totaal open',
   verlopenDatum: 'Uitvoeringsdatum verstreken',
   unknown: 'Verlopen — uitvoering onbekend',
   afgesloten: 'Afgesloten / uitgegaan',
   geblokkeerd: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt)',
+  mastGeenSpanning: 'Mast geen spanning',
+  sanering: 'Sanering',
 };
 OV_STATUS_ORDER.forEach(status => { OV_TILE_TITLES[OV_STATUS_FILTER_KEYS[status]] = `Status: ${status}`; });
 OV_TILE_TITLES[OV_STATUS_FILTER_KEYS['Nieuw']] = 'Nieuw binnengekomen (nog niet eerder gezien)';
@@ -946,6 +994,7 @@ function renderStatTiles(current, mutations) {
   const overdueUnknown = current.filter(filters.unknown.test).length;
   const geblokkeerdCount = current.filter(filters.geblokkeerd.test).length;
   const mioCount = current.filter(filters.mastGeenSpanning.test).length;
+  const saneringCount = current.filter(filters.sanering.test).length;
   // Drie soorten getallen die er eerder als één uniforme rij uitzagen, terwijl
   // ze niet bij elkaar optellen en niet hetzelfde betekenen:
   //  - werkvoorraad: het totaal en de statussen die samen dat totaal vormen;
@@ -970,6 +1019,8 @@ function renderStatTiles(current, mutations) {
       note: mutations.hasPrevious ? `sinds ${mutations.vorigeDag || 'de vorige update'}` : 'nog geen eerdere dag' },
     { groep: 'inzet', key: 'mastGeenSpanning', icon: '🗼', label: 'Mast geen spanning', value: mioCount,
       note: total > 0 ? `${Math.round((mioCount / total) * 100)}% van alle open storingen` : 'geen open storingen', scrollTarget: 'cluster-card' },
+    { groep: 'inzet', key: 'sanering', icon: '🧹', label: 'Sanering', value: saneringCount,
+      note: total > 0 ? `${Math.round((saneringCount / total) * 100)}% van alle open storingen` : 'geen open storingen' },
     { groep: 'signaal', key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
   );
   // Elke tegel is nu klikbaar: altijd voor het verloop-grafiekje in het
@@ -1232,7 +1283,7 @@ function renderStatDetail(current, mutations) {
           <td>${esc(s.city)} — ${esc(s.street)}, ${esc(s.postcode)}</td>
           <td class="num">${renderDaysPill(s)}</td>
           <td>${firstSeenMap[s.order] ? esc(firstSeenMap[s.order]) : '—'}</td>
-          <td>${esc(s.type)}</td>
+          <td>${esc(s.type)}${saneringBadgeHtml(s)}</td>
           <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
           ${showBlock ? `<td class="ov-block-cell">${blockCell}</td>` : ''}
         </tr>`;
@@ -1586,6 +1637,79 @@ function renderInUitCard() {
           <th class="num">Uit</th><th class="num">In</th><th class="num">Netto</th><th class="num">Eind</th>
         </tr></thead>
         <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+/* ---------- Klantaanvragen (schakelverzoeken) ---------- */
+
+// Klantaanvragen lopen buiten de NUS-cijfers om (zie typeFiltered), maar ze
+// moeten wél worden ingepland. Ze verschillen op één punt wezenlijk van een
+// storing: er staat een gewenste datum bij, en die datum — niet de resterende
+// dagen — bepaalt wanneer je aan de slag moet. Een aanvraag met nog 361 dagen
+// maar een gewenste datum over drie weken is urgenter dan het getal suggereert.
+// De lijst staat daarom op datum, dichtstbijzijnde eerst.
+function buildKlantaanvragen() {
+  const snaps = chronoSnapshots();
+  if (snaps.length === 0) return { open: [], nieuw: [], vorigeDag: null, eerstvolgende: null };
+  const laatste = snaps[snaps.length - 1];
+  const open = laatste.storingen.filter(isKlantaanvraag);
+
+  const vorige = snaps.length > 1 ? snaps[snaps.length - 2] : null;
+  const vorigeOrders = vorige ? new Set(vorige.storingen.filter(isKlantaanvraag).map(s => s.order)) : null;
+  const nieuw = vorigeOrders ? open.filter(s => !vorigeOrders.has(s.order)) : [];
+
+  const gesorteerd = open.slice().sort((a, b) => {
+    // Aanvragen zonder datum achteraan: daar valt nog niets op te plannen.
+    if (!a.executionDate && !b.executionDate) return (a.daysLeft ?? 9999) - (b.daysLeft ?? 9999);
+    if (!a.executionDate) return 1;
+    if (!b.executionDate) return -1;
+    return a.executionDate.localeCompare(b.executionDate);
+  });
+  const metDatum = gesorteerd.filter(s => s.executionDate);
+  return {
+    open: gesorteerd,
+    nieuw,
+    vorigeDag: vorige ? vorige.week : null,
+    eerstvolgende: metDatum.length ? metDatum[0] : null,
+  };
+}
+
+function renderKlantaanvraagCard() {
+  const kaart = document.getElementById('klantaanvraag-card');
+  const container = document.getElementById('klantaanvraag-body');
+  if (!kaart || !container) return;
+  const { open, nieuw, vorigeDag, eerstvolgende } = buildKlantaanvragen();
+
+  // Geen aanvragen = geen kaart. Wie er geen heeft hoeft er ook geen lege
+  // kaart voor te zien staan.
+  kaart.classList.toggle('hidden', open.length === 0);
+  const telling = document.getElementById('klantaanvraag-count');
+  if (telling) telling.textContent = open.length;
+  if (open.length === 0) { container.innerHTML = ''; return; }
+
+  const nieuweOrders = new Set(nieuw.map(s => s.order));
+  const kop = `<p class="prognose-headline"><strong>${open.length}</strong> ${open.length === 1 ? 'openstaande klantaanvraag' : 'openstaande klantaanvragen'}`
+    + (vorigeDag ? `, waarvan <strong>${nieuw.length}</strong> nieuw sinds ${esc(vorigeDag)}` : '')
+    + (eerstvolgende ? `. Eerstvolgende gewenste datum: <strong>${esc(fmtDate(eerstvolgende.executionDate))}</strong> in ${esc(eerstvolgende.city)}` : '')
+    + '.</p>';
+
+  const rijen = open.map(s => `
+    <tr${nieuweOrders.has(s.order) ? ' class="klant-nieuw"' : ''}>
+      <td>${orderLinkHtml(s.order)}${nieuweOrders.has(s.order) ? ' <span class="badge">nieuw</span>' : ''}</td>
+      <td>${esc(s.type)}</td>
+      <td>${esc(s.city)}</td>
+      <td>${esc(s.street)}, ${esc(s.postcode)}</td>
+      <td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>
+      <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : '<span class="muted">onbekend</span>'}</td>
+      <td class="num klant-termijn">${typeof s.daysLeft === 'number' ? esc(s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : `nog ${s.daysLeft} dgn`) : '—'}</td>
+    </tr>`).join('');
+
+  container.innerHTML = kop + `
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Order</th><th>Type</th><th>Plaats</th><th>Adres</th><th>Asset</th><th>Gewenste datum</th><th class="num">Termijn</th></tr></thead>
+        <tbody>${rijen}</tbody>
       </table>
     </div>`;
 }
@@ -2226,7 +2350,7 @@ function kaartDetailHtml(punten, zonderPositie) {
     <tr>
       <td>${orderLinkHtml(s.order)}</td>
       <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-      <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}</td>
+      <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}${saneringBadgeHtml(s)}</td>
       <td>${ovStatusPillHtml(s)}</td>
       <td class="num">${renderDaysPill(s)}</td>
     </tr>`).join('');
@@ -2444,7 +2568,7 @@ function renderClusterCard() {
         <tr>
           <td>${orderLinkHtml(s.order)}</td>
           <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-          <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}</td>
+          <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}${saneringBadgeHtml(s)}</td>
           <td>${ovStatusPillHtml(s)}</td>
           <td class="num">${renderDaysPill(s)}</td>
         </tr>`).join('');
@@ -3495,7 +3619,10 @@ function openTimeline(order) {
   if (!modal || !body) return;
 
   const tl = buildOrderTimeline(order);
-  title.textContent = `Storing ${order}`;
+  // Een klantaanvraag komt ook in de tijdlijn terecht (hij staat immers in de
+  // opgeslagen momenten), maar het is geen storing en heeft geen OV-status.
+  const aanvraag = !!tl.record && isKlantaanvraag(tl.record);
+  title.textContent = `${aanvraag ? 'Klantaanvraag' : 'Storing'} ${order}`;
 
   if (!tl.record) {
     body.innerHTML = '<p class="empty-note">Deze storing komt in geen enkele opgeslagen update voor.</p>';
@@ -3513,7 +3640,7 @@ function openTimeline(order) {
         <div><dt>Type</dt><dd>${esc(r.type)}</dd></div>
         <div><dt>Asset</dt><dd>${esc(r.asset)}${r.assetType ? ' ' + esc(r.assetType) : ''}</dd></div>
         <div><dt>Gebied</dt><dd>${r.gebiedscode ? esc(r.gebiedscode) : '—'}</dd></div>
-        <div><dt>Status</dt><dd>${tl.open ? ovStatusPillHtml(r) : '<span class="status-pill">Opgelost</span>'}</dd></div>
+        ${aanvraag ? '' : `<div><dt>Status</dt><dd>${tl.open ? ovStatusPillHtml(r) : '<span class="status-pill">Opgelost</span>'}</dd></div>`}
         <div><dt>Blokkade</dt><dd>${blok.reason ? esc(OV_BLOCK_REASON_LABELS[blok.reason]) + (blok.note ? ` — ${esc(blok.note)}` : '') : '—'}</dd></div>
         <div><dt>Eerst gezien</dt><dd>${esc(tl.eersteDatum)}</dd></div>
         <div><dt>${tl.open ? 'Open sinds' : 'Opgelost op'}</dt><dd>${tl.open ? `${dagenTekst(tl.doorlooptijd)}` : `${esc(tl.opgelostOp)} (${dagenTekst(tl.doorlooptijd)})`}</dd></div>
@@ -3802,7 +3929,7 @@ function recidiveDetailHtml(r) {
   const rijen = r.storingen.map(s => `<tr>
     <td>${orderLinkHtml(s.order)}</td>
     <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-    <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}</td>
+    <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}${saneringBadgeHtml(s)}</td>
     <td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>
     <td>${esc(s.eerst)}</td>
     <td>${s.open ? '<span class="ov-status-pill ov-status-nieuw">Nog open</span>' : `<span class="status-pill">Opgelost ${esc(s.laatst)}</span>`}</td>
@@ -4182,7 +4309,7 @@ function buildOvColumns() {
     { key: 'firstSeenWeek', label: 'Open sinds', cell: s => `<td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>` },
     { key: 'executionDate', label: 'Uitvoering', cell: s => `<td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>` },
     { key: 'flags', label: 'Aanvragen', cell: s => `<td>${s.flags.length ? s.flags.map(f => `<span class="badge" title="${esc(FLAG_LABELS[f])}">${esc(f)}</span>`).join(' ') : '—'}</td>` },
-    { key: 'type', label: 'Type', cell: s => `<td>${esc(s.type)}</td>` },
+    { key: 'type', label: 'Type', cell: s => `<td>${esc(s.type)}${saneringBadgeHtml(s)}</td>` },
     { key: 'blockReasonLabel', label: 'Blokkade', cell: s => `<td class="ov-block-cell">${ovBlockCellHtml(s)}</td>` },
   ];
 }
@@ -4342,6 +4469,7 @@ function renderDashboardFromState() {
   renderAttentionList(latestFiltered, latestVisible);
   renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
   renderTrendChart(perDag); // idem, filtert zelf op state.activeFilter
+  renderKlantaanvraagCard();
   renderGebiedPlaatsenCard();
   renderKaartCard();
   renderClusterCard();
@@ -4575,7 +4703,15 @@ function wireEvents() {
 
     renderDashboardFromState();
     showParseWarning(errors, storingen.length);
-    statusEl.textContent = `${storingen.length} storingen verwerkt voor week ${week}` + (errors.length ? `, ${errors.length} regels niet herkend` : '');
+    // Klantaanvragen apart benoemen, anders lijkt het alsof er meer storingen
+    // in zitten dan er werkelijk zijn.
+    const aantalAanvragen = storingen.filter(isKlantaanvraag).length;
+    const aantalSaneringen = storingen.filter(isSanering).length;
+    const delen = [`${storingen.length - aantalAanvragen} storingen verwerkt voor week ${week}`];
+    if (aantalSaneringen > 0) delen.push(`waarvan ${aantalSaneringen} ${aantalSaneringen === 1 ? 'sanering' : 'saneringen'}`);
+    if (aantalAanvragen > 0) delen.push(`plus ${aantalAanvragen} ${aantalAanvragen === 1 ? 'klantaanvraag' : 'klantaanvragen'}`);
+    if (errors.length) delen.push(`${errors.length} regels niet herkend`);
+    statusEl.textContent = delen.join(', ');
     textarea.value = '';
   });
 

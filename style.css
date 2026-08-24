@@ -1360,3 +1360,13 @@ tr.detail-row > td {
 }
 .kaart-detail-kop .btn-link { margin-left: auto; }
 .kaart-detail .table-scroll { padding: 0 12px 12px; }
+
+/* Sanering: dezelfde "LS storing/schade" als alle andere, dus wel een eigen
+   merkteken nodig om ze in een lijst te kunnen aanwijzen. */
+.badge-sanering {
+  background: color-mix(in srgb, var(--series-2) 18%, var(--surface-1));
+  color: var(--series-2);
+}
+/* Klantaanvragen die er sinds de vorige update bij zijn gekomen. */
+tr.klant-nieuw > td { background: color-mix(in srgb, var(--brand-highlight) 55%, var(--surface-1)); }
+.klant-termijn { white-space: nowrap; }
