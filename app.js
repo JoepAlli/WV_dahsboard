@@ -306,6 +306,7 @@ const DEFAULT_TYPE_WHITELIST = [
   'Mast geen spanning Infra',
   'OV Mof',
   'Branden overdag Infra',
+  'LS storing/schade',
 ];
 
 async function loadSnapshots() {
@@ -1698,6 +1699,47 @@ function renderInUitCard() {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+}
+
+/* ---------- Types die niet meetellen ---------- */
+
+// Het type-filter bepaalt wat er meetelt. Staat een type er niet in, dan
+// verdwenen die regels geruisloos uit elke telling, grafiek en lijst: je zag
+// "Totaal open 6" terwijl je er 11 had geplakt, en een sanering waarvan het
+// type niet meetelde was nergens meer te vinden. Stil weglaten is voor een
+// werkvoorraad het gevaarlijkste wat een hulpmiddel kan doen — dus staat het
+// er nu bij, met de knop om het meteen recht te zetten.
+function onbekendeTypesNu() {
+  const snaps = chronoSnapshots();
+  if (snaps.length === 0) return [];
+  const per = new Map();
+  snaps[snaps.length - 1].storingen.forEach(s => {
+    if (isKlantaanvraag(s) || isTypeIncluded(s)) return;
+    per.set(s.type, (per.get(s.type) || 0) + 1);
+  });
+  return Array.from(per.entries())
+    .map(([type, aantal]) => ({ type, aantal }))
+    .sort((a, b) => b.aantal - a.aantal || a.type.localeCompare(b.type));
+}
+
+function renderTypeOnbekendNotice() {
+  const el = document.getElementById('type-onbekend');
+  if (!el) return;
+  const lijst = isStaticExport ? [] : onbekendeTypesNu();
+  if (lijst.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  const totaal = lijst.reduce((n, t) => n + t.aantal, 0);
+  el.classList.remove('hidden');
+  el.innerHTML = `<strong>${totaal} ${totaal === 1 ? 'regel telt' : 'regels tellen'} niet mee.</strong> `
+    + `Dit type staat niet in het type-filter, dus het blijft buiten elke telling, grafiek en lijst: `
+    + lijst.map(t => `<span class="type-chip">${esc(t.type)} (${t.aantal})<button class="add-type" data-type="${esc(t.type)}" title="Laten meetellen">+</button></span>`).join('')
+    + ` <span class="muted small">Klik op + om het te laten meetellen; weghalen kan in Instellingen.</span>`;
+  el.querySelectorAll('.add-type').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!state.typeWhitelist.includes(btn.dataset.type)) state.typeWhitelist.push(btn.dataset.type);
+      await saveTypeWhitelist(state.typeWhitelist);
+      renderDashboardFromState();
+    });
+  });
 }
 
 /* ---------- Markering "1" die nog een oordeel nodig heeft ---------- */
@@ -4732,6 +4774,7 @@ function renderDashboardFromState() {
   renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
   renderTrendChart(perDag); // idem, filtert zelf op state.activeFilter
   renderLijstKeuze();
+  renderTypeOnbekendNotice();
   renderClassificatieCard();
   renderKlantaanvraagCard();
   renderGebiedPlaatsenCard();
@@ -5000,6 +5043,13 @@ function wireEvents() {
     if (lijst === 'nus' && aantalSaneringen > 0) delen.push(`waarvan ${aantalSaneringen} ${aantalSaneringen === 1 ? 'sanering' : 'saneringen'}`);
     if (lijst === 'nus' && aantalAanvragen > 0) delen.push(`waarvan ${aantalAanvragen} ${aantalAanvragen === 1 ? 'klantaanvraag' : 'klantaanvragen'}`);
     if (errors.length) delen.push(`${errors.length} regels niet herkend`);
+    // Types buiten het filter tellen nergens mee; dat moet je weten op het
+    // moment dat je plakt, niet pas als een getal niet blijkt te kloppen.
+    const buitenFilter = storingen.filter(st => !isKlantaanvraag(st) && !isTypeIncluded(st));
+    if (buitenFilter.length > 0) {
+      const types = Array.from(new Set(buitenFilter.map(st => st.type)));
+      delen.push(`LET OP: ${buitenFilter.length} ${buitenFilter.length === 1 ? 'regel telt' : 'regels tellen'} niet mee (${types.join(', ')}) — zet het type aan op de Data-pagina`);
+    }
     statusEl.textContent = delen.join(', ');
     textarea.value = '';
     state.lijstHerkend = null;
