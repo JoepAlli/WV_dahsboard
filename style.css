@@ -1367,6 +1367,12 @@ tr.detail-row > td {
   background: color-mix(in srgb, var(--series-2) 18%, var(--surface-1));
   color: var(--series-2);
 }
+/* Een markering waarvan nog niet vaststaat wat hij betekent. */
+.badge-classificeren {
+  background: color-mix(in srgb, var(--status-warning) 15%, var(--surface-1));
+  color: var(--status-serious);
+}
+.markering-select { max-width: 150px; }
 /* Klantaanvragen die er sinds de vorige update bij zijn gekomen. */
 tr.klant-nieuw > td { background: color-mix(in srgb, var(--brand-highlight) 55%, var(--surface-1)); }
 .klant-termijn { white-space: nowrap; }

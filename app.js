@@ -89,10 +89,12 @@ const COUNT_HEADER_RE = /^\d+\s+\S.*$/;
 const KLANTAANVRAAG_HEADER_RE = /klantaanvra/i;
 const KLANTAANVRAAG_TYPE_RE = /^schakelen\b/i;
 
-// Saneringen staan er precies zo in als elke andere storing (type "LS
-// storing/schade"); het enige verschil is een losse regel "1" achter de naam
-// van de uitvoerder. Die regel is dus geen naam en geen vlaggetje, maar de
-// markering zelf.
+// Een losse regel "1" achter de naam van de uitvoerder is een markering, geen
+// naam en geen vlaggetje. Wat die markering betekent hangt af van het type:
+// bij "LS storing/schade" is het een sanering, bij elk ander type is het iets
+// anders (aanleg bijvoorbeeld) en dat valt hier niet uit af te leiden. De
+// parser legt daarom alleen het feit vast dat de markering er stond; de
+// betekenis wordt verderop bepaald (zie isSanering).
 const SANERING_MARKER_RE = /^1$/;
 
 // Parseert precies één storing vanaf lines[start] en geeft { storing, next } terug,
@@ -161,7 +163,7 @@ function parseOneEntry(lines, start) {
   }
 
   const flagLineRe = /^[A-Z]+$/;
-  const sanering = middleLines.some(l => SANERING_MARKER_RE.test(l));
+  const markering1 = middleLines.some(l => SANERING_MARKER_RE.test(l));
   const flagLines = middleLines.filter(l => flagLineRe.test(l));
   // De sanering-markering telt niet als naam: anders zou bij een storing met
   // alleen een uitvoerder ("Marc van Veen" + "1") die uitvoerder als WV'er
@@ -177,7 +179,7 @@ function parseOneEntry(lines, start) {
 
   const storing = {
     type, city, street, postcode, order, asset, assetType,
-    wvNaam, names: nameLines, flags, daysLeft, overdue, executionDate, executionDateRaw, sanering,
+    wvNaam, names: nameLines, flags, daysLeft, overdue, executionDate, executionDateRaw, markering1,
   };
   return { storing, next: i };
 }
@@ -379,6 +381,20 @@ async function saveLastBackupAt(iso) {
   catch (e) { console.error(e); }
 }
 
+// Handmatige classificatie van de "1"-markering bij een ander type dan
+// LS storing/schade. Eigen sleutel, dus puur toevoegend: de momentopnamen
+// blijven onaangeroerd, en zonder deze sleutel werkt alles gewoon door.
+const MARKERING_KLASSE_KEY = 'nusdash_markering_klasse_v1';
+const MARKERING_KLASSEN = { aanleg: 'Aanleg', sanering: 'Sanering', anders: 'Anders' };
+async function loadMarkeringKlasseMap() {
+  try { return (await idbGet(MARKERING_KLASSE_KEY)) || {}; }
+  catch (e) { console.error(e); return {}; }
+}
+async function saveMarkeringKlasseMap(map) {
+  try { await idbSet(MARKERING_KLASSE_KEY, map); }
+  catch (e) { showErrorToast('Opslaan van de classificatie is mislukt: ' + e.message); throw e; }
+}
+
 const OV_BLOCK_STATUS_KEY = 'nusdash_ov_block_status_v1';
 async function loadOvBlockStatusMap() {
   try { return (await idbGet(OV_BLOCK_STATUS_KEY)) || {}; }
@@ -406,6 +422,7 @@ async function exportBackup() {
     ovSnapshots: await loadSnapshots(),
     typeWhitelist: await loadTypeWhitelist(),
     ovBlockStatus: await loadOvBlockStatusMap(),
+    markeringKlasse: await loadMarkeringKlasseMap(),
     bijnaVerlopenThreshold: await loadBijnaVerlopenThreshold(),
     capaciteit: await loadCapaciteit(),
   };
@@ -444,6 +461,7 @@ function buildStandaloneExport() {
     ovSnapshots: state.snapshots,
     typeWhitelist: state.typeWhitelist,
     ovBlockStatus: state.ovBlockStatus,
+    markeringKlasse: state.markeringKlasse,
     bijnaVerlopenThreshold: state.bijnaVerlopenThreshold,
     exportedAt: new Date().toISOString(),
   };
@@ -479,6 +497,7 @@ async function importBackup(file) {
   if (Array.isArray(backup.ovSnapshots)) await saveSnapshots(backup.ovSnapshots);
   if (Array.isArray(backup.typeWhitelist)) await saveTypeWhitelist(backup.typeWhitelist);
   if (backup.ovBlockStatus && typeof backup.ovBlockStatus === 'object') await saveOvBlockStatusMap(backup.ovBlockStatus);
+  if (backup.markeringKlasse && typeof backup.markeringKlasse === 'object') await saveMarkeringKlasseMap(backup.markeringKlasse);
   if (Number.isFinite(backup.bijnaVerlopenThreshold) && backup.bijnaVerlopenThreshold > 0) await saveBijnaVerlopenThreshold(backup.bijnaVerlopenThreshold);
   if (backup.capaciteit && typeof backup.capaciteit === 'object') await saveCapaciteit(backup.capaciteit);
 }
@@ -585,13 +604,44 @@ function isTypeIncluded(s) { return state.typeWhitelist.includes(s.type); }
 // alles wat via typeFiltered loopt automatisch klopt; ze krijgen hun eigen
 // kaart op de Data-tab.
 function isKlantaanvraag(s) { return s.soort === 'klantaanvraag'; }
-function isSanering(s) { return !!s.sanering; }
+
+// Alleen "LS storing/schade" mét de markering is een sanering. Eerder telde
+// elke storing met een "1" mee, waardoor er saneringen verschenen die het niet
+// konden zijn (straten zonder OV bijvoorbeeld).
+//
+// Het veld heette in oudere momentopnamen `sanering`, maar bevatte precies
+// hetzelfde ruwe feit: er stond een "1" in de tekst. Beide worden gelezen,
+// zodat al opgeslagen data meteen goed wordt geteld zonder opnieuw te plakken.
+const LS_STORING_TYPE_RE = /ls\s+storing\s*\/\s*schade/i;
+function heeftMarkering1(s) { return !!(s.markering1 || s.sanering); }
+function isLsStoringSchade(s) { return LS_STORING_TYPE_RE.test(s.type || ''); }
+
+function isSanering(s) {
+  // Een handmatige classificatie gaat altijd voor: bij een ander type kan het
+  // dashboard niet weten wat de markering betekent, dus dat oordeel is aan jou.
+  const klasse = markeringKlasseVan(s.order);
+  if (klasse) return klasse === 'sanering';
+  return heeftMarkering1(s) && isLsStoringSchade(s);
+}
+
+// Een markering bij een ander type dan LS storing/schade: dat is geen sanering,
+// maar wél iets bijzonders (meestal aanleg). Zolang er geen oordeel over is
+// geveld blijft het zichtbaar staan, zodat het niet stilzwijgend als gewone
+// storing wegzakt.
+function vraagtClassificatie(s) {
+  return heeftMarkering1(s) && !isLsStoringSchade(s) && !markeringKlasseVan(s.order);
+}
 function typeFiltered(list) { return list.filter(s => !isKlantaanvraag(s) && isTypeIncluded(s)); }
 
 // Een sanering staat er hetzelfde in als elke andere "LS storing/schade", dus
-// zonder markering zie je in een lijst niet welke het zijn.
+// zonder merkteken zie je in een lijst niet welke het zijn. Hetzelfde geldt
+// voor de markeringen die nog een oordeel nodig hebben.
 function saneringBadgeHtml(s) {
-  return isSanering(s) ? ' <span class="badge badge-sanering">sanering</span>' : '';
+  if (isSanering(s)) return ' <span class="badge badge-sanering">sanering</span>';
+  const klasse = markeringKlasseVan(s.order);
+  if (klasse) return ` <span class="badge">${esc(MARKERING_KLASSEN[klasse])}</span>`;
+  if (vraagtClassificatie(s)) return ' <span class="badge badge-classificeren">1 · classificeren</span>';
+  return '';
 }
 
 // De grens voor "Bijna verlopen" (serious) is instelbaar (zie Instellingen);
@@ -666,6 +716,7 @@ const state = {
   clusterMode: 'pc4',
   kaartPlaats: null,
   lijstSoort: 'nus',
+  markeringKlasse: {},
   lijstHerkend: null,
   lijstSaneringenInTekst: 0,
   lijstHandmatig: false,
@@ -783,6 +834,10 @@ const OV_BLOCK_REASON_LABELS = { rezap: 'Aannemerij', aanleg: 'Naar Aanleg', uit
 // allang opgelost.
 const OV_BLOCK_STALE_DAYS = 28;
 function ovBlockStatusOf(order) { return state.ovBlockStatus[order] || {}; }
+function markeringKlasseVan(order) {
+  const k = (state.markeringKlasse || {})[order];
+  return MARKERING_KLASSEN[k] ? k : null;
+}
 function isOvBlocked(s) { return !!ovBlockStatusOf(s.order).reason; }
 function ovBlockDaysSince(order) {
   const since = ovBlockStatusOf(order).since;
@@ -1643,6 +1698,68 @@ function renderInUitCard() {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+}
+
+/* ---------- Markering "1" die nog een oordeel nodig heeft ---------- */
+
+// Bij "LS storing/schade" betekent de markering een sanering. Bij elk ander
+// type betekent hij iets anders — meestal aanleg — en dat is niet uit de tekst
+// af te leiden. Zulke regels blijven hier staan tot er een keuze is gemaakt,
+// zodat ze niet als gewone storing wegzakken en ook niet ten onrechte bij de
+// saneringen worden opgeteld.
+function buildTeClassificeren() {
+  const snaps = chronoSnapshots();
+  if (snaps.length === 0) return [];
+  return typeFiltered(snaps[snaps.length - 1].storingen)
+    .filter(vraagtClassificatie)
+    .sort((a, b) => (a.type || '').localeCompare(b.type || '') || (a.daysLeft ?? 999) - (b.daysLeft ?? 999));
+}
+
+function renderClassificatieCard() {
+  const kaart = document.getElementById('classificatie-card');
+  const container = document.getElementById('classificatie-body');
+  if (!kaart || !container) return;
+  // In de teamexport valt er niets te classificeren: dat is jouw oordeel, en
+  // een WV'er kan het toch niet opslaan.
+  const rijen = isStaticExport ? [] : buildTeClassificeren();
+  kaart.classList.toggle('hidden', rijen.length === 0);
+  const telling = document.getElementById('classificatie-count');
+  if (telling) telling.textContent = rijen.length;
+  if (rijen.length === 0) { container.innerHTML = ''; return; }
+
+  const opties = (order) => {
+    const huidig = markeringKlasseVan(order);
+    return `<select class="markering-select" data-order="${esc(order)}">
+        <option value="" ${!huidig ? 'selected' : ''}>— Nog niet —</option>
+        ${Object.keys(MARKERING_KLASSEN).map(k => `<option value="${k}" ${huidig === k ? 'selected' : ''}>${esc(MARKERING_KLASSEN[k])}</option>`).join('')}
+      </select>`;
+  };
+
+  container.innerHTML = `<p class="prognose-headline"><strong>${rijen.length}</strong> ${rijen.length === 1 ? 'openstaande storing heeft' : 'openstaande storingen hebben'} een "1" in de tekst bij een ander type dan LS storing/schade. Dat is geen sanering; kies hier wat het wel is.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Order</th><th>Type</th><th>Plaats</th><th>Adres</th><th class="num">Dagen</th><th>Wat is het?</th></tr></thead>
+        <tbody>${rijen.map(s => `
+          <tr>
+            <td>${orderLinkHtml(s.order)}</td>
+            <td>${esc(s.type)}</td>
+            <td>${esc(s.city)}</td>
+            <td>${esc(s.street)}, ${esc(s.postcode)}</td>
+            <td class="num">${renderDaysPill(s)}</td>
+            <td>${opties(s.order)}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+
+  container.querySelectorAll('.markering-select').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const order = sel.dataset.order;
+      if (sel.value) state.markeringKlasse[order] = sel.value;
+      else delete state.markeringKlasse[order];
+      await saveMarkeringKlasseMap(state.markeringKlasse);
+      renderDashboardFromState();
+    });
+  });
 }
 
 /* ---------- Invoer: welke lijst plak je? ---------- */
@@ -4615,6 +4732,7 @@ function renderDashboardFromState() {
   renderRegioChart(latestFiltered); // volgt de actieve filtertab (Totaal = alle regio's, anders alleen die regio)
   renderTrendChart(perDag); // idem, filtert zelf op state.activeFilter
   renderLijstKeuze();
+  renderClassificatieCard();
   renderKlantaanvraagCard();
   renderGebiedPlaatsenCard();
   renderKaartCard();
@@ -4700,6 +4818,7 @@ async function reloadAllStateAndRender() {
   state.snapshots = await loadSnapshots();
   state.typeWhitelist = await loadTypeWhitelist();
   state.ovBlockStatus = await loadOvBlockStatusMap();
+  state.markeringKlasse = await loadMarkeringKlasseMap();
   state.bijnaVerlopenThreshold = await loadBijnaVerlopenThreshold();
   state.lastBackupAt = await loadLastBackupAt();
   state.capaciteit = await loadCapaciteit();
@@ -5268,6 +5387,7 @@ function applyStaticExportData() {
   state.snapshots = STATIC_DATA.ovSnapshots || [];
   state.typeWhitelist = STATIC_DATA.typeWhitelist || [];
   state.ovBlockStatus = STATIC_DATA.ovBlockStatus || {};
+  state.markeringKlasse = STATIC_DATA.markeringKlasse || {};
   state.bijnaVerlopenThreshold = STATIC_DATA.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD;
 
   if (state.snapshots.length > 0) renderDashboardFromState();
