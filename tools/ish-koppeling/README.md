@@ -136,7 +136,41 @@ Aandachtspunten:
 
 ## 5. Proof of concept
 
-Twee scripts, allebei alleen-lezen:
+Drie scripts, allemaal alleen-lezen. `ish-tap` is de aanbevolen route.
+
+### `ish-tap` — meeluisteren met wat de app zelf ophaalt
+
+Vraagt niets zelf op, maar haakt in op de verzoeken die de InstandhoudingsApp
+toch al doet. Daardoor krijg je precies wat de app opvraagt, mét de filters die
+erin zitten — je hoeft niet te weten hoe de entiteitensets heten of hoe de app
+filtert. Er verandert niets aan de app: het draait in jouw tabblad en leest
+alleen mee.
+
+Twee vormen, uit dezelfde kern (`ish-tap.core.js`, herbouwen met
+`node tools/ish-koppeling/maak-bookmarklet.js`):
+
+**Userscript — `ish-tap.user.js`** (aanbevolen, mits Tampermonkey of
+Violentmonkey mag van IT). Installeren, en dan **de regel `@match` aanpassen**
+naar de hostnaam uit je adresbalk; zolang daar `VUL-HOSTNAAM-IN` staat doet het
+script niets. Het luistert dan mee vanaf het moment dat de pagina laadt, dus
+ook naar de allereerste lading gegevens.
+
+**Bookmarklet — `ish-tap-bookmarklet.txt`**. Nieuwe bladwijzer, de regel die met
+`javascript:` begint als URL plakken. Werkt zonder dat je iets hoeft te
+installeren, maar met één beperking die in de aard van een bookmarklet zit: hij
+gaat pas meeluisteren op het moment dat je hem aanklikt. **Ververs daarna dus de
+lijst in de app** (of blader naar een ander overzicht), anders vangt hij niets
+op — de gegevens waren immers al binnen.
+
+Beide tonen rechtsonder een klein paneel met wat er is opgevangen en drie
+knoppen: Download JSON, Kopieer en Wis. Het paneel zit in een shadow DOM, dus de
+opmaak van de app en die van het paneel raken elkaar niet.
+
+Doet de bookmarklet niets, dan blokkeert het beveiligingsbeleid van de pagina
+waarschijnlijk `javascript:`-bladwijzers. Plak de inhoud van `ish-tap.core.js`
+dan in de console, of gebruik het userscript.
+
+
 
 ### `ish-export.js` — de werkende route
 
@@ -160,6 +194,23 @@ wat er gebeurt. Daarmee weet je zeker of het bovenstaande in jouw omgeving ook
 echt zo uitpakt, in plaats van dat je het van mij aanneemt.
 
 ### Wat er getest is
+
+`ish-tap` is gedraaid tegen een nagebouwde SAPUI5-achtige app die op drie
+manieren ophaalt: via `fetch`, via `XMLHttpRequest` en via een `$batch`-POST.
+Alle vier de antwoorden werden opgevangen (16 rijen), de twee antwoorden in de
+batch werden uit het multipart-bericht gepeuterd, en de app bleef gewoon zijn
+eigen antwoorden lezen. Ook getest: een herhaald verzoek vervangt het vorige in
+plaats van te stapelen, wissen werkt, en de bookmarklet-variant vangt na één
+keer verversen alsnog alles op.
+
+Twee dingen kwamen daarbij aan het licht die zonder die proef fout waren
+gebleven. Een `$batch`-**antwoord** bevat de URL's van de deelverzoeken niet —
+die staan alleen in het verzoek — dus die worden nu uit de verzoekinhoud
+gelezen en op volgorde gekoppeld. En een URL met een spatie erin (een `$filter`
+als `Status eq 'In onderzoek'`) brak die koppeling eerst, waardoor een lijst het
+label van een ándere lijst kreeg. Er zit nu een grendel op: klopt het aantal
+verzoeken niet met het aantal antwoorden, dan blijft een deel liever naamloos
+dan verkeerd benoemd.
 
 `ish-export.js` is niet alleen geschreven maar ook gedraaid, tegen een
 nagebouwde SAP-OData-v2-service met 1234 rijen: servicedocument uitgelezen,
