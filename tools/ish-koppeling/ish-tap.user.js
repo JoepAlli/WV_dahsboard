@@ -118,6 +118,53 @@ function ishTapInstalleer() {
     return uit;
   }
 
+  /* ---------- Eén paneel voor alle vensters ----------
+     Staat de app in een iframe, dan draait er een installatie in het iframe
+     én in het venster eromheen — maar de gegevens komen binnen in het iframe.
+     Twee panelen naast elkaar, waarvan de zichtbare op nul staat, is precies
+     zo verwarrend als het klinkt. Daarom haalt het paneel de vangst uit alle
+     bereikbare vensters op, en toont alleen het buitenste venster er een. */
+
+  function alleInstanties() {
+    const uit = [];
+    const loop = (win) => {
+      try { if (win.__ISH_TAP__) uit.push(win.__ISH_TAP__); } catch (e) { return; }
+      try { for (let i = 0; i < win.frames.length; i++) loop(win.frames[i]); } catch (e) { /* ander domein */ }
+    };
+    let start = window;
+    try { if (window.top.__ISH_TAP__ !== undefined || window.top.document) start = window.top; }
+    catch (e) { start = window; }   // buitenste venster is van een ander domein
+    loop(start);
+    if (uit.indexOf(window.__ISH_TAP__) === -1 && window.__ISH_TAP__) uit.push(window.__ISH_TAP__);
+    return uit;
+  }
+
+  // Alle vangst bij elkaar, ontdubbeld op URL.
+  function alleOpgevangen() {
+    const samen = new Map();
+    const eigen = alleInstanties();
+    if (eigen.length === 0) return new Map(opgevangen);
+    eigen.forEach(inst => {
+      try { inst.opgevangen.forEach((v, k) => samen.set(k, v)); } catch (e) { /* niets */ }
+    });
+    opgevangen.forEach((v, k) => { if (!samen.has(k)) samen.set(k, v); });
+    return samen;
+  }
+
+  // Toont dit venster zelf een paneel? Alleen het buitenste, tenzij dat van een
+  // ander domein is en dus niet kan.
+  function magPaneelTonen() {
+    if (window.top === window.self) return true;
+    try { return !window.top.__ISH_TAP__; } catch (e) { return true; }
+  }
+
+  // Nieuwe vangst in een iframe moet het paneel buiten bijwerken.
+  function meldAanBuiten() {
+    try {
+      if (window.top !== window.self && window.top.__ISH_TAP__) window.top.__ISH_TAP__.ververs();
+    } catch (e) { /* ander domein: dan toont dit venster zijn eigen paneel */ }
+  }
+
   function bewaar(url, sleutel, json, viaBatch) {
     const rijen = rijenUit(json);
     opgevangen.set(sleutel, {
@@ -128,6 +175,7 @@ function ishTapInstalleer() {
       json,
     });
     tekenPaneel();
+    meldAanBuiten();
   }
 
   function verwerk(url, contentType, tekst, verzoekBody) {
@@ -207,12 +255,13 @@ function ishTapInstalleer() {
   /* ---------- Bestand samenstellen ---------- */
 
   function bouwBestand() {
+    const samen = alleOpgevangen();
     return {
       opgehaaldOp: new Date().toISOString(),
       pagina: location.href,
-      hoeveel: opgevangen.size,
-      totaalRijen: Array.from(opgevangen.values()).reduce((n, v) => n + v.aantalRijen, 0),
-      antwoorden: Array.from(opgevangen.values()),
+      hoeveel: samen.size,
+      totaalRijen: Array.from(samen.values()).reduce((n, v) => n + v.aantalRijen, 0),
+      antwoorden: Array.from(samen.values()),
     };
   }
 
@@ -314,7 +363,12 @@ function ishTapInstalleer() {
     wortel.querySelector('.sluit').addEventListener('click', () => { verborgen = true; zetStijl(); });
     wortel.getElementById('dl').addEventListener('click', download);
     wortel.getElementById('kop').addEventListener('click', kopieer);
-    wortel.getElementById('wis').addEventListener('click', () => { opgevangen.clear(); melding('Gewist.'); tekenPaneel(); });
+    wortel.getElementById('wis').addEventListener('click', () => {
+      alleInstanties().forEach(inst => { try { inst.opgevangen.clear(); } catch (e) { /* niets */ } });
+      opgevangen.clear();
+      melding('Gewist.');
+      tekenPaneel();
+    });
   }
 
   function melding(t) { if (meldingEl) meldingEl.textContent = t; }
@@ -331,6 +385,7 @@ function ishTapInstalleer() {
 
   function tekenPaneel() {
     if (!document.body) return;              // nog te vroeg in de paginaopbouw
+    if (!magPaneelTonen()) return;           // het buitenste venster toont het overzicht
     if (!paneelOk()) {
       // Een achtergebleven huls van een eerdere opbouw eerst opruimen, anders
       // staan er straks twee elementen met dezelfde id.
@@ -341,7 +396,7 @@ function ishTapInstalleer() {
       zetStijl();
     }
     const lijst = wortel.getElementById('lijst');
-    const items = Array.from(opgevangen.values());
+    const items = Array.from(alleOpgevangen().values());
     wortel.getElementById('tel').textContent = items.reduce((n, v) => n + v.aantalRijen, 0) + ' rijen';
     lijst.innerHTML = items.length === 0
       ? '<div class="leeg">Nog niets opgevangen. Ververs de lijst in de app, of blader naar een ander overzicht.</div>'
@@ -356,6 +411,7 @@ function ishTapInstalleer() {
     bestand: bouwBestand,
     download,
     toon: () => { verborgen = false; tekenPaneel(); zetStijl(); },
+    ververs: () => { try { tekenPaneel(); } catch (e) { /* niets */ } },
     // Voor als het paneel om welke reden dan ook onbereikbaar blijft.
     waarom: () => {
       const el = document.getElementById('__ish_tap_paneel');
@@ -366,7 +422,10 @@ function ishTapInstalleer() {
         heeftSchaduw: !!(el && el.shadowRoot),
         afmeting: r ? Math.round(r.width) + 'x' + Math.round(r.height) : 'geen',
         zichtbaarheid: el ? getComputedStyle(el).display + '/' + getComputedStyle(el).visibility : 'geen',
-        opgevangen: opgevangen.size,
+        opgevangenHier: opgevangen.size,
+        opgevangenTotaal: alleOpgevangen().size,
+        aantalVensters: alleInstanties().length,
+        toontPaneel: magPaneelTonen(),
         weggeklikt: verborgen,
       };
     },
