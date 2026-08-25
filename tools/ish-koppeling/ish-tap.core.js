@@ -36,6 +36,16 @@ function ishTapInstalleer() {
    *  vervangt in plaats van het bestand te laten opzwellen. */
   const opgevangen = new Map();
 
+  /** Élke URL die langskomt, ook de niet-passende. Zonder dit weet je bij een
+   *  lege vangst niet of er niets langskwam of dat het filter niet klopt — en
+   *  dat verschil bepaalt wat je eraan moet doen. */
+  const gezien = [];
+  function noteer(url) {
+    if (!url || gezien[gezien.length - 1] === url) return;
+    gezien.push(String(url));
+    if (gezien.length > 80) gezien.shift();
+  }
+
   const rijenUit = (json) => {
     if (!json || typeof json !== 'object') return [];
     if (Array.isArray(json.value)) return json.value;                   // OData v4
@@ -185,6 +195,7 @@ function ishTapInstalleer() {
   if (typeof origFetch === 'function') {
     window.fetch = function (input, init) {
       const url = typeof input === 'string' ? input : (input && input.url) || '';
+      noteer(url);
       const belofte = origFetch.apply(this, arguments);
       if (!PATROON.test(url)) return belofte;
       // De verzoekinhoud is nodig om batchdelen te kunnen benoemen. Bij een
@@ -217,6 +228,7 @@ function ishTapInstalleer() {
   };
   XMLHttpRequest.prototype.send = function (body) {
     this.__ishBody = (typeof body === 'string') ? body : null;
+    noteer(this.__ishUrl);
     if (PATROON.test(this.__ishUrl || '')) {
       this.addEventListener('load', function () {
         try {
@@ -232,6 +244,57 @@ function ishTapInstalleer() {
     }
     return origSend.apply(this, arguments);
   };
+
+  /* ---------- De app zelf laten verversen ----------
+     Een SAPUI5-app haalt zijn gegevens bij het opstarten op en houdt ze
+     daarna vast. Klik je de bookmarklet ná het opstarten aan, dan komt er
+     niets meer langs om op te vangen, en heeft meeluisteren geen zin.
+
+     Deze knop vraagt de app om zijn gegevens opnieuw op te halen, via zijn
+     eigen refresh() — dezelfde weg die de verversknop in de app bewandelt.
+     Er wordt dus niets zelf opgevraagd; de app doet het verzoek. */
+  function verversApp() {
+    const sap = window.sap;
+    if (!sap || !sap.ui || !sap.ui.getCore) return { gelukt: false, reden: 'geen SAPUI5 gevonden in dit venster' };
+
+    const modellen = [];
+    const voegToe = (m) => {
+      if (m && typeof m.refresh === 'function' && modellen.indexOf(m) === -1) modellen.push(m);
+    };
+    try { voegToe(sap.ui.getCore().getModel()); } catch (e) { /* niets */ }
+    // Modellen hangen meestal aan de component, niet aan de core.
+    try {
+      const reg = sap.ui.core.Component && sap.ui.core.Component.registry;
+      const comps = reg ? (reg.filter ? reg.filter(() => true) : []) : [];
+      comps.forEach(c => {
+        try {
+          voegToe(c.getModel());
+          const namen = (c.oModels && Object.keys(c.oModels)) || [];
+          namen.forEach(n => voegToe(c.getModel(n)));
+        } catch (e) { /* niets */ }
+      });
+    } catch (e) { /* niets */ }
+
+    if (modellen.length === 0) return { gelukt: false, reden: 'geen model gevonden om te verversen' };
+    let n = 0;
+    modellen.forEach(m => { try { m.refresh(true); n++; } catch (e) { /* niets */ } });
+    return n > 0
+      ? { gelukt: true, reden: `${n} model${n === 1 ? '' : 'len'} ververst` }
+      : { gelukt: false, reden: 'verversen werd geweigerd' };
+  }
+
+  // Ook in de frames proberen: daar zit de app meestal.
+  function verversOveral() {
+    const uitkomsten = [];
+    alleInstanties().forEach(inst => {
+      try { uitkomsten.push(inst.verversApp()); } catch (e) { /* niets */ }
+    });
+    if (uitkomsten.length === 0) uitkomsten.push(verversApp());
+    const gelukt = uitkomsten.filter(u => u && u.gelukt);
+    return gelukt.length > 0
+      ? { gelukt: true, reden: gelukt.map(u => u.reden).join(', ') }
+      : { gelukt: false, reden: (uitkomsten[0] && uitkomsten[0].reden) || 'niets gevonden' };
+  }
 
   /* ---------- Bestand samenstellen ---------- */
 
@@ -334,6 +397,9 @@ function ishTapInstalleer() {
           <button class="k grijs" id="kop">Kopieer</button>
           <button class="k grijs" id="wis">Wis</button>
         </div>
+        <div class="knoppen">
+          <button class="k grijs" id="ververs">Ververs in de app</button>
+        </div>
         <div class="melding" id="melding"></div>
       </div>`;
     // Bewust aan <html> hangen en niet aan <body>: een app die zijn body
@@ -344,6 +410,10 @@ function ishTapInstalleer() {
     wortel.querySelector('.sluit').addEventListener('click', () => { verborgen = true; zetStijl(); });
     wortel.getElementById('dl').addEventListener('click', download);
     wortel.getElementById('kop').addEventListener('click', kopieer);
+    wortel.getElementById('ververs').addEventListener('click', () => {
+      const u = verversOveral();
+      melding(u.gelukt ? 'Gevraagd om te verversen — ' + u.reden : 'Lukt niet: ' + u.reden);
+    });
     wortel.getElementById('wis').addEventListener('click', () => {
       alleInstanties().forEach(inst => { try { inst.opgevangen.clear(); } catch (e) { /* niets */ } });
       opgevangen.clear();
@@ -379,8 +449,12 @@ function ishTapInstalleer() {
     const lijst = wortel.getElementById('lijst');
     const items = Array.from(alleOpgevangen().values());
     wortel.getElementById('tel').textContent = items.reduce((n, v) => n + v.aantalRijen, 0) + ' rijen';
+    const totaalGezien = alleInstanties().reduce((n, inst) => {
+      try { return n + inst.gezien.length; } catch (e) { return n; }
+    }, 0) || gezien.length;
     lijst.innerHTML = items.length === 0
-      ? '<div class="leeg">Nog niets opgevangen. Ververs de lijst in de app, of blader naar een ander overzicht.</div>'
+      ? `<div class="leeg">Nog niets opgevangen; er ${totaalGezien === 1 ? 'kwam 1 verzoek' : 'kwamen ' + totaalGezien + ' verzoeken'} langs.
+          Klik "Ververs in de app" hieronder, of ververs de lijst in de app zelf.</div>`
       : items.map(v => {
           const kort = v.url.length > 58 ? '…' + v.url.slice(-57) : v.url;
           return `<div class="rij"><span class="naam">${kort.replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span><span class="n">${v.aantalRijen}</span></div>`;
@@ -393,6 +467,8 @@ function ishTapInstalleer() {
     download,
     toon: () => { verborgen = false; tekenPaneel(); zetStijl(); },
     ververs: () => { try { tekenPaneel(); } catch (e) { /* niets */ } },
+    gezien,
+    verversApp,
     // Voor als het paneel om welke reden dan ook onbereikbaar blijft.
     waarom: () => {
       const el = document.getElementById('__ish_tap_paneel');
@@ -403,6 +479,8 @@ function ishTapInstalleer() {
         heeftSchaduw: !!(el && el.shadowRoot),
         afmeting: r ? Math.round(r.width) + 'x' + Math.round(r.height) : 'geen',
         zichtbaarheid: el ? getComputedStyle(el).display + '/' + getComputedStyle(el).visibility : 'geen',
+        verzoekenGezien: gezien.length,
+        laatsteVerzoeken: gezien.slice(-8),
         opgevangenHier: opgevangen.size,
         opgevangenTotaal: alleOpgevangen().size,
         aantalVensters: alleInstanties().length,
