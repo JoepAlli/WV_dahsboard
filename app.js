@@ -632,7 +632,25 @@ function isSanering(s) {
 function vraagtClassificatie(s) {
   return heeftMarkering1(s) && !isLsStoringSchade(s) && !markeringKlasseVan(s.order);
 }
-function typeFiltered(list) { return list.filter(s => !isKlantaanvraag(s) && isTypeIncluded(s)); }
+// "LS storing/schade" staat alleen in de lijst om de saneringen eruit te
+// halen; zonder de markering is het geen werk voor deze werkvoorraad. Het type
+// moet daarom wél in het type-filter staan (anders komt de sanering niet
+// binnen), maar de regels zonder markering tellen niet mee.
+function telAlsStoring(s) {
+  if (isKlantaanvraag(s) || !isTypeIncluded(s)) return false;
+  if (isLsStoringSchade(s) && !isSanering(s)) return false;
+  return true;
+}
+function typeFiltered(list) { return list.filter(telAlsStoring); }
+
+// Hoeveel LS storing/schade-regels om die reden buiten beeld blijven — puur om
+// het te kunnen benoemen, zodat het geen stille aftrek is.
+function lsZonderMarkeringNu() {
+  const snaps = chronoSnapshots();
+  if (snaps.length === 0) return 0;
+  return snaps[snaps.length - 1].storingen
+    .filter(s => !isKlantaanvraag(s) && isTypeIncluded(s) && isLsStoringSchade(s) && !isSanering(s)).length;
+}
 
 // Een sanering staat er hetzelfde in als elke andere "LS storing/schade", dus
 // zonder merkteken zie je in een lijst niet welke het zijn. Hetzelfde geldt
@@ -1286,6 +1304,10 @@ function renderStatDetail(current, mutations) {
 
   let badgeCount, body;
   const toonLeeftijdFilter = filterKey === 'mastGeenSpanning';
+  // Bij de saneringen hoort erbij wat er om die reden NIET in staat.
+  const zonderMarkering = filterKey === 'sanering' ? lsZonderMarkeringNu() : 0;
+  const saneringNoot = zonderMarkering === 0 ? '' :
+    `<p class="muted small">${zonderMarkering} ${zonderMarkering === 1 ? 'regel' : 'regels'} "LS storing/schade" zonder de markering "1" ${zonderMarkering === 1 ? 'telt' : 'tellen'} niet mee — dat zijn geen saneringen.</p>`;
   let leeftijdBalk = '';
   let leeftijdNoot = '';
   let maandBlok = '';
@@ -1365,6 +1387,7 @@ function renderStatDetail(current, mutations) {
     <div class="tile-trend-chart">${chartHtml}</div>
     ${leeftijdBalk}
     ${leeftijdNoot}
+    ${saneringNoot}
     ${maandBlok}
     ${body}`;
 
@@ -4718,7 +4741,13 @@ function renderTypeWhitelist() {
 
 function renderFilterTabs(latestVisible) {
   const container = document.getElementById('filter-tabs');
-  const present = latestVisible ? sortByGroupOrder(Array.from(new Set(latestVisible.map(s => regioGroupOf(s))))) : [];
+  // Alleen de twee echte regio's als tab. "Overig" was in de praktijk het
+  // restje zonder gebiedscode; die storingen zitten gewoon in Totaal, en waar
+  // ze vandaan komen zie je aan hun eigen tegel (saneringen) of aan de
+  // melding over onbekende gebiedscodes op de Gebieden-pagina.
+  const present = latestVisible
+    ? sortByGroupOrder(Array.from(new Set(latestVisible.map(s => regioGroupOf(s))))).filter(g => g !== 'Overig')
+    : [];
   if (!present.includes(state.activeFilter) && state.activeFilter !== 'Totaal') state.activeFilter = 'Totaal';
   const tabs = ['Totaal', ...present];
   container.innerHTML = tabs.map(t => {
