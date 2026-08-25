@@ -44,10 +44,29 @@
 function ishTapInstalleer() {
   'use strict';
 
-  // Alleen verzoeken naar deze dienst worden opgevangen. Ruim genomen: het
-  // gatewaypad én de servicenaam, zodat het ook werkt als de app via een
-  // ander pad naar dezelfde dienst gaat.
-  const PATROON = /ZPM_UITVOERDER_APP_SRV|\/UVAGateway\//i;
+  // Twee manieren om te bepalen of een antwoord de moeite waard is.
+  //
+  // De eerste is de URL: past hij bij de bekende dienst, dan pakken we hem.
+  // Maar dat pad verschilt per omgeving — een app op Cloud Foundry hangt zijn
+  // backend achter een heel ander pad dan een klassieke SAP-opstelling — en
+  // dan vang je niets op terwijl er wel degelijk gegevens langskomen.
+  //
+  // De tweede kijkt daarom naar de inhoud: elk JSON-antwoord dat eruitziet als
+  // een OData-lijst (d.results of value met rijen erin) wordt opgepakt,
+  // ongeacht de URL. Dat is veel betrouwbaarder dan raden naar paden.
+  const PATROON = /ZPM_UITVOERDER_APP_SRV|\/UVAGateway\/|\$batch|\/odata\//i;
+
+  // Wat we sowieso niet openmaken: de UI5-bibliotheek zelf en alles wat geen
+  // gegevens kan bevatten. Anders zit het logboek vol met honderden
+  // scriptbestanden en lezen we inhoud die ons niet aangaat.
+  const NEGEER = /ui5\.sap\.com|\/resources\/|\.js(\?|$)|\.css(\?|$)|\.properties(\?|$)|\.html(\?|$)|\.png(\?|$)|\.svg(\?|$)/i;
+  const KAN_GEGEVENS_BEVATTEN = /json|multipart\/mixed|atom|xml/i;
+
+  function magOpenmaken(url, contentType) {
+    if (PATROON.test(url)) return true;
+    if (NEGEER.test(url)) return false;
+    return KAN_GEGEVENS_BEVATTEN.test(contentType || '');
+  }
 
   if (window.__ISH_TAP__) { window.__ISH_TAP__.toon(); return; }
 
@@ -193,11 +212,16 @@ function ishTapInstalleer() {
 
   function bewaar(url, sleutel, json, viaBatch) {
     const rijen = rijenUit(json);
+    // Kwam dit antwoord niet van een bekende URL, dan telt het alleen mee als
+    // er ook werkelijk rijen in zitten. Zo blijft de vangst schoon: een
+    // instellingenbestand of een enkel statusobject hoort er niet in.
+    if (!PATROON.test(String(url)) && rijen.length === 0) return;
     opgevangen.set(sleutel, {
       url: sleutel,
       viaBatch: !!viaBatch,
       opgevangenOm: new Date().toISOString(),
       aantalRijen: rijen.length,
+      opPad: PATROON.test(String(url)),
       json,
     });
     tekenPaneel();
@@ -232,25 +256,23 @@ function ishTapInstalleer() {
       const url = typeof input === 'string' ? input : (input && input.url) || '';
       noteer(url);
       const belofte = origFetch.apply(this, arguments);
-      if (!PATROON.test(url)) {
-        // Niet passend: wel de afloop noteren, maar de inhoud niet aanraken.
-        belofte.then(r => noteer(url, { status: r.status, soort: (r.headers.get('content-type') || '').split(';')[0] }))
-          .catch(() => {});
-        return belofte;
-      }
       // De verzoekinhoud is nodig om batchdelen te kunnen benoemen. Bij een
       // Request-object moet dat via een kloon, anders leest de app straks een
       // al opgebruikte stroom.
       let verzoekBody = (init && typeof init.body === 'string') ? Promise.resolve(init.body) : null;
+      /* eslint-disable no-unused-vars */
       if (!verzoekBody && input && typeof input === 'object' && typeof input.clone === 'function') {
         try { verzoekBody = input.clone().text().catch(() => ''); } catch (e) { verzoekBody = null; }
       }
       return belofte.then(res => {
+        const ct = res.headers.get('content-type') || '';
+        noteer(url, { status: res.status, soort: ct.split(';')[0] });
+        if (!magOpenmaken(url, ct)) return res;
         // Een antwoord kan maar één keer gelezen worden; met clone() laten
         // we het origineel ongemoeid voor de app zelf.
         try {
           Promise.all([res.clone().text(), verzoekBody || Promise.resolve('')])
-            .then(([t, vb]) => verwerk(url, res.headers.get('content-type') || '', t, vb))
+            .then(([t, vb]) => verwerk(url, ct, t, vb))
             .catch(() => {});
         } catch (e) { /* niets: de app gaat voor */ }
         return res;
@@ -277,19 +299,18 @@ function ishTapInstalleer() {
         });
       } catch (e) { /* niets */ }
     });
-    if (PATROON.test(this.__ishUrl || '')) {
-      this.addEventListener('load', function () {
-        try {
-          const ct = this.getResponseHeader('content-type') || '';
-          let tekst = '';
-          // responseText werpt een fout bij responseType blob/arraybuffer;
-          // vandaar deze volgorde en de try eromheen.
-          if (this.responseType === 'json') tekst = JSON.stringify(this.response);
-          else if (!this.responseType || this.responseType === 'text') tekst = this.responseText;
-          if (tekst) verwerk(this.__ishUrl, ct, tekst, this.__ishBody);
-        } catch (e) { /* stil: meeluisteren mag de app nooit hinderen */ }
-      });
-    }
+    this.addEventListener('load', function () {
+      try {
+        const ct = this.getResponseHeader('content-type') || '';
+        if (!magOpenmaken(this.__ishUrl || '', ct)) return;
+        let tekst = '';
+        // responseText werpt een fout bij responseType blob/arraybuffer;
+        // vandaar deze volgorde en de try eromheen.
+        if (this.responseType === 'json') tekst = JSON.stringify(this.response);
+        else if (!this.responseType || this.responseType === 'text') tekst = this.responseText;
+        if (tekst) verwerk(this.__ishUrl, ct, tekst, this.__ishBody);
+      } catch (e) { /* stil: meeluisteren mag de app nooit hinderen */ }
+    });
     return origSend.apply(this, arguments);
   };
 
