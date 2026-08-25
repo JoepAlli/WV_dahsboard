@@ -237,11 +237,22 @@
   // terugzet.
   let verborgen = false;
 
+  // De opmaak wordt met "important" gezet en bij elke tekenbeurt opnieuw
+  // opgelegd. Reden: een SAPUI5-thema heeft opmaakregels die vreemde elementen
+  // in de body kunnen verbergen, en dan zie je het paneel even oplichten en
+  // meteen weer verdwijnen.
+  function zetStijl() {
+    if (!gastheer) return;
+    [['position', 'fixed'], ['right', '16px'], ['bottom', '16px'], ['z-index', '2147483647'],
+     ['display', verborgen ? 'none' : 'block'], ['visibility', 'visible'], ['opacity', '1'],
+     ['width', 'auto'], ['height', 'auto'], ['max-width', 'none'], ['max-height', 'none'],
+     ['margin', '0'], ['padding', '0'], ['transform', 'none'], ['clip-path', 'none'],
+     ['pointer-events', 'auto']].forEach(([k, v]) => gastheer.style.setProperty(k, v, 'important'));
+  }
+
   function maakPaneel() {
-    verborgen = false;
     gastheer = document.createElement('div');
     gastheer.id = '__ish_tap_paneel';
-    gastheer.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647';
     wortel = gastheer.attachShadow({ mode: 'open' });
     wortel.innerHTML = `
       <style>
@@ -273,10 +284,12 @@
         </div>
         <div class="melding" id="melding"></div>
       </div>`;
-    document.body.appendChild(gastheer);
+    // Bewust aan <html> hangen en niet aan <body>: een app die zijn body
+    // opnieuw opbouwt neemt alles wat erin staat mee, en dan is het paneel weg.
+    document.documentElement.appendChild(gastheer);
+    zetStijl();
     meldingEl = wortel.getElementById('melding');
-    if (verborgen) gastheer.style.display = 'none';
-    wortel.querySelector('.sluit').addEventListener('click', () => { verborgen = true; gastheer.style.display = 'none'; });
+    wortel.querySelector('.sluit').addEventListener('click', () => { verborgen = true; zetStijl(); });
     wortel.getElementById('dl').addEventListener('click', download);
     wortel.getElementById('kop').addEventListener('click', kopieer);
     wortel.getElementById('wis').addEventListener('click', () => { opgevangen.clear(); melding('Gewist.'); tekenPaneel(); });
@@ -302,6 +315,8 @@
       const huls = document.getElementById('__ish_tap_paneel');
       if (huls && huls !== gastheer) huls.remove();
       maakPaneel();
+    } else {
+      zetStijl();
     }
     const lijst = wortel.getElementById('lijst');
     const items = Array.from(opgevangen.values());
@@ -318,7 +333,21 @@
     opgevangen,
     bestand: bouwBestand,
     download,
-    toon: () => { verborgen = false; tekenPaneel(); if (gastheer) gastheer.style.display = ''; },
+    toon: () => { verborgen = false; tekenPaneel(); zetStijl(); },
+    // Voor als het paneel om welke reden dan ook onbereikbaar blijft.
+    waarom: () => {
+      const el = document.getElementById('__ish_tap_paneel');
+      const r = el && el.getBoundingClientRect();
+      return {
+        inIframe: window.top !== window.self,
+        paneelInDePagina: !!el,
+        heeftSchaduw: !!(el && el.shadowRoot),
+        afmeting: r ? Math.round(r.width) + 'x' + Math.round(r.height) : 'geen',
+        zichtbaarheid: el ? getComputedStyle(el).display + '/' + getComputedStyle(el).visibility : 'geen',
+        opgevangen: opgevangen.size,
+        weggeklikt: verborgen,
+      };
+    },
   };
 
   // Het paneel kan pas als er een body is; bij @run-at document-start is die
@@ -345,12 +374,15 @@
   } catch (e) { /* dan doet de klok hieronder het werk */ }
   setInterval(() => { if (!verborgen) tekenPaneel(); }, 5000);
 
-  // Noodgreep als het paneel toch onbereikbaar is: Alt+Shift+T.
+  // Twee noodgrepen die geen enkel element nodig hebben, voor het geval de app
+  // het paneel hardnekkig blijft wegdrukken:
+  //   Alt+Shift+T  paneel terughalen
+  //   Alt+Shift+D  meteen downloaden, ook zonder paneel
   window.addEventListener('keydown', (e) => {
-    if (e.altKey && e.shiftKey && (e.key === 'T' || e.key === 't')) {
-      e.preventDefault();
-      window.__ISH_TAP__.toon();
-    }
+    if (!e.altKey || !e.shiftKey) return;
+    const t = String(e.key || '').toLowerCase();
+    if (t === 't') { e.preventDefault(); window.__ISH_TAP__.toon(); }
+    else if (t === 'd') { e.preventDefault(); download(); }
   }, true);
 
   console.log('%c[ISH-tap] luistert mee', 'color:#9BC96A;font-weight:bold',
