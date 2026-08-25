@@ -233,8 +233,12 @@
      doorheen komt en die van ons er niet in lekt. */
 
   let gastheer = null, wortel = null, meldingEl = null;
+  // Onthouden of jij hem hebt weggeklikt, zodat een herbouw hem niet ongevraagd
+  // terugzet.
+  let verborgen = false;
 
   function maakPaneel() {
+    verborgen = false;
     gastheer = document.createElement('div');
     gastheer.id = '__ish_tap_paneel';
     gastheer.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647';
@@ -271,7 +275,8 @@
       </div>`;
     document.body.appendChild(gastheer);
     meldingEl = wortel.getElementById('melding');
-    wortel.querySelector('.sluit').addEventListener('click', () => { gastheer.style.display = 'none'; });
+    if (verborgen) gastheer.style.display = 'none';
+    wortel.querySelector('.sluit').addEventListener('click', () => { verborgen = true; gastheer.style.display = 'none'; });
     wortel.getElementById('dl').addEventListener('click', download);
     wortel.getElementById('kop').addEventListener('click', kopieer);
     wortel.getElementById('wis').addEventListener('click', () => { opgevangen.clear(); melding('Gewist.'); tekenPaneel(); });
@@ -279,9 +284,25 @@
 
   function melding(t) { if (meldingEl) meldingEl.textContent = t; }
 
+  // Het paneel moet tegen een app kunnen die zijn pagina opnieuw opbouwt.
+  // SAPUI5 doet dat tijdens het opstarten, en dan gebeurt er iets vervelends:
+  // wordt de body via innerHTML herbouwd, dan komt ons <div> wel terug in de
+  // opmaak, maar de shadow DOM eronder niet — je houdt een lege huls over die
+  // nergens meer op reageert. Vandaar dat hier niet alleen op "bestaat het nog"
+  // wordt gekeken, maar ook of het nog een schaduwwortel heeft.
+  function paneelOk() {
+    return gastheer && gastheer.isConnected && gastheer.shadowRoot === wortel && wortel;
+  }
+
   function tekenPaneel() {
     if (!document.body) return;              // nog te vroeg in de paginaopbouw
-    if (!gastheer) maakPaneel();
+    if (!paneelOk()) {
+      // Een achtergebleven huls van een eerdere opbouw eerst opruimen, anders
+      // staan er straks twee elementen met dezelfde id.
+      const huls = document.getElementById('__ish_tap_paneel');
+      if (huls && huls !== gastheer) huls.remove();
+      maakPaneel();
+    }
     const lijst = wortel.getElementById('lijst');
     const items = Array.from(opgevangen.values());
     wortel.getElementById('tel').textContent = items.reduce((n, v) => n + v.aantalRijen, 0) + ' rijen';
@@ -297,13 +318,40 @@
     opgevangen,
     bestand: bouwBestand,
     download,
-    toon: () => { if (gastheer) gastheer.style.display = ''; tekenPaneel(); },
+    toon: () => { verborgen = false; tekenPaneel(); if (gastheer) gastheer.style.display = ''; },
   };
 
   // Het paneel kan pas als er een body is; bij @run-at document-start is die
   // er nog niet.
   if (document.body) tekenPaneel();
   else document.addEventListener('DOMContentLoaded', tekenPaneel);
+  window.addEventListener('load', tekenPaneel);
+
+  // Een app kan zijn pagina op elk moment opnieuw opbouwen, ook zonder dat er
+  // gegevens binnenkomen. Een tijdklok alleen is te traag: dan sta je seconden
+  // naar een lege huls te kijken. Daarom een waarnemer die meteen reageert,
+  // met de klok als vangnet voor het geval de waarnemer iets mist.
+  let herstelGepland = false;
+  const herstelSnel = () => {
+    if (herstelGepland || verborgen) return;
+    herstelGepland = true;
+    requestAnimationFrame(() => {
+      herstelGepland = false;
+      if (!paneelOk()) tekenPaneel();
+    });
+  };
+  try {
+    new MutationObserver(herstelSnel).observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) { /* dan doet de klok hieronder het werk */ }
+  setInterval(() => { if (!verborgen) tekenPaneel(); }, 5000);
+
+  // Noodgreep als het paneel toch onbereikbaar is: Alt+Shift+T.
+  window.addEventListener('keydown', (e) => {
+    if (e.altKey && e.shiftKey && (e.key === 'T' || e.key === 't')) {
+      e.preventDefault();
+      window.__ISH_TAP__.toon();
+    }
+  }, true);
 
   console.log('%c[ISH-tap] luistert mee', 'color:#9BC96A;font-weight:bold',
     '— ververs de lijst in de app om gegevens op te vangen.');
