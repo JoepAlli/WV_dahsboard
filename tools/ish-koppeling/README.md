@@ -129,14 +129,14 @@ Aandachtspunten:
   queryparameter, anders krijg je een andere mandant of een 401.
 - **Paginering.** SAP levert doorgaans 100–1000 rijen per verzoek; `$top` en
   `$skip` doorlopen tot je minder terugkrijgt dan je vroeg.
-- **OData v2 of v4.** v2 zet de rijen in `d.results`, v4 in `value`. Het script
+- **OData v2 of v4.** v2 zet de rijen in `d.results`, v4 in `value`. `ish-tap`
   vangt beide af.
 - **Filteren kan aan de bron**, bijvoorbeeld `$filter=Status eq 'X'`. Zinvol
   zodra we weten hoe de velden heten.
 
 ## 5. Proof of concept
 
-Drie scripts, allemaal alleen-lezen. `ish-tap` is de aanbevolen route.
+Twee scripts, allebei alleen-lezen. `ish-tap` is de route die je gebruikt.
 
 ### `ish-tap` — meeluisteren met wat de app zelf ophaalt
 
@@ -172,20 +172,6 @@ dan in de console, of gebruik het userscript.
 
 
 
-### `ish-export.js` — de werkende route
-
-Draaien **op de InstandhoudingsApp**: open de app, F12 → Console → dit bestand
-plakken → Enter. Het script:
-
-1. haalt het servicedocument op en toont welke entiteitensets er zijn;
-2. haalt `$metadata` op en toont per set de veldnamen;
-3. haalt alle rijen op, met paginering;
-4. zet het resultaat in je Downloads als `ish-export-JJJJ-MM-DD.json` en op
-   `window.__ISH_EXPORT__` zodat je in de console kunt rondkijken.
-
-Werkt de console niet (sommige beheerde browsers blokkeren DevTools), zeg het
-dan — dan maak ik er een bookmarklet van, dat is één klik op een bladwijzer.
-
 ### `cors-test.js` — de meting
 
 Draaien **op je dashboard** (`file://`). Het probeert de service drie keer aan
@@ -212,17 +198,31 @@ label van een ándere lijst kreeg. Er zit nu een grendel op: klopt het aantal
 verzoeken niet met het aantal antwoorden, dan blijft een deel liever naamloos
 dan verkeerd benoemd.
 
-`ish-export.js` is niet alleen geschreven maar ook gedraaid, tegen een
-nagebouwde SAP-OData-v2-service met 1234 rijen: servicedocument uitgelezen,
-veldnamen uit `$metadata` gehaald, alle rijen opgehaald in pagina's van 500
-zonder dubbelingen of gaten, `sap-client` overgenomen uit de URL, uitsluitend
-GET-verzoeken, en de sessiecookie ging bij elk verzoek vanzelf mee. De
-CORS-uitkomsten in de tabel hierboven komen uit diezelfde opstelling.
+Ook nagespeeld: een launchpad met de app in een iframe. Een bookmarklet draait
+normaal alleen in het venster waar je hem aanklikt en zou daar niets opvangen;
+de installatie geeft zichzelf nu door aan frames van dezelfde herkomst, en ving
+in die opstelling alle vier de antwoorden op in het iframe.
+
+## Waarom alleen meeluisteren, en niet zelf opvragen
+
+Er heeft hier een tweede script gestaan (`ish-export.js`) dat de OData-dienst
+zelf bevroeg: servicedocument, `$metadata`, en daarna alle entiteitensets met
+paginering. Het werkte, maar het is weggehaald.
+
+De reden is niet technisch maar bestuurlijk. Zelf verzoeken versturen naar een
+bedrijfssysteem is "geautomatiseerde toegang", en dat is een gesprek met
+security dat je niet hoeft te voeren. Meeluisteren voegt nul verzoeken toe: de
+belasting op SAP is exact gelijk aan gewoon gebruik van de app. Dat is veel
+makkelijker te verantwoorden, en `ish-tap` levert dezelfde gegevens.
+
+De uitleg in hoofdstuk 4 blijft staan als naslag — mocht het ooit nodig zijn,
+dan staat er hoe het zou moeten. De code is uit de map, zodat niemand hem per
+ongeluk gebruikt.
 
 ## Wat er daarna nog moet gebeuren
 
 Het inlezen aan de dashboardkant kan ik pas bouwen als ik weet hoe de velden
-heten. Draai `ish-export.js`, en stuur me:
+heten. Draai `ish-tap`, download het bestand, en stuur me:
 
 - de lijst met entiteitensets en veldnamen die het script logt, en
 - **één** record, met de plaats-, straat- en persoonsgegevens erin veranderd.

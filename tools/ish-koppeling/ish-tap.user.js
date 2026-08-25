@@ -38,7 +38,10 @@
    naar fetch, of parse je alleen JSON, dan vang je precies niets op.
    =================================================================== */
 
-(function () {
+// Als benoemde functie, niet als naamloze haakjesconstructie: alleen zo kan
+// de code van zichzelf de brontekst opvragen, en die is nodig om ook in
+// iframes te kunnen meeluisteren (zie onderaan).
+function ishTapInstalleer() {
   'use strict';
 
   // Alleen verzoeken naar deze dienst worden opgevangen. Ruim genomen: het
@@ -406,4 +409,35 @@
 
   console.log('%c[ISH-tap] luistert mee', 'color:#9BC96A;font-weight:bold',
     '— ververs de lijst in de app om gegevens op te vangen.');
-})();
+}
+
+ishTapInstalleer();
+
+/* ---------- Ook in iframes meeluisteren ----------
+   Een SAPUI5-app staat vaak in een iframe binnen een launchpad, en dan doet
+   dat iframe de verzoeken. Een userscript wordt door Tampermonkey vanzelf in
+   elk frame geladen, maar een bookmarklet draait alleen in het venster waar
+   je hem aanklikt — daar zou hij dus niets opvangen.
+
+   Vandaar dat de installatie hier zelf de frames langsgaat. Alleen frames van
+   dezelfde herkomst zijn bereikbaar; bij een frame van een andere site werpt
+   de browser een fout en slaan we hem over. Dat is geen omzeiling van iets:
+   wat niet mag, lukt gewoon niet. */
+function ishTapVerspreid() {
+  const bron = '(' + ishTapInstalleer.toString() + ')(); (' + ishTapVerspreid.toString() + ')();';
+  for (let i = 0; i < window.frames.length; i++) {
+    try {
+      const f = window.frames[i];
+      // Al actief in dat frame? Dan niets doen; de installatie bewaakt dat
+      // zelf ook nog eens.
+      if (f.__ISH_TAP__) continue;
+      f.eval(bron);
+    } catch (e) { /* frame van een andere herkomst: onbereikbaar, en dat hoort zo */ }
+  }
+}
+
+ishTapVerspreid();
+// Frames die pas later verschijnen alsnog meepakken.
+setTimeout(ishTapVerspreid, 1500);
+setTimeout(ishTapVerspreid, 5000);
+window.addEventListener('load', ishTapVerspreid);
