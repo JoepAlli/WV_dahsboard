@@ -477,7 +477,9 @@ function ishTapVerspreid() {
 }
 
 ishTapVerspreid();
-// Frames die pas later verschijnen alsnog meepakken.
-setTimeout(ishTapVerspreid, 1500);
-setTimeout(ishTapVerspreid, 5000);
+// Blijven herhalen, om twee redenen. Een frame kan later pas verschijnen, en
+// een frame dat opnieuw laadt — je gaat terug naar het launchpad en opent de
+// tegel opnieuw — begint met een schone lei zonder haak. De controle is
+// nagenoeg gratis: er wordt niets gedaan zodra een frame al meeluistert.
 window.addEventListener('load', ishTapVerspreid);
+setInterval(ishTapVerspreid, 2000);
