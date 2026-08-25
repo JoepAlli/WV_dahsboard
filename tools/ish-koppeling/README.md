@@ -155,8 +155,10 @@ naar de hostnaam uit je adresbalk; zolang daar `VUL-HOSTNAAM-IN` staat doet het
 script niets. Het luistert dan mee vanaf het moment dat de pagina laadt, dus
 ook naar de allereerste lading gegevens.
 
-**Bookmarklet — `ish-tap-bookmarklet.txt`**. Nieuwe bladwijzer, de regel die met
-`javascript:` begint als URL plakken. Werkt zonder dat je iets hoeft te
+**Bookmarklet — open `ish-tap-installeren.html` en sleep de groene knop naar je
+favorietenbalk.** Dat is de eenvoudigste weg; met de hand kan ook, dan plak je
+de lange regel uit `ish-tap-bookmarklet.txt` als adres van een nieuwe
+bladwijzer. Werkt zonder dat je iets hoeft te
 installeren, maar met één beperking die in de aard van een bookmarklet zit: hij
 gaat pas meeluisteren op het moment dat je hem aanklikt. **Ververs daarna dus de
 lijst in de app** (of blader naar een ander overzicht), anders vangt hij niets
