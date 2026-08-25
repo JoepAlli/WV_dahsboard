@@ -55,13 +55,29 @@ function ishTapInstalleer() {
    *  vervangt in plaats van het bestand te laten opzwellen. */
   const opgevangen = new Map();
 
-  /** Élke URL die langskomt, ook de niet-passende. Zonder dit weet je bij een
-   *  lege vangst niet of er niets langskwam of dat het filter niet klopt — en
-   *  dat verschil bepaalt wat je eraan moet doen. */
+  /** Élk verzoek dat langskomt, ook de niet-passende: alleen de URL, de
+   *  statuscode en het soort antwoord — nooit de inhoud. Zonder dit weet je
+   *  bij een lege vangst niet of er niets langskwam of dat het filter niet
+   *  klopt, en dat verschil bepaalt wat je eraan moet doen. Het gaat mee in
+   *  het gedownloade bestand, zodat dat bestand zichzelf verklaart. */
   const gezien = [];
-  function noteer(url) {
-    if (!url || gezien[gezien.length - 1] === url) return;
-    gezien.push(String(url));
+  function noteer(url, extra) {
+    if (!url) return;
+    const kort = String(url).slice(0, 300);
+    if (extra) {
+      // De afloop hoort bij het verzoek dat eerder werd genoteerd. Terugzoeken
+      // in plaats van alleen naar de laatste kijken: er lopen meerdere
+      // verzoeken tegelijk, dus de bijbehorende regel staat zelden achteraan.
+      for (let i = gezien.length - 1; i >= 0; i--) {
+        if (gezien[i].url === kort && gezien[i].status === undefined) {
+          Object.assign(gezien[i], extra);
+          return;
+        }
+      }
+    } else if (gezien.some(g => g.url === kort && g.status === undefined)) {
+      return;   // staat al open
+    }
+    gezien.push(Object.assign({ url: kort, past: PATROON.test(kort) }, extra || {}));
     if (gezien.length > 80) gezien.shift();
   }
 
@@ -216,7 +232,12 @@ function ishTapInstalleer() {
       const url = typeof input === 'string' ? input : (input && input.url) || '';
       noteer(url);
       const belofte = origFetch.apply(this, arguments);
-      if (!PATROON.test(url)) return belofte;
+      if (!PATROON.test(url)) {
+        // Niet passend: wel de afloop noteren, maar de inhoud niet aanraken.
+        belofte.then(r => noteer(url, { status: r.status, soort: (r.headers.get('content-type') || '').split(';')[0] }))
+          .catch(() => {});
+        return belofte;
+      }
       // De verzoekinhoud is nodig om batchdelen te kunnen benoemen. Bij een
       // Request-object moet dat via een kloon, anders leest de app straks een
       // al opgebruikte stroom.
@@ -248,6 +269,14 @@ function ishTapInstalleer() {
   XMLHttpRequest.prototype.send = function (body) {
     this.__ishBody = (typeof body === 'string') ? body : null;
     noteer(this.__ishUrl);
+    this.addEventListener('load', function () {
+      try {
+        noteer(this.__ishUrl, {
+          status: this.status,
+          soort: (this.getResponseHeader('content-type') || '').split(';')[0],
+        });
+      } catch (e) { /* niets */ }
+    });
     if (PATROON.test(this.__ishUrl || '')) {
       this.addEventListener('load', function () {
         try {
@@ -295,11 +324,19 @@ function ishTapInstalleer() {
     } catch (e) { /* niets */ }
 
     if (modellen.length === 0) return { gelukt: false, reden: 'geen model gevonden om te verversen' };
+
+    // Alleen een OData-model haalt bij refresh() werkelijk iets op. Een
+    // JSON- of resourcemodel ververst alleen zijn eigen weergave, en dan lijkt
+    // het alsof er iets gebeurt terwijl er geen verzoek uitgaat. Dat
+    // onderscheid hoort in de melding te staan.
+    const isOData = (m) => !!(m.sServiceUrl || typeof m.getServiceMetadata === 'function' || typeof m.read === 'function');
+    const odata = modellen.filter(isOData);
     let n = 0;
-    modellen.forEach(m => { try { m.refresh(true); n++; } catch (e) { /* niets */ } });
-    return n > 0
-      ? { gelukt: true, reden: `${n} model${n === 1 ? '' : 'len'} ververst` }
-      : { gelukt: false, reden: 'verversen werd geweigerd' };
+    odata.forEach(m => { try { m.refresh(true); n++; } catch (e) { /* niets */ } });
+    if (n > 0) return { gelukt: true, reden: `${n} van de ${modellen.length} modellen is OData en is ververst` };
+    // Geen OData gevonden: dan toch maar alles proberen, en dat eerlijk melden.
+    modellen.forEach(m => { try { m.refresh(true); } catch (e) { /* niets */ } });
+    return { gelukt: false, reden: `geen van de ${modellen.length} modellen is een OData-model — de app haalt zijn gegevens waarschijnlijk anders op` };
   }
 
   // Ook in de frames proberen: daar zit de app meestal.
@@ -319,11 +356,22 @@ function ishTapInstalleer() {
 
   function bouwBestand() {
     const samen = alleOpgevangen();
+    // Het logboek gaat altijd mee. Is de vangst leeg, dan staat hierin het
+    // antwoord op de vraag waarom — anders is er een extra ronde nodig om dat
+    // uit te zoeken.
+    const log = [];
+    alleInstanties().forEach(inst => {
+      try { inst.gezien.forEach(g => log.push(g)); } catch (e) { /* niets */ }
+    });
+    if (log.length === 0) gezien.forEach(g => log.push(g));
     return {
       opgehaaldOp: new Date().toISOString(),
       pagina: location.href,
       hoeveel: samen.size,
       totaalRijen: Array.from(samen.values()).reduce((n, v) => n + v.aantalRijen, 0),
+      filter: String(PATROON),
+      verzoekenGezien: log.length,
+      verzoeklog: log,
       antwoorden: Array.from(samen.values()),
     };
   }
