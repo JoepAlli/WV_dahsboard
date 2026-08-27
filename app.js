@@ -714,6 +714,17 @@ function fmtDate(iso) {
   const mm = String(d.getMinutes()).padStart(2, '0');
   return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm}`;
 }
+
+// Alleen de dag. Een meetdag is een kalenderdag ('2026-08-17'); fmtDate zou
+// daar een 00:00 achter plakken die er niet is en die suggereert dat het
+// tijdstip iets betekent. Het jaartal alleen waar de ruimte het toelaat —
+// in een kolomkop kost het alleen maar breedte.
+function fmtDag(iso, metJaar) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const months = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'];
+  return `${d.getDate()} ${months[d.getMonth()]}${metJaar ? ' ' + d.getFullYear() : ''}`;
+}
 function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
 
 /* ---------- State ---------- */
@@ -1722,6 +1733,363 @@ function renderInUitCard() {
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+}
+
+/* ---------- Overleg: het weeklogboek ---------- */
+
+// Wat er maandag op tafel moet liggen: de stand van vorige week naast die van
+// nu, met daartussen wat erbij kwam en wat eruit ging. Bewust een eigen tab en
+// geen extra kaartje op Data: de Data-tab beantwoordt "hoe staat het er nu
+// voor", dit beantwoordt "wat is er sinds vorige week gebeurd" — dat zijn twee
+// verschillende vragen, en in het overleg wordt alleen de tweede gesteld.
+const OVERLEG_DOEL_DAGEN = 7;
+
+// De peildag is de meetdag die het dichtst bij een week terug ligt. Niet
+// "precies zeven dagen": er wordt niet elke dag geplakt, en een vaste
+// terugblik van zeven dagen zou dan op een dag zonder meting vallen en niets
+// opleveren. Bij een gelijkspel (zes én acht dagen terug) wint de oudste, dan
+// valt er zeker geen week tussenuit.
+function overlegVenster() {
+  const snaps = chronoSnapshots();
+  if (snaps.length < 2) return null;
+  const laatste = snaps[snaps.length - 1];
+  let peilIndex = 0;
+  let besteAfwijking = Infinity;
+  for (let i = 0; i < snaps.length - 1; i++) {
+    const afwijking = Math.abs(dagenTussen(snaps[i].week, laatste.week) - OVERLEG_DOEL_DAGEN);
+    if (afwijking < besteAfwijking) { besteAfwijking = afwijking; peilIndex = i; }
+  }
+  const dagen = snaps.slice(peilIndex);
+  return { peil: dagen[0], laatste, dagen, dagenTerug: dagenTussen(dagen[0].week, laatste.week) };
+}
+
+// Beginstand, instroom, uitstroom en eindstand per groep over een reeks
+// meetdagen.
+//
+// De vergelijking gaat per groep, niet eerst per order en dan pas per groep.
+// Dat scheelt niet alleen code: verhuist een storing van de ene status naar de
+// andere, dan telt dat als uit bij de oude en in bij de nieuwe — en dat is
+// precies wat "hoeveel zijn er uit Onderzoek controleren gegaan" betekent.
+// Bijkomend voordeel: begin + in − uit = eind klopt daardoor per groep, ook
+// bij verhuizingen, dus de tabel is altijd na te rekenen.
+function stroomPerGroep(dagen, sleutelFn, kies) {
+  const selectie = kies || telAlsStoring;
+  const perDag = dagen.map(sn => {
+    const groepen = new Map();
+    sn.storingen.filter(selectie).forEach(s => {
+      const sleutel = sleutelFn(s);
+      if (sleutel == null) return;
+      if (!groepen.has(sleutel)) groepen.set(sleutel, new Set());
+      groepen.get(sleutel).add(s.order);
+    });
+    return groepen;
+  });
+
+  const stats = new Map();
+  const ensure = (sleutel) => {
+    if (!stats.has(sleutel)) stats.set(sleutel, { sleutel, begin: 0, in: 0, uit: 0, eind: 0 });
+    return stats.get(sleutel);
+  };
+  perDag[0].forEach((orders, sleutel) => { ensure(sleutel).begin = orders.size; });
+  for (let i = 1; i < perDag.length; i++) {
+    const vorige = perDag[i - 1];
+    const huidige = perDag[i];
+    huidige.forEach((orders, sleutel) => {
+      const eerder = vorige.get(sleutel);
+      orders.forEach(order => { if (!eerder || !eerder.has(order)) ensure(sleutel).in++; });
+    });
+    vorige.forEach((orders, sleutel) => {
+      const nu = huidige.get(sleutel);
+      orders.forEach(order => { if (!nu || !nu.has(order)) ensure(sleutel).uit++; });
+    });
+  }
+  perDag[perDag.length - 1].forEach((orders, sleutel) => { ensure(sleutel).eind = orders.size; });
+  stats.forEach(r => { r.netto = r.eind - r.begin; });
+  return stats;
+}
+
+const LEGE_STROOM = { begin: 0, in: 0, uit: 0, eind: 0, netto: 0 };
+function stroomVan(stats, sleutel) {
+  return stats.get(sleutel) || Object.assign({ sleutel }, LEGE_STROOM);
+}
+
+// De signalen die in het overleg langskomen: niet als stroom maar als stand,
+// vorige week naast nu. Voor een signaal is "hoeveel staan er nu" de vraag,
+// niet "hoeveel zijn er doorheen gelopen".
+const OVERLEG_SIGNALEN = [
+  { key: 'onderzoekControleren', label: 'Onderzoek controleren', test: s => s.ovStatus === 'Onderzoek controleren' },
+  { key: 'verlopenOnbekend', label: 'Verlopen — uitvoering onbekend', test: s => isActionableOverdue(s) },
+  { key: 'verlopenDatum', label: 'Uitvoeringsdatum verstreken', test: s => isActionableExpiredDate(s) },
+  { key: 'bijnaVerlopen', label: 'Bijna verlopen', test: s => statusOf(s) === 'serious' && !isOvBlocked(s) },
+  { key: 'geblokkeerd', label: 'Geblokkeerd', test: s => isOvBlocked(s) },
+  { key: 'mastGeenSpanning', label: 'Mast geen spanning', test: s => isMastGeenSpanning(s) },
+];
+
+function signalenVergelijk(peilLijst, nuLijst) {
+  return OVERLEG_SIGNALEN.map(sig => {
+    const toen = peilLijst.filter(sig.test).length;
+    const nu = nuLijst.filter(sig.test).length;
+    return { key: sig.key, label: sig.label, toen, nu, verschil: nu - toen };
+  });
+}
+
+function buildWeekLogboek() {
+  const venster = overlegVenster();
+  if (!venster) return null;
+  const { peil, laatste, dagen, dagenTerug } = venster;
+
+  const peilLijst = typeFiltered(peil.storingen);
+  const nuLijst = typeFiltered(laatste.storingen);
+
+  const totaal = stroomVan(stroomPerGroep(dagen, () => 'totaal'), 'totaal');
+
+  // Status: alleen de bekende workflow-stadia in de vaste volgorde, plus een
+  // regel voor wat (nog) geen status heeft. Blokkades worden hier NIET
+  // afgetrokken zoals bij de tegels op Data: daar gaat het om "wat kun je
+  // oppakken", hier om "waar zit de voorraad" — en een geblokkeerde storing
+  // zit nog steeds ergens. Geblokkeerd staat apart tussen de signalen.
+  const statusStroom = stroomPerGroep(dagen, s => s.ovStatus || 'Zonder status');
+  const statusRijen = OV_STATUS_ORDER.concat(['Zonder status'])
+    .map(status => Object.assign({ status }, stroomVan(statusStroom, status)))
+    .filter(r => r.begin > 0 || r.in > 0 || r.uit > 0 || r.eind > 0);
+
+  const regioStroom = stroomPerGroep(dagen, s => regioGroupOf(s));
+  const gebiedStroom = stroomPerGroep(dagen, s => s.gebiedscode || 'Onbekend');
+
+  // Alleen Leiden en Haarlem: dat zijn de twee gebiedsupdates die gevraagd
+  // worden. Staat er iets onder "Overig", dan hoort het bij geen van beide en
+  // is dat een signaal op zich — dat staat al op de Gebieden-tab.
+  const gebiedsupdates = ['Leiden', 'Haarlem'].map(groep => {
+    const stroom = stroomVan(regioStroom, groep);
+    const inGroep = (s) => regioGroupOf(s) === groep;
+    const gebieden = Array.from(gebiedStroom.values())
+      .filter(r => regioGroupOf({ gebiedscode: r.sleutel }) === groep)
+      .filter(r => r.begin > 0 || r.in > 0 || r.uit > 0 || r.eind > 0)
+      .sort((a, b) => b.eind - a.eind || a.sleutel.localeCompare(b.sleutel));
+    return {
+      groep,
+      label: regioGroupLabel(groep),
+      stroom,
+      gebieden,
+      signalen: signalenVergelijk(peilLijst.filter(inGroep), nuLijst.filter(inGroep)),
+    };
+  });
+
+  // Klantaanvragen lopen buiten typeFiltered om (zie isKlantaanvraag), dus ze
+  // krijgen hun eigen stroom over dezelfde meetdagen.
+  const klantStroom = stroomVan(stroomPerGroep(dagen, () => 'klant', isKlantaanvraag), 'klant');
+  const klantNu = laatste.storingen.filter(isKlantaanvraag);
+  const peilKlantOrders = new Set(peil.storingen.filter(isKlantaanvraag).map(s => s.order));
+  const klantNieuw = klantNu.filter(s => !peilKlantOrders.has(s.order))
+    .sort((a, b) => (a.executionDate || '9999').localeCompare(b.executionDate || '9999'));
+  const klantMetDatum = klantNu.filter(s => s.executionDate)
+    .sort((a, b) => a.executionDate.localeCompare(b.executionDate));
+
+  return {
+    peil: peil.week,
+    nu: laatste.week,
+    dagenTerug,
+    meetdagen: dagen.length,
+    totaal,
+    statusRijen,
+    signalen: signalenVergelijk(peilLijst, nuLijst),
+    gebiedsupdates,
+    klant: { stroom: klantStroom, nieuw: klantNieuw, eerstvolgende: klantMetDatum[0] || null },
+  };
+}
+
+// Een verschil zonder richting is een getal; met richting is het een bericht.
+// Vandaar overal hetzelfde patroon: pijl, aantal, en kleur pas daarna — de
+// pijl doet het werk, ook zonder kleurzicht.
+//
+// Niet elk verschil is goed of slecht nieuws. Bij een voorraad of een signaal
+// is minder beter, maar bij een workflow-status niet: dat er méér in "In
+// uitvoering" staat is juist voortgang. Die krijgen daarom bewust geen kleur;
+// een gekleurde pijl die de verkeerde kant op oordeelt is erger dan geen kleur.
+function verschilHtml(verschil, neutraal) {
+  if (verschil === 0) return '<span class="overleg-gelijk">gelijk</span>';
+  const omhoog = verschil > 0;
+  const kleur = neutraal ? 'overleg-neutraal' : (omhoog ? 'prognose-bad' : 'prognose-good');
+  return `<span class="${kleur}">${omhoog ? '▲' : '▼'} ${Math.abs(verschil)}</span>`;
+}
+function verschilTekst(verschil) {
+  if (verschil === 0) return 'gelijk';
+  return `${verschil > 0 ? '+' : '−'}${Math.abs(verschil)}`;
+}
+
+function stroomTegelsHtml(stroom, peil, nu) {
+  const tegels = [
+    { label: `Stand ${fmtDag(peil)}`, value: stroom.begin, note: 'vorige meting' },
+    { label: 'Ingestroomd', value: stroom.in, note: 'nieuw in de bak', klasse: stroom.in > 0 ? 'bad' : '' },
+    { label: 'Uitgestroomd', value: stroom.uit, note: 'uit de lijst verdwenen', klasse: stroom.uit > 0 ? 'good' : '' },
+    { label: `Stand ${fmtDag(nu)}`, value: stroom.eind, note: `netto ${verschilTekst(stroom.netto)}` },
+  ];
+  return `<div class="stat-row overleg-tegels">`
+    + tegels.map(t => `<div class="stat-tile">
+        <div class="label">${esc(t.label)}</div>
+        <div class="value">${t.value}</div>
+        <div class="delta ${t.klasse || ''}">${esc(t.note)}</div>
+      </div>`).join('')
+    + `</div>`;
+}
+
+// Een signaal dat vorige week nul was en nu nog steeds nul is, is geen bericht
+// maar ruis: zes regels "gelijk" onder elkaar duwen de twee regels die er wél
+// toe doen uit beeld. Ze verdwijnen dus als er niets te melden valt, en dat
+// staat er dan bij — anders lijkt het alsof er iets ontbreekt.
+function signalenTabelHtml(alleSignalen, peil, nu) {
+  const signalen = alleSignalen.filter(sig => sig.toen > 0 || sig.nu > 0);
+  if (signalen.length === 0) {
+    return `<p class="empty-note">Geen verlopen, bijna verlopen of geblokkeerde storingen, op geen van beide meetdagen.</p>`;
+  }
+  return `<div class="table-scroll"><table class="overleg-tabel overleg-signaal-tabel">
+    <thead><tr><th>Signaal</th><th class="num">${esc(fmtDag(peil))}</th><th class="num">${esc(fmtDag(nu))}</th><th class="num">Verschil</th></tr></thead>
+    <tbody>${signalen.map(sig => `<tr>
+      <td>${esc(sig.label)}</td>
+      <td class="num muted">${sig.toen}</td>
+      <td class="num"><strong>${sig.nu}</strong></td>
+      <td class="num">${verschilHtml(sig.verschil)}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+function renderOverleg() {
+  const leeg = document.getElementById('overleg-empty');
+  const paneel = document.getElementById('overleg');
+  if (!paneel) return;
+  const data = buildWeekLogboek();
+  if (leeg) leeg.classList.toggle('hidden', !!data);
+  paneel.classList.toggle('hidden', !data);
+  if (!data) return;
+
+  const kop = document.getElementById('overleg-kop');
+  if (kop) {
+    kop.innerHTML = `<p class="prognose-headline">Van <strong>${esc(fmtDag(data.peil))}</strong> naar <strong>${esc(fmtDag(data.nu))}</strong>: `
+      + `${data.totaal.in} erbij, ${data.totaal.uit} eruit, netto <strong class="${data.totaal.netto > 0 ? 'prognose-bad' : data.totaal.netto < 0 ? 'prognose-good' : ''}">${verschilTekst(data.totaal.netto)}</strong>.</p>`
+      + `<p class="muted small">${data.dagenTerug} dagen terug, over ${data.meetdagen} meetdagen. `
+      + `Er wordt vergeleken met de meetdag die het dichtst bij een week terug ligt — niet met een vaste datum, want er wordt niet elke dag geplakt.</p>`;
+  }
+
+  const kpi = document.getElementById('overleg-kpi-body');
+  if (kpi) {
+    const statusRijen = data.statusRijen.map(r => `<tr${r.status === 'Onderzoek controleren' ? ' class="overleg-nadruk"' : ''}>
+      <td>${esc(r.status)}</td>
+      <td class="num muted">${r.begin}</td>
+      <td class="num overleg-in">${r.in > 0 ? '+' + r.in : '—'}</td>
+      <td class="num overleg-uit">${r.uit > 0 ? '−' + r.uit : '—'}</td>
+      <td class="num"><strong>${r.eind}</strong></td>
+      <td class="num">${verschilHtml(r.netto, true)}</td>
+    </tr>`).join('');
+    kpi.innerHTML = stroomTegelsHtml(data.totaal, data.peil, data.nu)
+      + `<h3 class="overleg-subkop">Per status</h3>`
+      + `<p class="muted small">Een storing die van de ene status naar de andere gaat, telt als uit bij de oude en in bij de nieuwe. Zo is "hoeveel zijn er uit Onderzoek controleren gegaan" een echt aantal, en klopt per regel begin + in − uit = eind.</p>`
+      + `<div class="table-scroll"><table class="overleg-tabel overleg-status-tabel">
+          <thead><tr><th>Status</th><th class="num">${esc(fmtDag(data.peil))}</th><th class="num">In</th><th class="num">Uit</th><th class="num">${esc(fmtDag(data.nu))}</th><th class="num">Verschil</th></tr></thead>
+          <tbody>${statusRijen}</tbody>
+        </table></div>`
+      + `<h3 class="overleg-subkop">Signalen</h3>`
+      + signalenTabelHtml(data.signalen, data.peil, data.nu);
+  }
+
+  const gebied = document.getElementById('overleg-gebied-body');
+  if (gebied) {
+    gebied.innerHTML = data.gebiedsupdates.map(upd => {
+      const gebiedRijen = upd.gebieden.length === 0
+        ? `<tr><td colspan="6" class="muted">Geen storingen in deze regio.</td></tr>`
+        : upd.gebieden.map(g => `<tr>
+            <td>${esc(g.sleutel)}</td>
+            <td class="num muted">${g.begin}</td>
+            <td class="num overleg-in">${g.in > 0 ? '+' + g.in : '—'}</td>
+            <td class="num overleg-uit">${g.uit > 0 ? '−' + g.uit : '—'}</td>
+            <td class="num"><strong>${g.eind}</strong></td>
+            <td class="num">${verschilHtml(g.netto)}</td>
+          </tr>`).join('');
+      return `<section class="overleg-regio">
+        <h3>${esc(upd.label)} <span class="badge">${upd.stroom.eind}</span></h3>
+        ${stroomTegelsHtml(upd.stroom, data.peil, data.nu)}
+        <h4 class="overleg-subkop">Per gebied</h4>
+        <div class="table-scroll"><table class="overleg-tabel overleg-gebied-tabel">
+          <thead><tr><th>Gebied</th><th class="num">${esc(fmtDag(data.peil))}</th><th class="num">In</th><th class="num">Uit</th><th class="num">${esc(fmtDag(data.nu))}</th><th class="num">Verschil</th></tr></thead>
+          <tbody>${gebiedRijen}</tbody>
+        </table></div>
+        <h4 class="overleg-subkop">Signalen</h4>
+        ${signalenTabelHtml(upd.signalen, data.peil, data.nu)}
+      </section>`;
+    }).join('');
+  }
+
+  const klant = document.getElementById('overleg-klant-body');
+  if (klant) {
+    const k = data.klant;
+    const nieuweRijen = k.nieuw.length === 0
+      ? '<p class="muted small">Geen nieuwe klantaanvragen sinds de vorige meting.</p>'
+      : `<div class="table-scroll"><table class="overleg-tabel overleg-klant-tabel">
+          <thead><tr><th>Order</th><th>Type</th><th>Plaats</th><th>Adres</th><th>Gewenste datum</th></tr></thead>
+          <tbody>${k.nieuw.map(s => `<tr>
+            <td>${orderLinkHtml(s.order)}</td>
+            <td>${esc(s.type)}</td>
+            <td>${esc(s.city)}</td>
+            <td>${esc(s.street)}, ${esc(s.postcode)}</td>
+            <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : '<span class="muted">onbekend</span>'}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+    klant.innerHTML = stroomTegelsHtml(k.stroom, data.peil, data.nu)
+      + (k.eerstvolgende
+          ? `<p class="muted small">Eerstvolgende gewenste datum: <strong>${esc(fmtDate(k.eerstvolgende.executionDate))}</strong> in ${esc(k.eerstvolgende.city)}.</p>`
+          : '<p class="muted small">Geen enkele openstaande aanvraag heeft een gewenste datum.</p>')
+      + `<h3 class="overleg-subkop">Nieuw sinds ${esc(fmtDag(data.peil))}</h3>`
+      + nieuweRijen;
+  }
+}
+
+// Platte tekst voor in de notulen. Bewust dezelfde volgorde als op het scherm,
+// zodat wie meeleest in het overleg dezelfde route volgt.
+function buildOverlegText() {
+  const data = buildWeekLogboek();
+  if (!data) return 'Nog te weinig meetdagen om een week te kunnen vergelijken.';
+  const r = [];
+  const stroomRegels = (stroom) => [
+    `Stand ${fmtDag(data.peil)}: ${stroom.begin}`,
+    `Ingestroomd: ${stroom.in}`,
+    `Uitgestroomd: ${stroom.uit}`,
+    `Stand ${fmtDag(data.nu)}: ${stroom.eind} (netto ${verschilTekst(stroom.netto)})`,
+  ];
+  // Zelfde keuze als op het scherm: signalen die aan beide kanten nul zijn,
+  // zijn geen nieuws en horen niet in de notulen.
+  const signaalRegels = (signalen) => {
+    const gevuld = signalen.filter(sig => sig.toen > 0 || sig.nu > 0);
+    if (gevuld.length === 0) return ['Signalen: geen.'];
+    return ['Signalen:'].concat(gevuld.map(sig => `- ${sig.label}: ${sig.toen} → ${sig.nu} (${verschilTekst(sig.verschil)})`));
+  };
+
+  r.push(`WEEKBERICHT NUS — ${fmtDag(data.peil, true)} t/m ${fmtDag(data.nu, true)} (${data.dagenTerug} dagen)`, '');
+  r.push('NUS-BAK', ...stroomRegels(data.totaal), '');
+  r.push('Per status (in / uit / stand nu):');
+  data.statusRijen.forEach(s => {
+    r.push(`- ${s.status}: ${s.begin} → ${s.eind} (${verschilTekst(s.netto)}); ${s.in} erbij, ${s.uit} eruit`);
+  });
+  r.push('', ...signaalRegels(data.signalen));
+
+  data.gebiedsupdates.forEach(upd => {
+    r.push('', `GEBIEDSUPDATE ${upd.label.toUpperCase()}`, ...stroomRegels(upd.stroom));
+    if (upd.gebieden.length > 0) {
+      r.push('Per gebied:');
+      upd.gebieden.forEach(g => r.push(`- ${g.sleutel}: ${g.begin} → ${g.eind} (${verschilTekst(g.netto)}); ${g.in} erbij, ${g.uit} eruit`));
+    }
+    r.push(...signaalRegels(upd.signalen));
+  });
+
+  r.push('', 'KLANTAANVRAGEN', ...stroomRegels(data.klant.stroom));
+  if (data.klant.eerstvolgende) {
+    r.push(`Eerstvolgende gewenste datum: ${fmtDate(data.klant.eerstvolgende.executionDate)} in ${data.klant.eerstvolgende.city}`);
+  }
+  if (data.klant.nieuw.length > 0) {
+    r.push(`Nieuw sinds ${fmtDag(data.peil)}:`);
+    data.klant.nieuw.forEach(s => {
+      r.push(`- ${s.order} — ${s.city}, ${s.street} — ${s.executionDate ? fmtDate(s.executionDate) : 'datum onbekend'}`);
+    });
+  }
+  return r.join('\n');
 }
 
 /* ---------- Types die niet meetellen ---------- */
@@ -4810,6 +5178,7 @@ function renderDashboardFromState() {
   renderKaartCard();
   renderClusterCard();
   renderInUitCard();
+  renderOverleg();
   renderWvGebiedCard();
   renderPrognose(latestFiltered);
   renderHistorie();
@@ -5262,6 +5631,18 @@ function wireEvents() {
     if (state.snapshots.length > 0) renderDashboardFromState();
   });
 
+  document.getElementById('copy-overleg-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('copy-overleg-btn');
+    const original = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(buildOverlegText());
+      btn.textContent = '✅ Gekopieerd!';
+    } catch (e) {
+      btn.textContent = '⚠️ Kopiëren mislukt';
+    }
+    setTimeout(() => { btn.textContent = original; }, 2000);
+  });
+
   document.getElementById('copy-clusters-btn').addEventListener('click', async () => {
     const btn = document.getElementById('copy-clusters-btn');
     const original = btn.textContent;
@@ -5412,8 +5793,8 @@ function wireEvents() {
 // #/instellingen) is de bron van waarheid — dat geeft "gratis" een werkende
 // terug-knop en een herlaad die op hetzelfde tabblad blijft staan, zonder een
 // eigen sessionStorage-bijhoudmechanisme nodig te hebben.
-const TAB_HASH_ROUTES = { invoer: '#/invoer', data: '#/data', gebieden: '#/gebieden', prognose: '#/prognose', historie: '#/historie', settings: '#/instellingen' };
-const HASH_TO_TAB = { '#/invoer': 'invoer', '#/data': 'data', '#/gebieden': 'gebieden', '#/prognose': 'prognose', '#/historie': 'historie', '#/instellingen': 'settings' };
+const TAB_HASH_ROUTES = { invoer: '#/invoer', data: '#/data', gebieden: '#/gebieden', overleg: '#/overleg', prognose: '#/prognose', historie: '#/historie', settings: '#/instellingen' };
+const HASH_TO_TAB = { '#/invoer': 'invoer', '#/data': 'data', '#/gebieden': 'gebieden', '#/overleg': 'overleg', '#/prognose': 'prognose', '#/historie': 'historie', '#/instellingen': 'settings' };
 
 // Past alleen de zichtbare panelen/knoppen aan — geen hash-manipulatie hier,
 // zodat dit ook veilig als reactie op een hashchange-event aangeroepen kan

@@ -24,6 +24,9 @@
     <button class="tab-btn" id="tab-btn-gebieden" data-tab="gebieden" role="tab" aria-selected="false" aria-controls="section-gebieden">
       <span class="nav-icon" aria-hidden="true">🗺️</span><span class="nav-label">Gebieden</span>
     </button>
+    <button class="tab-btn" id="tab-btn-overleg" data-tab="overleg" role="tab" aria-selected="false" aria-controls="section-overleg">
+      <span class="nav-icon" aria-hidden="true">🗓️</span><span class="nav-label">Overleg</span>
+    </button>
     <button class="tab-btn" id="tab-btn-prognose" data-tab="prognose" role="tab" aria-selected="false" aria-controls="section-prognose">
       <span class="nav-icon" aria-hidden="true">🔮</span><span class="nav-label">Prognose</span>
     </button>
@@ -229,6 +232,56 @@
       <p class="muted small">Hoeveel storingen er per plaats open staan, drukste bovenaan. Staat een plaats in meerdere gebiedscodes, dan klap je de plaatsnaam uit om te zien hoe het daarbinnen verdeeld is.</p>
       <div id="gebied-plaatsen-body" class="table-scroll"></div>
     </section>
+  </section>
+
+  <section class="tab-panel hidden" id="section-overleg" data-tab-panel="overleg" role="tabpanel" aria-labelledby="tab-btn-overleg" tabindex="0">
+    <div class="panel-banner panel-banner-overleg">
+      <span class="panel-icon">🗓️</span>
+      <div>
+        <h2>Overleg</h2>
+        <p>Het weeklogboek voor het maandagoverleg: de stand van vorige week naast die van nu, met daartussen wat erbij kwam en wat eruit ging. Eerst de KPI's van de NUS-bak, dan de gebiedsupdate voor Leiden en Haarlem, en tot slot de klantaanvragen.</p>
+      </div>
+    </div>
+
+    <!-- Zonder data komt renderOverleg() niet langs; daarom staat de lege
+         staat standaard aan en wordt 'ie pas verborgen als er iets te tonen is. -->
+    <section class="card empty-state-card" id="overleg-empty">
+      <p class="empty-state-icon">🗓️</p>
+      <h3>Nog te weinig meetdagen</h3>
+      <p class="muted small">Er zijn minstens twee verschillende dagen nodig om een week te kunnen vergelijken. Plak de lijst op de Invoer-pagina; vanaf de tweede dag staat het weekbericht hier klaar.</p>
+      <button class="btn-primary" data-goto-invoer="paste-input">Naar Invoer →</button>
+    </section>
+
+    <div id="overleg" class="hidden">
+      <div class="ov-toolbar">
+        <div id="overleg-kop"></div>
+        <button id="copy-overleg-btn" class="btn-link">📋 Kopieer weekbericht</button>
+      </div>
+
+      <section class="card" id="overleg-kpi-card">
+        <div class="card-header">
+          <h2>📈 KPI's NUS-bak</h2>
+        </div>
+        <p class="muted small">In- en uitstroom van de hele bak, en waar de voorraad in de workflow zit. "Onderzoek controleren" staat uitgelicht — dat is de bak die in het overleg langskomt.</p>
+        <div id="overleg-kpi-body"></div>
+      </section>
+
+      <section class="card" id="overleg-gebied-card">
+        <div class="card-header">
+          <h2>🗺️ Gebiedsupdate Leiden &amp; Haarlem</h2>
+        </div>
+        <p class="muted small">Per regio dezelfde vier getallen, uitgesplitst naar gebiedscode, met daaronder de signalen die om een toelichting kunnen vragen.</p>
+        <div id="overleg-gebied-body"></div>
+      </section>
+
+      <section class="card" id="overleg-klant-card">
+        <div class="card-header">
+          <h2>🔌 Klantaanvragen</h2>
+        </div>
+        <p class="muted small">Schakelverzoeken tellen niet mee in de NUS-cijfers hierboven, maar hebben in het overleg hun eigen in- en uitstroom. De nieuwe aanvragen staan er los bij, op gewenste datum.</p>
+        <div id="overleg-klant-body"></div>
+      </section>
+    </div>
   </section>
 
   <section class="tab-panel hidden" id="section-prognose" data-tab-panel="prognose" role="tabpanel" aria-labelledby="tab-btn-prognose" tabindex="0">
