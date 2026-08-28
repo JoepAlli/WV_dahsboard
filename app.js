@@ -384,8 +384,34 @@ async function saveCapaciteit(cap) {
 // mediaan tot er zelf een waarde is ingevuld. Losstaande sleutel in dezelfde
 // kv-store: geen schemawijziging, en zonder de sleutel gedraagt alles zich
 // zoals voorheen.
+// Het uitgangspunt: een NUS doorloopt het héle traject in maximaal 12 dagen
+// (10 werkdagen). Dat is de norm waar alles aan hangt — de streefwaarden per
+// status hieronder zijn niets anders dan die 12 dagen verdeeld over de zes
+// stappen. Vandaar dat ze standaard optellen tot precies 12: als elke stap
+// binnen zijn deel blijft, haalt het traject het vanzelf.
+const DOORLOOPTIJD_NORM_KEY = 'nusdash_doorlooptijd_norm_v1';
+const DEFAULT_DOORLOOPTIJD_NORM = 12;
+async function loadDoorlooptijdNorm() {
+  try { const v = await idbGet(DOORLOOPTIJD_NORM_KEY); return Number.isFinite(v) && v > 0 ? v : DEFAULT_DOORLOOPTIJD_NORM; }
+  catch (e) { console.error(e); return DEFAULT_DOORLOOPTIJD_NORM; }
+}
+async function saveDoorlooptijdNorm(n) {
+  try { await idbSet(DOORLOOPTIJD_NORM_KEY, n); }
+  catch (e) { showErrorToast('Opslaan van de doorlooptijd-norm is mislukt: ' + e.message); }
+}
+
 const STATUS_STREEF_KEY = 'nusdash_status_streef_v1';
-const DEFAULT_STATUS_STREEF = { 'Nieuw': 1, 'Onderzoek controleren': 1 };
+// Samen 12. "Nieuw" en "Onderzoek controleren" zijn doorgeefstappen — daar
+// hoort niets te blijven liggen, dus één dag. De ruimte zit in het onderzoek
+// zelf; de rest krijgt twee dagen om te schakelen.
+const DEFAULT_STATUS_STREEF = {
+  'Nieuw': 1,
+  'In onderzoek': 4,
+  'Onderzoek controleren': 1,
+  'In voorbereiding': 2,
+  'Planning': 2,
+  'In uitvoering': 2,
+};
 function schoonStatusStreef(v) {
   const uit = {};
   if (!v || typeof v !== 'object') return uit;
@@ -465,6 +491,7 @@ async function exportBackup() {
     bijnaVerlopenThreshold: await loadBijnaVerlopenThreshold(),
     capaciteit: await loadCapaciteit(),
     statusStreef: await loadStatusStreef(),
+    doorlooptijdNorm: await loadDoorlooptijdNorm(),
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -504,6 +531,7 @@ function buildStandaloneExport() {
     markeringKlasse: state.markeringKlasse,
     bijnaVerlopenThreshold: state.bijnaVerlopenThreshold,
     statusStreef: state.statusStreef,
+    doorlooptijdNorm: state.doorlooptijdNorm,
     exportedAt: new Date().toISOString(),
   };
   const dataScript = escapeForInlineTag('window.__DASHBOARD_DATA__ = ' + JSON.stringify(data) + ';', 'script');
@@ -542,6 +570,7 @@ async function importBackup(file) {
   if (Number.isFinite(backup.bijnaVerlopenThreshold) && backup.bijnaVerlopenThreshold > 0) await saveBijnaVerlopenThreshold(backup.bijnaVerlopenThreshold);
   if (backup.capaciteit && typeof backup.capaciteit === 'object') await saveCapaciteit(backup.capaciteit);
   if (backup.statusStreef && typeof backup.statusStreef === 'object') await saveStatusStreef(schoonStatusStreef(backup.statusStreef));
+  if (Number.isFinite(backup.doorlooptijdNorm) && backup.doorlooptijdNorm > 0) await saveDoorlooptijdNorm(backup.doorlooptijdNorm);
 }
 
 // Bouwt, in één keer over alle bestaande OV-snapshots (nieuwste eerst), een
@@ -781,7 +810,9 @@ const state = {
   lastBackupAt: null,
   capaciteit: { meetdienst: 0, mio: 0 },
   statusStreef: {},
-  stagnatieSortState: { key: 'over', dir: -1 },
+  doorlooptijdNorm: DEFAULT_DOORLOOPTIJD_NORM,
+  stagnatieFilter: null,
+  stagnatieSortState: { key: 'traject', dir: -1 },
   historieQuery: '',
   historieSortState: { key: 'eerst', dir: -1 },
   recidiveMode: 'straat',
@@ -4145,15 +4176,26 @@ function statusNormVan(status, medianen) {
   };
 }
 
-// Alles wat nu open staat, met hoe lang het al in zijn huidige status zit en of
-// dat boven de norm is. Levert zowel de losse regels als de telling per status,
-// zodat de kaart kan zeggen "2 van de 6 in Nieuw staan er te lang".
+// Alles wat nu open staat, met twee metingen naast elkaar:
+//
+//  - hoe lang het al in zijn HUIDIGE STATUS zit. Dat wijst de stap aan waar het
+//    blijft hangen, dus waar je moet duwen.
+//  - hoe lang het al in TOTAAL onderweg is. Dat is de norm die telt: 12 dagen
+//    voor het hele traject. Een storing kan in elke afzonderlijke status binnen
+//    zijn deel blijven en tóch te lang onderweg zijn — dat mis je als je alleen
+//    per status kijkt.
+//
+// De totale duur wordt geteld vanaf de dag dat het ordernummer voor het eerst
+// in een plakactie voorkwam (zoals "Open sinds" elders). Voor storingen die er
+// al stonden toen je begon met meten is dat te kort; die tellen dus mild.
 function buildTeLangInStatus() {
   const snaps = chronoSnapshots();
-  const leeg = { rijen: [], perStatus: [], gemeten: false };
+  const leeg = { rijen: [], perStatus: [], traject: null, gemeten: false };
   if (snaps.length < 2) return leeg;
   const latest = snaps[snaps.length - 1];
   const { lopend, medianen, metingen } = buildStatusDuurStats();
+  const eerstGezien = firstSeenWeekMap();
+  const trajectNorm = state.doorlooptijdNorm || DEFAULT_DOORLOOPTIJD_NORM;
 
   const rijen = [];
   const perStatus = OV_STATUS_ORDER.map(status => ({
@@ -4165,6 +4207,7 @@ function buildTeLangInStatus() {
     langste: 0,
   }));
   const bijStatus = new Map(perStatus.map(p => [p.status, p]));
+  const traject = { norm: trajectNorm, aantal: 0, teLang: 0, langste: 0 };
 
   filterByActive(typeFiltered(latest.storingen)).forEach(s => {
     const cur = lopend[s.order];
@@ -4174,9 +4217,18 @@ function buildTeLangInStatus() {
     const vak = bijStatus.get(s.ovStatus);
     if (vak) { vak.aantal++; vak.langste = Math.max(vak.langste, dagen); }
 
+    const eerste = eerstGezien[s.order];
+    const trajectDagen = eerste ? Math.max(dagenTussen(eerste, latest.week), dagen) : dagen;
+    traject.aantal++;
+    traject.langste = Math.max(traject.langste, trajectDagen);
+    const teLangTraject = trajectDagen > trajectNorm;
+    if (teLangTraject) traject.teLang++;
+
     const normInfo = statusNormVan(s.ovStatus, medianen);
-    if (!normInfo || dagen <= normInfo.drempel) return;
-    if (vak) vak.teLang++;
+    const teLangStatus = !!normInfo && dagen > normInfo.drempel;
+    if (teLangStatus && vak) vak.teLang++;
+    if (!teLangStatus && !teLangTraject) return;
+
     rijen.push({
       order: s.order,
       plaats: s.city || 'Onbekend',
@@ -4184,25 +4236,30 @@ function buildTeLangInStatus() {
       ovStatus: s.ovStatus,
       sinds: cur.sinds,
       dagen,
-      norm: normInfo.norm,
-      bron: normInfo.bron,
-      over: dagen - normInfo.norm,
+      traject: trajectDagen,
+      trajectOver: trajectDagen - trajectNorm,
+      teLangStatus,
+      teLangTraject,
+      norm: normInfo ? normInfo.norm : null,
+      bron: normInfo ? normInfo.bron : null,
+      over: normInfo ? dagen - normInfo.norm : 0,
       // Bij een streefwaarde van 0 dagen is delen zinloos; dan is de
       // overschrijding in dagen het enige zinnige getal.
-      ratio: normInfo.norm > 0 ? dagen / normInfo.norm : null,
+      ratio: normInfo && normInfo.norm > 0 ? dagen / normInfo.norm : null,
       geblokkeerd: isOvBlocked(s),
       daysLeft: typeof s.daysLeft === 'number' ? s.daysLeft : null,
       storing: s,
     });
   });
 
-  return { rijen, perStatus, gemeten: true };
+  return { rijen, perStatus, traject, gemeten: true };
 }
 
 // "Norm" toont er meteen bij wáár die vandaan komt. Zonder dat verschil kun je
 // het getal niet lezen: 1 dag als streefwaarde is een afspraak, 12 dagen als
 // mediaan is alleen een constatering dat het meestal zo lang duurt.
 function normCelHtml(r) {
+  if (r.norm == null) return '<td class="num muted">—</td>';
   const waarde = Math.round(r.norm * 10) / 10;
   const label = r.bron === 'streef' ? 'streef' : 'mediaan';
   return `<td class="num">${waarde} dgn <span class="muted small">${label}</span></td>`;
@@ -4213,10 +4270,13 @@ const STAGNATIE_COLUMNS = [
   { key: 'plaats', label: 'Plaats', cell: r => `<td>${esc(r.plaats)}</td>` },
   { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
   { key: 'ovStatus', label: 'Status', cell: r => `<td>${esc(r.ovStatus)}</td>` },
-  { key: 'dagen', label: 'Dagen in status', num: true, cell: r => `<td class="num"><strong>${r.dagen}</strong></td>` },
-  { key: 'norm', label: 'Norm', num: true, cell: normCelHtml },
-  { key: 'over', label: 'Dagen te lang', num: true, cell: r => `<td class="num prognose-bad">+${Math.round(r.over)}</td>` },
-  { key: 'ratio', label: 'Verhouding', num: true, cell: r => `<td class="num">${r.ratio == null ? '—' : r.ratio.toFixed(1) + '×'}</td>` },
+  { key: 'dagen', label: 'Dagen in status', num: true, cell: r => `<td class="num${r.teLangStatus ? ' prognose-bad' : ''}"><strong>${r.dagen}</strong></td>` },
+  { key: 'norm', label: 'Norm status', num: true, cell: normCelHtml },
+  { key: 'over', label: 'Te lang in status', num: true, cell: r => `<td class="num">${r.teLangStatus ? `<span class="prognose-bad">+${Math.round(r.over)}</span>` : '<span class="muted">binnen norm</span>'}</td>` },
+  // Het traject is de norm die er echt toe doet; die staat daarom naast de
+  // status-kolommen en niet ergens achteraan.
+  { key: 'traject', label: 'Traject totaal', num: true, cell: r => `<td class="num${r.teLangTraject ? ' prognose-bad' : ''}"><strong>${r.traject}</strong></td>` },
+  { key: 'trajectOver', label: 'Te lang traject', num: true, cell: r => `<td class="num">${r.teLangTraject ? `<span class="prognose-bad">+${r.trajectOver}</span>` : '<span class="muted">binnen norm</span>'}</td>` },
   { key: 'daysLeft', label: 'Deadline', num: true, cell: r => `<td class="num">${r.daysLeft == null ? '—' : renderDaysPill(r.storing)}</td>` },
   { key: 'geblokkeerd', label: 'Geblokkeerd', cell: r => `<td>${r.geblokkeerd ? '🚧 ja' : '—'}</td>` },
 ];
@@ -4292,59 +4352,109 @@ function renderDoorstroomCard() {
     <p class="muted small">"Opgehoopt" is alle wachttijd van de storingen die nu in die status staan bij elkaar opgeteld, in dagen. "Mediane duur" is hoe lang een storing normaal in die status blijft voordat 'ie doorstroomt — die wordt pas getoond bij minstens drie afgeronde metingen.</p>`;
 }
 
-// Boven de lijst een regel per status: hoeveel er in staan, hoeveel daarvan te
-// lang, en waartegen dat is afgemeten. Zonder die regel is de lijst een hoop
-// ordernummers; mét die regel weet je meteen of het aan één storing ligt of aan
-// de hele stap.
-function statusNormBalkHtml(perStatus) {
-  const relevant = perStatus.filter(p => p.aantal > 0);
-  if (relevant.length === 0) return '';
-  return `<div class="norm-balk">` + relevant.map(p => {
+// Boven de lijst een vak per norm: het hele traject voorop, daarna elke status.
+// Elk vak zegt hoeveel er in staan, hoeveel daarvan te lang, en waartegen dat
+// is afgemeten — en is een knop die de tabel eronder daarop filtert. Zonder die
+// vakken is de lijst een hoop ordernummers; mét die vakken weet je eerst of het
+// aan één storing ligt of aan de hele stap, en klik je daarna pas door.
+function normVakHtml(opts) {
+  const actief = state.stagnatieFilter === opts.filter;
+  const klassen = ['norm-vak'];
+  if (opts.alarm) klassen.push('norm-vak-alarm');
+  if (actief) klassen.push('norm-vak-actief');
+  if (opts.breed) klassen.push('norm-vak-breed');
+  return `<button type="button" class="${klassen.join(' ')}" data-stagnatie-filter="${esc(opts.filter)}"
+      aria-pressed="${actief}" title="${actief ? 'Klik om het filter weer weg te halen' : 'Klik om alleen deze te tonen'}">
+    <span class="norm-status">${esc(opts.titel)}</span>
+    <span class="norm-cijfer ${opts.cijferKlasse || ''}">${opts.cijfer}</span>
+    <span class="muted small">${opts.onder}</span>
+  </button>`;
+}
+
+function normBalkHtml(perStatus, traject) {
+  const vakken = [];
+  if (traject && traject.aantal > 0) {
+    vakken.push(normVakHtml({
+      filter: 'traject',
+      breed: true,
+      alarm: traject.teLang > 0,
+      titel: '🎯 Hele traject',
+      cijfer: `<strong>${traject.teLang}</strong> van ${traject.aantal} te lang`,
+      cijferKlasse: traject.teLang > 0 ? 'prognose-bad' : 'prognose-good',
+      onder: `norm ${traject.norm} dagen van melding tot afsluiting · langst onderweg ${traject.langste} dgn`,
+    }));
+  }
+  perStatus.filter(p => p.aantal > 0).forEach(p => {
     if (!p.normInfo) {
-      return `<div class="norm-vak">
-        <div class="norm-status">${esc(p.status)}</div>
-        <div class="norm-cijfer muted">${p.aantal} open</div>
-        <div class="muted small">nog geen norm — ${p.metingen} meting${p.metingen === 1 ? '' : 'en'}, er zijn er 3 nodig.${isStaticExport ? '' : ' Zet er zelf een streefwaarde voor in Instellingen.'}</div>
-      </div>`;
+      vakken.push(normVakHtml({
+        filter: p.status,
+        titel: p.status,
+        cijfer: `${p.aantal} open`,
+        cijferKlasse: 'muted',
+        onder: `nog geen norm — ${p.metingen} meting${p.metingen === 1 ? '' : 'en'}, er zijn er 3 nodig.${isStaticExport ? '' : ' Zet er zelf een streefwaarde voor in Instellingen.'}`,
+      }));
+      return;
     }
     const norm = Math.round(p.normInfo.norm * 10) / 10;
     const bronTekst = p.normInfo.bron === 'streef'
       ? `streefwaarde ${norm} ${norm === 1 ? 'dag' : 'dagen'}`
       : `mediaan ${norm} ${norm === 1 ? 'dag' : 'dagen'} · melden vanaf ${Math.round(p.normInfo.drempel)}`;
-    return `<div class="norm-vak${p.teLang > 0 ? ' norm-vak-alarm' : ''}">
-      <div class="norm-status">${esc(p.status)}</div>
-      <div class="norm-cijfer ${p.teLang > 0 ? 'prognose-bad' : 'prognose-good'}"><strong>${p.teLang}</strong> van ${p.aantal} te lang</div>
-      <div class="muted small">${esc(bronTekst)} · langst wachtend ${p.langste} dgn</div>
-    </div>`;
-  }).join('') + `</div>`;
+    vakken.push(normVakHtml({
+      filter: p.status,
+      alarm: p.teLang > 0,
+      titel: p.status,
+      cijfer: `<strong>${p.teLang}</strong> van ${p.aantal} te lang`,
+      cijferKlasse: p.teLang > 0 ? 'prognose-bad' : 'prognose-good',
+      onder: `${esc(bronTekst)} · langst wachtend ${p.langste} dgn`,
+    }));
+  });
+  if (vakken.length === 0) return '';
+  return `<div class="norm-balk">${vakken.join('')}</div>`;
+}
+
+// Welke regels horen bij het actieve vak? Bij "hele traject" alles wat over de
+// 12 dagen heen is; bij een status alleen wat in díé status te lang staat.
+function stagnatieGefilterd(rijen) {
+  const f = state.stagnatieFilter;
+  if (!f) return rijen;
+  if (f === 'traject') return rijen.filter(r => r.teLangTraject);
+  return rijen.filter(r => r.ovStatus === f && r.teLangStatus);
 }
 
 function renderStagnatieCard() {
   const container = document.getElementById('stagnatie-body');
   if (!container) return;
-  const { rijen, perStatus, gemeten } = buildTeLangInStatus();
+  const { rijen, perStatus, traject, gemeten } = buildTeLangInStatus();
   if (!gemeten) {
     container.innerHTML = '<p class="empty-note">Er zijn minstens twee meetdagen nodig om te kunnen zien hoe lang iets ergens staat. Plak de lijst een tweede dag; daarna vult dit zich vanzelf.</p>';
     return;
   }
 
-  const balk = statusNormBalkHtml(perStatus);
-  if (rijen.length === 0) {
-    // In de gedeelde export heeft de lezer geen Instellingen-tab; daar naar
-    // verwijzen is dan een doodlopend spoor.
-    const uitleg = isStaticExport
-      ? 'Niets staat langer in een status dan de norm.'
-      : 'Niets staat langer in een status dan de norm. Klopt dat niet met wat je ziet? Zet dan zelf een streefwaarde per status in Instellingen — zonder streefwaarde wordt er afgemeten tegen de gemeten mediaan, en die schuift mee met hoe het gaat.';
-    container.innerHTML = balk + `<p class="empty-note">${uitleg}</p>`;
+  const balk = normBalkHtml(perStatus, traject);
+  const zichtbaar = stagnatieGefilterd(rijen);
+
+  if (zichtbaar.length === 0) {
+    const uitleg = state.stagnatieFilter
+      ? `Niets te lang bij "${state.stagnatieFilter === 'traject' ? 'Hele traject' : state.stagnatieFilter}". Klik het vak nog eens aan om alles weer te zien.`
+      // In de gedeelde export heeft de lezer geen Instellingen-tab; daar naar
+      // verwijzen is dan een doodlopend spoor.
+      : (isStaticExport
+          ? 'Alles blijft binnen de norm — zowel per status als over het hele traject.'
+          : 'Alles blijft binnen de norm — zowel per status als over het hele traject. Klopt dat niet met wat je ziet? Stel de normen bij in Instellingen.');
+    container.innerHTML = balk + `<p class="empty-note">${esc(uitleg)}</p>`;
     return;
   }
 
-  const sorted = sortByState(rijen, state.stagnatieSortState);
+  const overTraject = zichtbaar.filter(r => r.teLangTraject).length;
+  const overStatus = zichtbaar.filter(r => r.teLangStatus).length;
+  const kop = state.stagnatieFilter
+    ? `<p class="prognose-headline">Gefilterd op <strong>${esc(state.stagnatieFilter === 'traject' ? 'Hele traject' : state.stagnatieFilter)}</strong>: ${zichtbaar.length} storing${zichtbaar.length === 1 ? '' : 'en'}. <button type="button" class="btn-link" data-stagnatie-filter="">Toon alles</button></p>`
+    : `<p class="prognose-headline"><strong>${zichtbaar.length}</strong> ${zichtbaar.length === 1 ? 'storing zit' : 'storingen zitten'} boven een norm: <strong class="prognose-bad">${overTraject}</strong> langer dan ${traject.norm} dagen onderweg, <strong>${overStatus}</strong> te lang in hun huidige status.</p>`;
+
+  const sorted = sortByState(zichtbaar, state.stagnatieSortState);
   const tabel = document.createElement('div');
   renderFullTable(tabel, sorted, STAGNATIE_COLUMNS, state.stagnatieSortState);
-  container.innerHTML = balk
-    + `<p class="prognose-headline"><strong>${rijen.length}</strong> ${rijen.length === 1 ? 'storing staat' : 'storingen staan'} langer in hun status dan de norm, samen <strong>${Math.round(rijen.reduce((n, r) => n + r.over, 0))}</strong> dagen te lang.</p>`
-    + `<div class="table-scroll">${tabel.innerHTML}</div>`;
+  container.innerHTML = balk + kop + `<div class="table-scroll">${tabel.innerHTML}</div>`;
 }
 
 function renderPrognose(current) {
@@ -5282,6 +5392,34 @@ function renderStatusStreefCard() {
       <span class="muted small">dagen · ${esc(hint)}</span>
     </div>`;
   }).join('');
+
+  const norm = document.getElementById('doorlooptijd-norm-input');
+  if (norm && document.activeElement !== norm) norm.value = state.doorlooptijdNorm;
+  toonStreefSom();
+}
+
+// De optelsom is de hele reden dat deze twee instellingen op één kaart staan:
+// zes streefwaarden die samen boven de trajectnorm uitkomen zijn onderling
+// consistent maar als geheel onhaalbaar, en dat zie je alleen als het bij
+// elkaar wordt opgeteld.
+function toonStreefSom() {
+  const el = document.getElementById('status-streef-som');
+  if (!el) return;
+  const velden = Array.from(document.querySelectorAll('#status-streef-body input[data-streef-status]'));
+  const ingevuld = velden.map(i => parseInt(i.value, 10)).filter(n => Number.isFinite(n) && n >= 0);
+  const normVeld = document.getElementById('doorlooptijd-norm-input');
+  const trajectNorm = normVeld && Number.isFinite(parseInt(normVeld.value, 10))
+    ? parseInt(normVeld.value, 10) : state.doorlooptijdNorm;
+  const som = ingevuld.reduce((a, b) => a + b, 0);
+  const leeg = velden.length - ingevuld.length;
+  const staart = leeg > 0 ? ` (${leeg} status${leeg === 1 ? '' : 'sen'} zonder streefwaarde telt hier niet mee)` : '';
+  el.className = 'muted small';
+  if (som > trajectNorm) {
+    el.className = 'small prognose-bad';
+    el.textContent = `De statussen tellen op tot ${som} dagen, meer dan de ${trajectNorm} die het hele traject mag duren${staart}. Zo kan elke stap binnen zijn norm blijven terwijl het traject het niet haalt.`;
+  } else {
+    el.textContent = `De statussen tellen op tot ${som} van de ${trajectNorm} dagen${staart}.`;
+  }
 }
 
 function renderFilterTabs(latestVisible) {
@@ -5442,6 +5580,7 @@ async function reloadAllStateAndRender() {
   state.lastBackupAt = await loadLastBackupAt();
   state.capaciteit = await loadCapaciteit();
   state.statusStreef = await loadStatusStreef();
+  state.doorlooptijdNorm = await loadDoorlooptijdNorm();
   if (state.snapshots.length > 0) renderDashboardFromState();
   else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderStatusStreefCard(); renderBackupReminder(); renderBackupStatus(); }
 }
@@ -5730,6 +5869,15 @@ function wireEvents() {
   });
 
   document.getElementById('stagnatie-body').addEventListener('click', e => {
+    // Een normvak aanklikken filtert de tabel; nog eens aanklikken haalt het
+    // filter er weer af, zodat je er nooit in vast komt te zitten.
+    const vak = e.target.closest('[data-stagnatie-filter]');
+    if (vak) {
+      const gekozen = vak.dataset.stagnatieFilter || null;
+      state.stagnatieFilter = (gekozen && state.stagnatieFilter === gekozen) ? null : gekozen;
+      renderStagnatieCard();
+      return;
+    }
     const th = e.target.closest('th[data-key]');
     if (!th) return;
     if (state.stagnatieSortState.key === th.dataset.key) state.stagnatieSortState.dir *= -1;
@@ -5810,6 +5958,12 @@ function wireEvents() {
     if (state.snapshots.length > 0) renderDashboardFromState();
   });
 
+  // Meetellen terwijl je typt: anders zie je pas na opslaan dat de zes
+  // streefwaarden samen niet in het traject passen.
+  document.getElementById('status-streef-card').addEventListener('input', e => {
+    if (e.target.matches('input[data-streef-status], #doorlooptijd-norm-input')) toonStreefSom();
+  });
+
   document.getElementById('status-streef-save-btn').addEventListener('click', async () => {
     const streef = {};
     document.querySelectorAll('#status-streef-body input[data-streef-status]').forEach(inp => {
@@ -5818,12 +5972,17 @@ function wireEvents() {
       const v = parseInt(inp.value, 10);
       if (Number.isFinite(v) && v >= 0) streef[inp.dataset.streefStatus] = v;
     });
+    const normVeld = document.getElementById('doorlooptijd-norm-input');
+    const norm = parseInt(normVeld.value, 10);
+    state.doorlooptijdNorm = Number.isFinite(norm) && norm > 0 ? norm : DEFAULT_DOORLOOPTIJD_NORM;
+    normVeld.value = state.doorlooptijdNorm;
     state.statusStreef = streef;
     await saveStatusStreef(streef);
+    await saveDoorlooptijdNorm(state.doorlooptijdNorm);
     const ingevuld = Object.keys(streef).length;
     document.getElementById('status-streef-status').textContent = ingevuld === 0
-      ? 'Opgeslagen — alles wordt nu tegen de gemeten mediaan afgemeten.'
-      : `Opgeslagen — ${ingevuld} van de ${OV_STATUS_ORDER.length} statussen heeft een streefwaarde.`;
+      ? `Opgeslagen — traject ${state.doorlooptijdNorm} dagen; per status wordt tegen de gemeten mediaan afgemeten.`
+      : `Opgeslagen — traject ${state.doorlooptijdNorm} dagen, ${ingevuld} van de ${OV_STATUS_ORDER.length} statussen met een streefwaarde.`;
     if (state.snapshots.length > 0) renderDashboardFromState();
     else renderStatusStreefCard();
   });
@@ -6047,6 +6206,8 @@ function applyStaticExportData() {
   state.markeringKlasse = STATIC_DATA.markeringKlasse || {};
   state.bijnaVerlopenThreshold = STATIC_DATA.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD;
   state.statusStreef = schoonStatusStreef(STATIC_DATA.statusStreef);
+  state.doorlooptijdNorm = Number.isFinite(STATIC_DATA.doorlooptijdNorm) && STATIC_DATA.doorlooptijdNorm > 0
+    ? STATIC_DATA.doorlooptijdNorm : DEFAULT_DOORLOOPTIJD_NORM;
 
   if (state.snapshots.length > 0) renderDashboardFromState();
   else setDashboardEmpty('dashboard', 'dashboard-empty', true);

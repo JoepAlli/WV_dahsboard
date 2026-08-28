@@ -1011,16 +1011,35 @@ tr.detail-row > td {
   gap: 12px;
   margin-bottom: 18px;
 }
+/* Elk vak is een knop die de tabel eronder filtert. Vandaar <button> en niet
+   <div>: toetsenbord en schermlezer krijgen het gedrag er gratis bij. */
 .norm-vak {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 12px 14px;
+  background: var(--surface-1);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
 }
+.norm-vak:hover { box-shadow: var(--shadow-card-hover); transform: translateY(-1px); }
+.norm-vak:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
 /* Alleen een randaccent, geen vlak: een status met werk moet opvallen zonder
    dat vijf gekleurde vlakken naast elkaar om aandacht gaan vechten. */
 .norm-vak-alarm { border-left: 3px solid var(--status-critical); }
-.norm-status { font-weight: 700; font-size: 0.9rem; }
-.norm-cijfer { font-size: 0.95rem; margin: 2px 0 4px; }
+/* Het traject is de norm die telt; die krijgt de volle breedte boven de
+   statussen in plaats van een plek tussen zes gelijkwaardige vakjes. */
+.norm-vak-breed { grid-column: 1 / -1; }
+.norm-vak-actief {
+  border-color: var(--brand-primary);
+  box-shadow: inset 0 0 0 1px var(--brand-primary);
+}
+.norm-status { display: block; font-weight: 700; font-size: 0.9rem; }
+.norm-cijfer { display: block; font-size: 0.95rem; margin: 2px 0 4px; }
 .streef-rij label { min-width: 190px; }
 
 /* Clusters in twee niveaus: eerst de plaats (waar stuur ik iemand heen), daarin
