@@ -1002,6 +1002,27 @@ tr.detail-row > td {
   border-radius: 999px;
 }
 
+/* De normbalk boven "Te lang in status": één vakje per status met de telling
+   en waartegen die is afgemeten. Bewust vóór de tabel — de tabel zegt wélke
+   storing, deze regel zegt of het aan één storing ligt of aan de hele stap. */
+.norm-balk {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.norm-vak {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+/* Alleen een randaccent, geen vlak: een status met werk moet opvallen zonder
+   dat vijf gekleurde vlakken naast elkaar om aandacht gaan vechten. */
+.norm-vak-alarm { border-left: 3px solid var(--status-critical); }
+.norm-status { font-weight: 700; font-size: 0.9rem; }
+.norm-cijfer { font-size: 0.95rem; margin: 2px 0 4px; }
+.streef-rij label { min-width: 190px; }
+
 /* Clusters in twee niveaus: eerst de plaats (waar stuur ik iemand heen), daarin
    de postcodegebieden of straten (wat plan ik samen), en daarin de orders. Het
    plaatsniveau is zwaarder aangezet zodat de lijst met plaatsen leest als een

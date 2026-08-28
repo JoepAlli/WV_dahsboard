@@ -312,9 +312,9 @@
     </section>
 
     <section class="card">
-      <h2>🐢 Stagnatiesignaal</h2>
-      <p class="muted small">Storingen die veel langer in dezelfde status staan dan gebruikelijk voor die status. Deze vallen vaak buiten "Vraagt om actie" omdat ze formeel nog op tijd zijn — terwijl ze in de praktijk stilstaan.</p>
-      <div id="stagnatie-body" class="table-scroll"></div>
+      <h2>🐢 Te lang in status</h2>
+      <p class="muted small">Storingen die langer in hun huidige status staan dan de norm voor die status. Deze vallen vaak buiten "Vraagt om actie" omdat ze formeel nog op tijd zijn — terwijl ze in de praktijk stilstaan. De norm is de streefwaarde die je zelf zet (Instellingen); staat die er niet, dan wordt er afgemeten tegen de gemeten mediaan, en dan pas gemeld vanaf het dubbele daarvan.</p>
+      <div id="stagnatie-body"></div>
     </section>
   </section>
 
@@ -410,6 +410,16 @@
       <div class="input-row">
         <button id="cap-save-btn" class="btn-primary">Opslaan</button>
         <span id="cap-status" class="muted small"></span>
+      </div>
+    </section>
+
+    <section class="card" id="status-streef-card">
+      <h2>🎯 Streefwaarden per status</h2>
+      <p class="muted small">Hoe lang een storing hoogstens in een status hoort te staan. Alles daarboven komt op de Prognose-pagina in "Te lang in status". Laat een veld leeg om af te meten tegen de gemeten mediaan van die status — handig zolang je nog geen norm hebt, maar wel een maatstaf die meeschuift met hoe het gaat: duurt een stap structureel lang, dan wordt dat vanzelf "normaal" en valt er niets meer op.</p>
+      <div id="status-streef-body"></div>
+      <div class="input-row">
+        <button id="status-streef-save-btn" class="btn-primary">Opslaan</button>
+        <span id="status-streef-status" class="muted small"></span>
       </div>
     </section>
 
