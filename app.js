@@ -5594,6 +5594,19 @@ function wireEvents() {
     });
   });
 
+  // "De norm klopt niet" is de eerste gedachte bij een lijst die te lang of te
+  // kort is. Vanuit de lijst moet je die dus kunnen bijstellen zonder eerst te
+  // gaan zoeken waar dat ook alweer stond.
+  document.querySelectorAll('[data-goto-normen]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      switchTab('settings');
+      const kaart = document.getElementById('status-streef-card');
+      if (kaart) kaart.scrollIntoView({ block: 'center' });
+      const veld = document.getElementById(btn.dataset.gotoNormen || 'doorlooptijd-norm-input');
+      if (veld) veld.focus();
+    });
+  });
+
   document.getElementById('export-backup-btn').addEventListener('click', async () => {
     const statusEl = document.getElementById('backup-status');
     try {

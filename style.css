@@ -197,7 +197,9 @@ summary:focus-visible, [tabindex]:focus-visible {
 .static-export #input-card,
 .static-export #ov-weeks-card,
 .static-export #dashboard-empty,
-.static-export #wv-gebied-card { display: none; }
+.static-export #wv-gebied-card,
+/* Geen Instellingen-tab in de gedeelde export, dus ook geen knop ernaartoe. */
+.static-export .norm-instel-knop { display: none; }
 
 main {
   padding: 22px clamp(16px, 3vw, 40px) 64px;
