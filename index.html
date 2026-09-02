@@ -307,7 +307,7 @@
 
     <section class="card">
       <h2>🚦 Waar loopt het vast?</h2>
-      <p class="muted small">Per status hoeveel storingen er nu in staan, hoe lang ze daar normaal blijven, en hoeveel wachttijd er op dat moment bij elkaar ligt. Zo zie je niet alleen dát het traag gaat, maar bij welke stap.</p>
+      <p class="muted small">Per status hoeveel storingen er nu in staan, hoe lang ze daar normaal blijven (P50) en hoe ver de uitschieters uitlopen (P90), en hoeveel wachttijd er op dat moment bij elkaar ligt. Zo zie je niet alleen dát het traag gaat, maar bij welke stap — en of dat aan de hele bak ligt of aan een paar gevallen.</p>
       <div id="doorstroom-body"></div>
     </section>
 
@@ -316,7 +316,7 @@
         <h2>🐢 Te lang onderweg</h2>
         <button type="button" class="btn-link norm-instel-knop" data-goto-normen="doorlooptijd-norm-input">🎯 Normen aanpassen</button>
       </div>
-      <p class="muted small">Twee normen naast elkaar: het hele traject (van melding tot afsluiting) en de stap waar een storing nu in zit. Alles wat over een van beide heen gaat staat hieronder. Deze storingen vallen vaak buiten "Vraagt om actie" omdat ze formeel nog op tijd zijn — terwijl ze in de praktijk stilstaan. <strong>Klik op een vak om de lijst daarop te filteren.</strong> De normen zet je zelf: via de knop hierboven. Heeft een status er geen, dan wordt er afgemeten tegen de gemeten mediaan en pas gemeld vanaf het dubbele daarvan.</p>
+      <p class="muted small">Twee normen naast elkaar: het hele traject (van melding tot afsluiting) en de stap waar een storing nu in zit. Alles wat over een van beide heen gaat staat hieronder. Deze storingen vallen vaak buiten "Vraagt om actie" omdat ze formeel nog op tijd zijn — terwijl ze in de praktijk stilstaan. <strong>Klik op een vak om de lijst daarop te filteren.</strong> De normen zet je zelf: via de knop hierboven. Heeft een status er geen, dan wordt er afgemeten tegen de gemeten P50 en pas gemeld vanaf het dubbele daarvan.</p>
       <div id="stagnatie-body"></div>
     </section>
   </section>
@@ -331,7 +331,8 @@
     </div>
 
     <section class="card">
-      <h2>⏱️ Gemiddelde doorlooptijd</h2>
+      <h2>⏱️ Doorlooptijd van afgehandelde storingen</h2>
+      <p class="muted small">Hoe lang storingen er werkelijk over deden, van eerst gezien tot uit de lijst verdwenen. P50 en P90 staan naast het gemiddelde: staat het gemiddelde ver boven P50, dan wordt het opgetrokken door een paar hele lange gevallen.</p>
       <div id="doorlooptijd-card-body"></div>
     </section>
 
@@ -426,7 +427,7 @@
       </div>
       <div id="status-streef-body"></div>
       <p id="status-streef-som" class="muted small"></p>
-      <p class="muted small">Laat een status leeg om daar af te meten tegen de gemeten mediaan. Handig zolang je nog geen norm hebt, maar wel een maatstaf die meeschuift met hoe het gaat: duurt een stap structureel lang, dan wordt dat vanzelf "normaal" en valt er niets meer op.</p>
+      <p class="muted small">Laat een status leeg om daar af te meten tegen de gemeten P50. Handig zolang je nog geen norm hebt, maar wel een maatstaf die meeschuift met hoe het gaat: duurt een stap structureel lang, dan wordt dat vanzelf "normaal" en valt er niets meer op.</p>
       <div class="input-row">
         <button id="status-streef-save-btn" class="btn-primary">Opslaan</button>
         <span id="status-streef-status" class="muted small"></span>

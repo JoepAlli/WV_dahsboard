@@ -1671,6 +1671,82 @@ function resolvedDurations() {
   return results;
 }
 
+/* ---------- Verdeling: P50 en P90 ---------- */
+
+// Eén gemiddelde verbergt precies wat je wilt weten. Duren de meeste storingen
+// drie dagen en een handvol dertig, dan komt daar een getal uit dat voor géén
+// enkele storing geldt: te hoog om de gewone gang van zaken te beschrijven, te
+// laag om de uitschieters te laten zien.
+//
+// P50 en P90 splitsen dat uit elkaar. P50 (de mediaan) is de gewone gang van
+// zaken: de helft is er sneller doorheen. P90 is de staart: negen van de tien
+// blijven eronder, dus wat erboven zit zijn de uitzonderingen. Staan die twee
+// ver uit elkaar, dan is dát het verhaal — niet het gemiddelde ertussenin.
+//
+// Lineaire interpolatie tussen de twee dichtstbijzijnde metingen, dezelfde
+// definitie als PERCENTILE.INC in Excel. Zo is P50 exact de klassieke mediaan
+// en komen de getallen overeen met wat je in een spreadsheet zou narekenen.
+function percentiel(gesorteerd, p) {
+  if (gesorteerd.length === 0) return null;
+  if (gesorteerd.length === 1) return gesorteerd[0];
+  const positie = (gesorteerd.length - 1) * p;
+  const onder = Math.floor(positie);
+  const rest = positie - onder;
+  if (onder + 1 >= gesorteerd.length) return gesorteerd[gesorteerd.length - 1];
+  return gesorteerd[onder] + (gesorteerd[onder + 1] - gesorteerd[onder]) * rest;
+}
+
+// P50 heeft weinig metingen nodig om iets te betekenen, P90 veel meer: met
+// drie metingen is "de bovenste 10%" niet meer dan de hoogste meting met een
+// andere naam. Vandaar twee drempels.
+const MIN_METINGEN_P50 = 3;
+const MIN_METINGEN_P90 = 5;
+
+function verdelingVan(waarden) {
+  if (!waarden || waarden.length === 0) return null;
+  const a = waarden.slice().sort((x, y) => x - y);
+  return {
+    n: a.length,
+    min: a[0],
+    max: a[a.length - 1],
+    gemiddeld: a.reduce((s, v) => s + v, 0) / a.length,
+    p50: a.length >= MIN_METINGEN_P50 ? percentiel(a, 0.5) : null,
+    p90: a.length >= MIN_METINGEN_P90 ? percentiel(a, 0.9) : null,
+  };
+}
+
+function rondDag(v) { return Math.round(v * 10) / 10; }
+// Afgerond op één decimaal, want een percentiel is bijna nooit een rond getal.
+// Bewust een andere naam dan dagenTekst() verderop: die krijgt al een geheel
+// getal binnen en hoort niet af te ronden.
+function dagenAfgerond(v) { return v == null ? '—' : dagenTekst(rondDag(v)); }
+
+// De zin die het gemiddelde niet kan geven: hoe ver de staart uitloopt op de
+// gewone gang van zaken. Alleen tonen als er echt een staart is — anders is
+// het een zin die zegt dat er niets aan de hand is, en die kost alleen ruimte.
+const STAART_RATIO = 2;
+function staartZin(v) {
+  if (!v || v.p50 == null || v.p90 == null) return '';
+  if (v.p50 > 0 && v.p90 / v.p50 < STAART_RATIO) return '';
+  return `De helft is binnen ${dagenAfgerond(v.p50)} klaar, maar één op de tien doet er ${dagenAfgerond(v.p90)} of langer over — de uitschieters zitten in die staart, niet in de gewone gang van zaken.`;
+}
+
+function verdelingTegelsHtml(v, wat) {
+  const tegels = [
+    { label: 'P50 — de helft', value: dagenAfgerond(v.p50), note: v.p50 == null ? `nog geen ${MIN_METINGEN_P50} metingen` : 'de helft is hier binnen klaar' },
+    { label: 'P90 — de staart', value: dagenAfgerond(v.p90), note: v.p90 == null ? `nog geen ${MIN_METINGEN_P90} metingen` : 'negen van de tien blijven eronder' },
+    { label: 'Langste', value: dagenAfgerond(v.max), note: 'de uitschieter zelf' },
+    { label: 'Gemiddeld', value: dagenAfgerond(v.gemiddeld), note: `over ${v.n} ${wat}` },
+  ];
+  return `<div class="stat-row verdeling-tegels">`
+    + tegels.map(t => `<div class="stat-tile">
+        <div class="label">${esc(t.label)}</div>
+        <div class="value">${esc(t.value)}</div>
+        <div class="delta">${esc(t.note)}</div>
+      </div>`).join('')
+    + `</div>`;
+}
+
 function renderDoorlooptijdCard() {
   const el = document.getElementById('doorlooptijd-card-body');
   if (!el) return;
@@ -1679,20 +1755,24 @@ function renderDoorlooptijdCard() {
     el.innerHTML = '<p class="empty-note">Nog geen storingen uit de lijst verdwenen sinds we zijn gaan meten — kom hier later op terug.</p>';
     return;
   }
-  const avg = durations.reduce((sum, d) => sum + d.days, 0) / durations.length;
+  const v = verdelingVan(durations.map(d => d.days));
   let trendHtml = '';
   if (durations.length >= 4) {
+    // De trend blijft op de mediaan van beide helften: een gemiddelde zou hier
+    // opnieuw door één uitschieter kunnen kantelen, en dan lijkt het langzamer
+    // te gaan terwijl alleen de staart is uitgelopen.
     const half = Math.floor(durations.length / 2);
-    const avgOf = (list) => list.reduce((s, d) => s + d.days, 0) / list.length;
-    const diff = avgOf(durations.slice(half)) - avgOf(durations.slice(0, half));
+    const p50Van = (list) => percentiel(list.map(d => d.days).sort((a, b) => a - b), 0.5);
+    const diff = p50Van(durations.slice(half)) - p50Van(durations.slice(0, half));
     if (Math.abs(diff) >= 0.5) {
-      trendHtml = `<div class="delta ${diff < 0 ? 'good' : 'bad'}">${diff < 0 ? '↓' : '↑'} ${Math.abs(diff).toFixed(1)} dagen ${diff < 0 ? 'sneller' : 'langzamer'} dan de oudere helft van de metingen</div>`;
+      trendHtml = `<p class="delta ${diff < 0 ? 'good' : 'bad'}">${diff < 0 ? '↓' : '↑'} ${Math.abs(diff).toFixed(1)} dagen ${diff < 0 ? 'sneller' : 'langzamer'} dan de oudere helft van de metingen (P50 tegen P50).</p>`;
     }
   }
-  el.innerHTML = `
-    <div class="value">${avg.toFixed(1)} dagen</div>
-    <div class="muted small">Gemiddelde doorlooptijd van ${durations.length} storing${durations.length === 1 ? '' : 'en'} die sinds het begin van de metingen uit de lijst zijn verdwenen (van eerst gezien tot niet meer aanwezig).</div>
-    ${trendHtml}`;
+  const staart = staartZin(v);
+  el.innerHTML = verdelingTegelsHtml(v, durations.length === 1 ? 'storing' : 'storingen')
+    + (staart ? `<p class="prognose-headline">${esc(staart)}</p>` : '')
+    + trendHtml
+    + `<p class="muted small">Over ${durations.length} storing${durations.length === 1 ? '' : 'en'} die sinds het begin van de metingen uit de lijst zijn verdwenen (van eerst gezien tot niet meer aanwezig). Het gemiddelde staat er alleen ter vergelijking bij: zit dat ver boven P50, dan wordt het opgetrokken door een paar hele lange gevallen en beschrijft het geen enkele storing.</p>`;
 }
 
 /* ---------- Instroom en uitstroom per gebied ---------- */
@@ -4085,15 +4165,11 @@ function renderTempoCard() {
 // op "In onderzoek" staat, staat stil — ook als de uiterste datum nog ver weg
 // ligt, waardoor 'ie nergens anders in het dashboard opvalt.
 //
-// De referentie is de mediaan per status, niet één vaste drempel: "In
-// voorbereiding" duurt van nature langer dan "Nieuw", dus een vaste drempel
-// zou de ene status overspoelen en de andere nooit raken. Alles in dagen,
-// net als de rest van het dashboard — weken als aparte eenheid hier maakte
-// het onnodig lastig te vergelijken met de dagen-teller ernaast. De mediaan is
-// bovendien ongevoelig voor een handvol extreem lang liggende gevallen, die
-// een gemiddelde juist zo optrekken dat er niets meer opvalt.
-const STAGNATIE_MIN_DAGEN = 21;  // onder de drie weken is "stilstand" ruis
-const STAGNATIE_RATIO = 2;       // pas melden vanaf 2x de mediaan van die status
+// Alles in dagen, net als de rest van het dashboard — weken als aparte eenheid
+// maakte het onnodig lastig te vergelijken met de dagen-teller ernaast. Wat
+// "te lang" is verschilt per status (zie statusNormVan hieronder): "In
+// voorbereiding" duurt van nature langer dan "Nieuw", dus één vaste drempel
+// zou de ene status overspoelen en de andere nooit raken.
 
 function buildStatusDuurStats() {
   const snaps = chronoSnapshots();
@@ -4128,18 +4204,20 @@ function buildStatusDuurStats() {
     });
   });
 
-  const median = (arr) => {
-    const a = arr.slice().sort((x, y) => x - y);
-    const mid = Math.floor(a.length / 2);
-    return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
-  };
+  // De volledige verdeling per status, niet alleen het middelste getal: pas
+  // met P50 én P90 ernaast is te zien of een lange gemiddelde duur komt door
+  // de hele bak of door een paar gevallen die blijven hangen.
+  const verdelingen = {};
   const medianen = {};
   const metingen = {};
   Object.keys(afgerond).forEach(st => {
     metingen[st] = afgerond[st].length;
-    if (afgerond[st].length >= 3) medianen[st] = median(afgerond[st]);
+    const v = verdelingVan(afgerond[st]);
+    verdelingen[st] = v;
+    // De norm valt terug op P50, en die is exact de klassieke mediaan.
+    if (v && v.p50 != null) medianen[st] = v.p50;
   });
-  return { lopend, medianen, metingen };
+  return { lopend, medianen, metingen, verdelingen };
 }
 
 // De norm per status: waartegen wordt "te lang" afgemeten?
@@ -4261,7 +4339,7 @@ function buildTeLangInStatus() {
 function normCelHtml(r) {
   if (r.norm == null) return '<td class="num muted">—</td>';
   const waarde = Math.round(r.norm * 10) / 10;
-  const label = r.bron === 'streef' ? 'streef' : 'mediaan';
+  const label = r.bron === 'streef' ? 'streef' : 'P50';
   return `<td class="num">${waarde} dgn <span class="muted small">${label}</span></td>`;
 }
 
@@ -4284,16 +4362,17 @@ const STAGNATIE_COLUMNS = [
 // Waar hoopt het werk zich op? Het stagnatiesignaal wijst individuele
 // storingen aan; deze kaart kijkt naar de stap in het proces. Twee getallen
 // die iets anders zeggen:
-//  - mediane duur: hoe lang een storing normaal in die status blijft;
+//  - P50/P90: hoe lang een storing normaal in die status blijft, en hoe ver
+//    de staart daarboven uitloopt;
 //  - opgehoopt: alle wachttijd van wie er nu in zit, bij elkaar opgeteld.
-// Een status kan een korte mediaan hebben en toch de grootste ophoping zijn
+// Een status kan een korte P50 hebben en toch de grootste ophoping zijn
 // (veel storingen), of andersom (weinig storingen die er heel lang liggen).
 // Alleen op de mediaan sturen zou dat eerste geval missen.
 function buildDoorstroomStats() {
   const snaps = chronoSnapshots();
   if (snaps.length === 0) return [];
   const latest = snaps[snaps.length - 1];
-  const { lopend, medianen } = buildStatusDuurStats();
+  const { lopend, verdelingen, medianen } = buildStatusDuurStats();
   const huidig = filterByActive(typeFiltered(latest.storingen));
 
   return OV_STATUS_ORDER.map(status => {
@@ -4302,10 +4381,17 @@ function buildDoorstroomStats() {
       const cur = lopend[s.order];
       return cur ? dagenTussen(cur.sinds, latest.week) : 0;
     });
+    const v = verdelingen[status] || null;
+    const normInfo = statusNormVan(status, medianen);
     return {
       status,
       aantal: inStatus.length,
-      mediaan: medianen[status] != null ? medianen[status] : null,
+      verdeling: v,
+      norm: normInfo ? normInfo.norm : null,
+      normBron: normInfo ? normInfo.bron : null,
+      p50: v ? v.p50 : null,
+      p90: v ? v.p90 : null,
+      metingen: v ? v.n : 0,
       opgehoopt: wachttijden.reduce((a, b) => a + b, 0),
       langste: wachttijden.length ? Math.max(...wachttijden) : 0,
     };
@@ -4327,29 +4413,58 @@ function renderDoorstroomCard() {
     ? `<p class="prognose-headline">De meeste tijd hoopt zich op bij <strong>${esc(zwaarste.status)}</strong>: ${zwaarste.aantal} storing${zwaarste.aantal === 1 ? '' : 'en'}, samen <strong>${zwaarste.opgehoopt}</strong> wachtdagen.</p>`
     : '';
 
-  const body = rijen.map(r => {
-    const aandeel = zwaarste.opgehoopt > 0 ? r.opgehoopt / zwaarste.opgehoopt : 0;
-    return `<tr>
+  // Alle spreidingsbalken op dezelfde schaal, anders lijkt een status met een
+  // korte staart net zo scheef als een met een lange.
+  const schaal = Math.max(1, ...rijen.map(r => (r.verdeling ? r.verdeling.p90 || r.verdeling.p50 || 0 : 0)), ...rijen.map(r => r.norm || 0));
+
+  const body = rijen.map(r => `<tr>
       <td>${esc(r.status)}</td>
       <td class="num">${r.aantal}</td>
-      <td class="num">${r.mediaan == null ? '—' : Math.round(r.mediaan) + ' dgn'}</td>
+      <td class="num">${dagenAfgerond(r.p50)}</td>
+      <td class="num">${dagenAfgerond(r.p90)}</td>
+      <td>${spreidingBalkHtml(r, schaal)}</td>
       <td class="num">${r.opgehoopt}</td>
-      <td><div class="doorstroom-balk"><span style="width:${Math.round(aandeel * 100)}%"></span></div></td>
       <td class="num">${r.langste || '—'}</td>
-    </tr>`;
-  }).join('');
+    </tr>`).join('');
 
-  container.innerHTML = `${kop}
+  const scheef = rijen.filter(r => r.p50 != null && r.p90 != null && r.p50 > 0 && r.p90 / r.p50 >= STAART_RATIO)
+    .sort((a, b) => (b.p90 / b.p50) - (a.p90 / a.p50))[0];
+  const staart = scheef
+    ? `<p class="prognose-headline">Bij <strong>${esc(scheef.status)}</strong> zit het verschil vooral in de staart: de helft is er binnen ${dagenAfgerond(scheef.p50)} doorheen, maar één op de tien doet er ${dagenAfgerond(scheef.p90)} of langer over.</p>`
+    : '';
+
+  container.innerHTML = `${kop}${staart}
     <div class="table-scroll">
       <table>
         <thead><tr>
-          <th>Status</th><th class="num">Nu in deze status</th><th class="num">Mediane duur</th>
-          <th class="num">Opgehoopt</th><th></th><th class="num">Langst wachtend</th>
+          <th>Status</th><th class="num">Nu in deze status</th><th class="num">P50</th><th class="num">P90</th>
+          <th class="spreiding-kop">Spreiding <span class="muted small">(P50 · P90 · norm)</span></th>
+          <th class="num">Opgehoopt</th><th class="num">Langst wachtend</th>
         </tr></thead>
         <tbody>${body}</tbody>
       </table>
     </div>
-    <p class="muted small">"Opgehoopt" is alle wachttijd van de storingen die nu in die status staan bij elkaar opgeteld, in dagen. "Mediane duur" is hoe lang een storing normaal in die status blijft voordat 'ie doorstroomt — die wordt pas getoond bij minstens drie afgeronde metingen.</p>`;
+    <p class="muted small">P50 is hoe lang een storing normaal in die status blijft: de helft is er sneller doorheen. P90 is de staart: negen van de tien blijven eronder. Staan die twee ver uit elkaar, dan zit het probleem bij een paar gevallen en niet bij de hele bak — dat is precies wat een gemiddelde onzichtbaar maakt. P50 vanaf ${MIN_METINGEN_P50} afgeronde metingen, P90 vanaf ${MIN_METINGEN_P90}. "Opgehoopt" is alle wachttijd van de storingen die nu in die status staan bij elkaar opgeteld, in dagen.</p>`;
+}
+
+// De verdeling als balkje: massief tot P50, lichter tot P90, met een streepje
+// op de norm. Zo zie je in één blik of de norm ergens tussen P50 en P90 ligt
+// (dan haalt een deel het niet) of voorbij P90 (dan is het echt uitzondering).
+function spreidingBalkHtml(r, schaal) {
+  const v = r.verdeling;
+  if (!v || v.p50 == null) return '<span class="muted small">te weinig metingen</span>';
+  const pct = (waarde) => Math.max(0, Math.min(100, (waarde / schaal) * 100));
+  const p50Pct = pct(v.p50);
+  const p90Pct = v.p90 == null ? p50Pct : pct(v.p90);
+  const normMerk = r.norm != null
+    ? `<span class="spreiding-norm" style="left:${pct(r.norm)}%" title="Norm ${dagenAfgerond(r.norm)}"></span>`
+    : '';
+  const titel = `P50 ${dagenAfgerond(v.p50)}${v.p90 == null ? '' : ` · P90 ${dagenAfgerond(v.p90)}`} · langste ${dagenAfgerond(v.max)} · ${v.n} metingen`;
+  return `<div class="spreiding-balk" title="${esc(titel)}">
+      <span class="spreiding-staart" style="width:${p90Pct}%"></span>
+      <span class="spreiding-kern" style="width:${p50Pct}%"></span>
+      ${normMerk}
+    </div>`;
 }
 
 // Boven de lijst een vak per norm: het hele traject voorop, daarna elke status.
@@ -4398,7 +4513,7 @@ function normBalkHtml(perStatus, traject) {
     const norm = Math.round(p.normInfo.norm * 10) / 10;
     const bronTekst = p.normInfo.bron === 'streef'
       ? `streefwaarde ${norm} ${norm === 1 ? 'dag' : 'dagen'}`
-      : `mediaan ${norm} ${norm === 1 ? 'dag' : 'dagen'} · melden vanaf ${Math.round(p.normInfo.drempel)}`;
+      : `P50 ${norm} ${norm === 1 ? 'dag' : 'dagen'} · melden vanaf ${Math.round(p.normInfo.drempel)}`;
     vakken.push(normVakHtml({
       filter: p.status,
       alarm: p.teLang > 0,
@@ -5375,16 +5490,18 @@ function renderTypeWhitelist() {
 function renderStatusStreefCard() {
   const el = document.getElementById('status-streef-body');
   if (!el) return;
-  const { medianen, metingen } = state.snapshots.length > 0
+  const { verdelingen } = state.snapshots.length > 0
     ? buildStatusDuurStats()
-    : { medianen: {}, metingen: {} };
+    : { verdelingen: {} };
   el.innerHTML = OV_STATUS_ORDER.map((status, i) => {
     const waarde = state.statusStreef[status];
-    const mediaan = medianen[status];
-    const aantal = metingen[status] || 0;
-    const hint = mediaan != null
-      ? `nu gemeten: ${Math.round(mediaan * 10) / 10} ${mediaan === 1 ? 'dag' : 'dagen'} (${aantal} metingen)`
-      : `nog geen mediaan (${aantal} van de 3 metingen)`;
+    const v = verdelingen[status] || null;
+    const aantal = v ? v.n : 0;
+    // P50 en P90 naast elkaar, zodat je een streefwaarde niet alleen op de
+    // gewone gang van zaken zet maar ook ziet hoe ver de staart uitloopt.
+    const hint = v && v.p50 != null
+      ? `nu gemeten: P50 ${dagenAfgerond(v.p50)} · P90 ${v.p90 == null ? `nog niet (${aantal} van de ${MIN_METINGEN_P90} metingen)` : dagenAfgerond(v.p90)} · langste ${dagenAfgerond(v.max)} (${aantal} metingen)`
+      : `nog niets gemeten (${aantal} van de ${MIN_METINGEN_P50} metingen)`;
     return `<div class="input-row streef-rij">
       <label for="streef-${i}">${esc(status)}</label>
       <input type="number" id="streef-${i}" data-streef-status="${esc(status)}" min="0" max="365" step="1"

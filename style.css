@@ -1004,6 +1004,32 @@ tr.detail-row > td {
   border-radius: 999px;
 }
 
+/* Spreidingsbalk: massief tot P50, lichter tot P90, streepje op de norm.
+   De twee segmenten liggen over elkaar (P90 onder, P50 erbovenop) in plaats
+   van naast elkaar — dan hoeft de breedte niet uitgerekend te worden als
+   verschil, en klopt het beeld ook als P90 gelijk is aan P50. */
+.spreiding-balk {
+  position: relative;
+  background: var(--gridline);
+  border-radius: 999px;
+  height: 10px;
+  min-width: 120px;
+  overflow: hidden;
+}
+.spreiding-balk span { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 999px; }
+.spreiding-staart { background: color-mix(in srgb, var(--series-1) 32%, transparent); }
+.spreiding-kern { background: var(--series-1); }
+/* De norm is een grens, geen hoeveelheid: een streepje dwars op de balk, niet
+   nog een gevuld stuk dat met de andere twee zou gaan concurreren. */
+.spreiding-norm {
+  width: 2px;
+  background: var(--text-primary);
+  border-radius: 0;
+  opacity: 0.75;
+}
+.spreiding-kop { min-width: 150px; }
+.verdeling-tegels { margin-bottom: 8px; }
+
 /* De normbalk boven "Te lang in status": één vakje per status met de telling
    en waartegen die is afgemeten. Bewust vóór de tabel — de tabel zegt wélke
    storing, deze regel zegt of het aan één storing ligt of aan de hele stap. */
