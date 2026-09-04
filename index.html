@@ -176,14 +176,6 @@
 
     <div id="gebied-onbekend" class="warning-box hidden"></div>
 
-    <section class="card" id="kaart-card">
-      <div class="card-header">
-        <h2>🗺️ Kaart</h2>
-      </div>
-      <p class="muted small">De openstaande storingen op hun werkelijke plek in de regio, zodat je ziet welke plaatsen bij elkaar in de buurt liggen en dus in één rit mee kunnen. Klik een plaats aan voor de storingen die daar openstaan.</p>
-      <div id="kaart-body"></div>
-    </section>
-
     <section class="card" id="cluster-card">
       <div class="card-header">
         <h2>📍 Slim inplannen — clusters</h2>
@@ -289,15 +281,9 @@
       <span class="panel-icon">🔮</span>
       <div>
         <h2>Prognose</h2>
-        <p>Vooruitkijken in plaats van terugkijken: wat komt er de komende weken op je af, hoeveel storingen moet je per week afsluiten om niet achterop te raken, en welke storingen blijven stilstaan zonder dat ze al verlopen zijn.</p>
+        <p>Vooruitkijken in plaats van terugkijken: hoeveel storingen je per week moet afsluiten om niet achterop te raken, hoe lang elke stap in werkelijkheid duurt, en welke storingen blijven stilstaan zonder dat ze al verlopen zijn.</p>
       </div>
     </div>
-
-    <section class="card">
-      <h2>📅 Verloopkalender</h2>
-      <p class="muted small">Op basis van de resterende dagen per storing: hoeveel storingen hun uiterste datum bereiken in de komende weken, als er niets gebeurt. Dit is geen schatting maar een aftelling — de aantallen liggen vast. Gesplitst naar wel of geen uitvoeringsdatum, want een storing zonder plan is het echte risico.</p>
-      <div id="verloopkalender-body"></div>
-    </section>
 
     <section class="card">
       <h2>⚖️ Benodigd tempo</h2>
@@ -316,7 +302,7 @@
         <h2>📦 Verdeling van de doorlooptijd</h2>
         <button class="btn-link toggle-table" data-target="boxplot">Toon als tabel</button>
       </div>
-      <p class="muted small">Dezelfde metingen als hierboven, maar dan als verdeling in plaats van als twee getallen. Per stap: de box is de middelste helft van alle metingen, de streep erin is P50, de whiskers zijn het normale bereik en de losse punten zijn de uitschieters. Ligt de streep niet in het midden van de box, dan is de verdeling scheef. Alle afgeronde metingen tellen mee en de plot werkt zich bij zodra je nieuwe data plakt.</p>
+      <p class="muted small">Dezelfde metingen als hierboven, maar dan als verdeling in plaats van als twee getallen. Dagen omhoog, de statussen in procesvolgorde van links naar rechts. Per status: de box is de middelste helft van alle metingen, de streep erin is P50, de whiskers zijn het normale bereik en de losse punten zijn de uitschieters. Ligt de streep niet in het midden van de box, dan is de verdeling scheef. Alle afgeronde metingen tellen mee en de plot werkt zich bij zodra je nieuwe data plakt.</p>
       <div class="filter-tabs" id="boxplot-schaal">
         <button type="button" class="filter-tab active" data-boxplot-schaal="whisker">Tot het normale bereik</button>
         <button type="button" class="filter-tab" data-boxplot-schaal="alles">Inclusief uitschieters</button>

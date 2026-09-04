@@ -1030,15 +1030,14 @@ tr.detail-row > td {
 .spreiding-kop { min-width: 150px; }
 .verdeling-tegels { margin-bottom: 8px; }
 
-/* ---------- Boxplot: de verdeling per stap ----------
+/* ---------- Boxplot: de verdeling per status ----------
 
    Eén meetwaarde (dagen), dus één tint — geen categorische reeks. De vorm doet
-   het werk: box, streep, whiskers, punten. De norm is geen data maar een
-   grens, en staat daarom in tekst-inkt in plaats van in de datakleur. */
+   het werk: box, streep, whiskers, punten. Staande boxen, met de statussen in
+   proceslogische volgorde van links naar rechts. */
 .box-scroll { overflow-x: auto; }
 .boxplot-svg { display: block; }
 .box-grid { stroke: var(--gridline); stroke-width: 1; }
-.box-scheiding { stroke: var(--border); stroke-width: 1; }
 .box-whisker { stroke: color-mix(in srgb, var(--series-1) 60%, transparent); stroke-width: 2; stroke-linecap: round; }
 .box-vlak { fill: color-mix(in srgb, var(--series-1) 28%, var(--surface-1)); }
 .box-mediaan { stroke: var(--series-1); stroke-width: 3; stroke-linecap: round; }
@@ -1046,16 +1045,15 @@ tr.detail-row > td {
    of een ander punt overlapt. */
 .box-punt { fill: var(--series-1); stroke: var(--surface-1); stroke-width: 2; }
 .box-punt-los { fill: color-mix(in srgb, var(--series-1) 70%, transparent); }
-.box-norm { stroke: var(--text-primary); stroke-width: 2; opacity: 0.55; stroke-linecap: round; }
-.box-rij-label { fill: var(--text-secondary); font-size: 12px; }
-.box-rij-label-sterk { fill: var(--text-primary); font-weight: 700; }
 .box-as-label { fill: var(--text-muted); font-size: 11px; }
-.box-rij-n { fill: var(--text-muted); font-size: 10px; }
-/* Een stap zonder metingen blijft staan (de rij hoort erbij) maar hoeft geen
-   aandacht te trekken. */
-.box-rij-label-leeg { fill: var(--text-muted); }
-/* De teller op de rand is een waarschuwing dat er iets buiten beeld valt, geen
-   asaanduiding: iets steviger, en aanklikbaar via zijn tooltip. */
+.box-as-titel { fill: var(--text-secondary); font-size: 11px; font-weight: 700; }
+.box-kolom-label { fill: var(--text-secondary); font-size: 11px; }
+/* Een stap zonder metingen blijft in beeld (de kolom hoort erbij) maar hoeft
+   geen aandacht te trekken. */
+.box-kolom-label-leeg { fill: var(--text-muted); }
+.box-kolom-n { fill: var(--text-muted); font-size: 10px; }
+/* De teller bovenaan is een waarschuwing dat er iets buiten beeld valt, geen
+   asaanduiding. */
 .box-buiten-label { fill: var(--text-secondary); font-size: 11px; font-weight: 700; cursor: help; }
 .box-rij:hover .box-vlak { fill: color-mix(in srgb, var(--series-1) 42%, var(--surface-1)); }
 .box-legenda {
@@ -1382,127 +1380,6 @@ tr.detail-row > td {
   gap: 26px;
   margin-top: 22px;
 }
-
-/* Kaart: stippenkaart van de openstaande storingen per plaats. Alle kleuren via
-   de bestaande tokens, zodat de kaart in licht en donker meeloopt. */
-.kaart-vlakje {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
-  padding: 6px;
-  overflow-x: auto;
-}
-.kaart-svg {
-  display: block;
-  width: 100%;
-  min-width: 520px;
-  height: auto;
-}
-.kaart-knoppen {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 4px 0 8px;
-}
-.kaart-knop {
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
-  color: var(--text-primary);
-  font-size: 1.05rem;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-}
-.kaart-knop:hover { background: var(--brand-highlight); }
-.kaart-knoppen .btn-link[disabled] { opacity: 0.45; cursor: default; }
-.kaart-knoppen .muted { margin-left: auto; }
-
-.kaart-svg { touch-action: none; cursor: grab; }
-.kaart-svg:active { cursor: grabbing; }
-.kaart-buiten {
-  fill: var(--text-muted);
-  font-size: 11px;
-  text-anchor: end;
-}
-.kaart-leeg {
-  fill: var(--text-secondary);
-  font-size: 13px;
-  text-anchor: middle;
-}
-.kaart-punt { cursor: pointer; }
-.kaart-bol { fill: var(--series-1); }
-.kaart-ring {
-  fill: none;
-  stroke: var(--surface-1);
-  stroke-width: 1.5;
-}
-.kaart-punt.heeft-verlopen .kaart-ring {
-  stroke: var(--status-critical);
-  stroke-width: 2.5;
-}
-.kaart-punt.actief .kaart-ring {
-  stroke: var(--text-primary);
-  stroke-width: 3;
-}
-.kaart-punt:hover .kaart-bol,
-.kaart-punt:focus-visible .kaart-bol { fill: var(--brand-primary-dark); }
-.kaart-punt:focus-visible { outline: none; }
-.kaart-punt:focus-visible .kaart-ring { stroke: var(--text-primary); stroke-width: 3; }
-.kaart-raster line { stroke: var(--gridline); stroke-width: 1; }
-.kaart-label {
-  fill: var(--text-primary);
-  font-size: 11px;
-  pointer-events: none;
-  paint-order: stroke;
-  stroke: var(--surface-1);
-  stroke-width: 3px;
-  stroke-linejoin: round;
-}
-.kaart-schaal line { stroke: var(--baseline); stroke-width: 1.5; }
-.kaart-schaal text { fill: var(--text-secondary); font-size: 11px; }
-
-.kaart-legenda {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 18px;
-  margin: 10px 0 4px;
-  font-size: 0.82rem;
-  color: var(--text-secondary);
-}
-.kaart-legenda span { display: inline-flex; align-items: center; gap: 6px; }
-.kaart-vlak {
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  display: inline-block;
-}
-.kaart-vlak-overig { background: var(--series-1); }
-.kaart-vlak-mio { background: var(--series-2); }
-.kaart-vlak-verlopen {
-  background: var(--series-1);
-  box-shadow: 0 0 0 2px var(--status-critical);
-}
-
-.kaart-detail {
-  margin-top: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--brand-highlight) 45%, var(--surface-1));
-  overflow: hidden;
-}
-.kaart-detail-kop {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 14px;
-  padding: 12px 16px 8px;
-}
-.kaart-detail-kop .btn-link { margin-left: auto; }
-.kaart-detail .table-scroll { padding: 0 12px 12px; }
 
 /* Sanering: dezelfde "LS storing/schade" als alle andere, dus wel een eigen
    merkteken nodig om ze in een lijst te kunnen aanwijzen. */
