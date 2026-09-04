@@ -812,6 +812,8 @@ const state = {
   statusStreef: {},
   doorlooptijdNorm: DEFAULT_DOORLOOPTIJD_NORM,
   stagnatieFilter: null,
+  boxplotSchaal: 'whisker',
+  boxplotViewMode: 'chart',
   stagnatieSortState: { key: 'traject', dir: -1 },
   historieQuery: '',
   historieSortState: { key: 'eerst', dir: -1 },
@@ -4217,7 +4219,9 @@ function buildStatusDuurStats() {
     // De norm valt terug op P50, en die is exact de klassieke mediaan.
     if (v && v.p50 != null) medianen[st] = v.p50;
   });
-  return { lopend, medianen, metingen, verdelingen };
+  // De losse metingen gaan mee naar buiten: een boxplot heeft de punten zelf
+  // nodig, niet alleen de samenvatting ervan.
+  return { lopend, medianen, metingen, verdelingen, metingenPerStatus: afgerond };
 }
 
 // De norm per status: waartegen wordt "te lang" afgemeten?
@@ -4572,10 +4576,248 @@ function renderStagnatieCard() {
   container.innerHTML = balk + kop + `<div class="table-scroll">${tabel.innerHTML}</div>`;
 }
 
+/* ---------- Boxplot: de verdeling per stap ---------- */
+
+// P50 en P90 zijn twee punten uit een verdeling; een boxplot is de verdeling
+// zelf. Je ziet in één beeld waar het gros zit (de box), of dat scheef ligt
+// (de streep zit niet in het midden), hoe ver het normale bereik loopt (de
+// whiskers) en welke losse gevallen daarbuiten vallen (de punten). Precies het
+// verschil tussen "het duurt hier lang" en "het duurt hier kort, op drie
+// gevallen na" — en dat is een ander gesprek in het overleg.
+//
+// Alle afgeronde metingen tellen mee, en ze komen uit dezelfde bron als de
+// getallen in de tabel erboven (buildStatusDuurStats), dus bij elke nieuwe
+// plakactie schuift de plot mee zonder dat er iets bijgehouden hoeft te worden.
+const MIN_METINGEN_BOX = 5;
+
+// Whiskers volgens Tukey: tot de verste meting binnen anderhalve box-breedte.
+// Wat daarbuiten ligt is geen meetfout maar een uitschieter, en die hoort
+// zichtbaar te blijven als los punt — hem in de whisker meetrekken zou precies
+// het beeld geven waar je vanaf wilde.
+function boxplotVan(waarden) {
+  if (!waarden || waarden.length < MIN_METINGEN_BOX) return null;
+  const a = waarden.slice().sort((x, y) => x - y);
+  const q1 = percentiel(a, 0.25);
+  const mediaan = percentiel(a, 0.5);
+  const q3 = percentiel(a, 0.75);
+  const iqr = q3 - q1;
+  const grensLaag = q1 - 1.5 * iqr;
+  const grensHoog = q3 + 1.5 * iqr;
+  const binnen = a.filter(x => x >= grensLaag && x <= grensHoog);
+  return {
+    n: a.length,
+    q1, mediaan, q3,
+    laag: binnen.length ? binnen[0] : a[0],
+    hoog: binnen.length ? binnen[binnen.length - 1] : a[a.length - 1],
+    uitschieters: a.filter(x => x < grensLaag || x > grensHoog),
+    min: a[0],
+    max: a[a.length - 1],
+  };
+}
+
+function buildBoxplotRijen() {
+  const { medianen, metingenPerStatus } = buildStatusDuurStats();
+  const trajectWaarden = resolvedDurations().map(d => d.days);
+  const rijen = [{
+    key: 'traject',
+    label: 'Hele traject',
+    isTraject: true,
+    waarden: trajectWaarden,
+    norm: state.doorlooptijdNorm || DEFAULT_DOORLOOPTIJD_NORM,
+    box: boxplotVan(trajectWaarden),
+  }];
+  OV_STATUS_ORDER.forEach(status => {
+    const waarden = (metingenPerStatus && metingenPerStatus[status]) || [];
+    const normInfo = statusNormVan(status, medianen);
+    rijen.push({
+      key: status,
+      label: status,
+      isTraject: false,
+      waarden,
+      norm: normInfo ? normInfo.norm : null,
+      box: boxplotVan(waarden),
+    });
+  });
+  return rijen;
+}
+
+const BOXPLOT_SCHALEN = [
+  { key: 'whisker', label: 'Tot het normale bereik' },
+  { key: 'alles', label: 'Inclusief uitschieters' },
+];
+
+// Waar houdt de as op? Eén meting van zestig dagen naast negen van twee drukt
+// alle boxen tot een streepje plat — dat is eerlijk en onleesbaar tegelijk.
+// Vandaar de keuze: standaard tot het normale bereik (de whiskers), met de
+// uitschieters daarbuiten als gemerkte punten op de rand zodat er niets
+// stilletjes wegvalt, of de volledige schaal als je die wél wilt zien.
+function boxplotAsMax(rijen, schaal) {
+  let max = 1;
+  rijen.forEach(r => {
+    if (!r.box) return;
+    max = Math.max(max, schaal === 'alles' ? r.box.max : r.box.hoog);
+    if (r.norm != null) max = Math.max(max, r.norm);
+  });
+  const ruim = max * 1.08;
+  // Ronde stappen: onder de 10 per 1, daarboven per 5 of 10.
+  const stap = ruim <= 10 ? 1 : ruim <= 50 ? 5 : ruim <= 200 ? 10 : 50;
+  return { max: Math.ceil(ruim / stap) * stap, stap };
+}
+
+const BOX_BREEDTE = 900;
+const BOX_LABEL_B = 178;
+const BOX_RIJ_H = 46;
+const BOX_MARGE_R = 24;
+const BOX_AS_H = 30;
+
+function renderBoxplotCard() {
+  const container = document.getElementById('boxplot-body');
+  if (!container) return;
+  document.querySelectorAll('#boxplot-schaal button[data-boxplot-schaal]').forEach(b => {
+    b.classList.toggle('active', b.dataset.boxplotSchaal === state.boxplotSchaal);
+  });
+  const knop = document.querySelector('.toggle-table[data-target="boxplot"]');
+  if (knop) knop.textContent = state.boxplotViewMode === 'chart' ? 'Toon als tabel' : 'Toon als grafiek';
+
+  const rijen = buildBoxplotRijen();
+  const metBox = rijen.filter(r => r.box);
+  if (metBox.length === 0) {
+    const meeste = Math.max(0, ...rijen.map(r => r.waarden.length));
+    container.innerHTML = `<p class="empty-note">Nog te weinig afgeronde metingen voor een verdeling: er zijn er ${MIN_METINGEN_BOX} per stap nodig en de verste staat nu op ${meeste}. Elke keer dat een storing doorstroomt of uit de lijst verdwijnt komt er een meting bij; deze plot vult zich vanzelf.</p>`;
+    return;
+  }
+  container.innerHTML = state.boxplotViewMode === 'table'
+    ? boxplotTabelHtml(rijen)
+    : boxplotSvgHtml(rijen) + boxplotLegendaHtml() + boxplotNoteHtml(rijen);
+}
+
+function boxplotNoteHtml(rijen) {
+  const zonder = rijen.filter(r => !r.box && r.waarden.length > 0);
+  const leeg = rijen.filter(r => r.waarden.length === 0);
+  const delen = [];
+  if (zonder.length) delen.push(`${zonder.map(r => esc(r.label)).join(', ')} ${zonder.length === 1 ? 'heeft' : 'hebben'} nog minder dan ${MIN_METINGEN_BOX} afgeronde metingen — daar staan de losse punten getekend zonder box.`);
+  if (leeg.length) delen.push(`${leeg.map(r => esc(r.label)).join(', ')} ${leeg.length === 1 ? 'heeft' : 'hebben'} nog geen enkele afgeronde meting.`);
+  delen.push('Een meting ontstaat zodra een storing van status wisselt of uit de lijst verdwijnt, dus de plot wordt vanzelf scherper naarmate je langer meet.');
+  return `<p class="muted small">${delen.join(' ')}</p>`;
+}
+
+function boxplotLegendaHtml() {
+  return `<div class="box-legenda">
+    <span class="box-legenda-item"><svg width="42" height="14" aria-hidden="true"><rect x="4" y="3" width="34" height="8" rx="3" class="box-vlak"></rect><line x1="22" y1="1" x2="22" y2="13" class="box-mediaan"></line></svg> box = de middelste helft (P25–P75), streep = P50</span>
+    <span class="box-legenda-item"><svg width="42" height="14" aria-hidden="true"><line x1="4" y1="7" x2="38" y2="7" class="box-whisker"></line><line x1="4" y1="3" x2="4" y2="11" class="box-whisker"></line><line x1="38" y1="3" x2="38" y2="11" class="box-whisker"></line></svg> normale bereik</span>
+    <span class="box-legenda-item"><svg width="20" height="14" aria-hidden="true"><circle cx="10" cy="7" r="4" class="box-punt"></circle></svg> uitschieter</span>
+    <span class="box-legenda-item"><svg width="20" height="14" aria-hidden="true"><line x1="10" y1="1" x2="10" y2="13" class="box-norm"></line></svg> norm</span>
+  </div>`;
+}
+
+function boxplotSvgHtml(rijen) {
+  const { max, stap } = boxplotAsMax(rijen, state.boxplotSchaal);
+  const plotB = BOX_BREEDTE - BOX_LABEL_B - BOX_MARGE_R;
+  const hoogte = rijen.length * BOX_RIJ_H + BOX_AS_H;
+  const x = (waarde) => BOX_LABEL_B + Math.min(plotB, (waarde / max) * plotB);
+
+  let grid = '';
+  let asLabels = '';
+  for (let v = 0; v <= max + 0.001; v += stap) {
+    const px = x(v);
+    grid += `<line x1="${px}" y1="0" x2="${px}" y2="${rijen.length * BOX_RIJ_H}" class="box-grid"></line>`;
+    asLabels += `<text x="${px}" y="${rijen.length * BOX_RIJ_H + 18}" class="box-as-label" text-anchor="middle">${v}</text>`;
+  }
+
+  const rijenHtml = rijen.map((r, i) => {
+    const top = i * BOX_RIJ_H;
+    const mid = top + BOX_RIJ_H / 2;
+    const scheiding = r.isTraject ? `<line x1="0" y1="${top + BOX_RIJ_H}" x2="${BOX_BREEDTE}" y2="${top + BOX_RIJ_H}" class="box-scheiding"></line>` : '';
+    // Naam en aantal metingen onder elkaar in de labelkolom. Het aantal hoort
+    // erbij: een box van vijf metingen leest anders dan een van vijftig, en
+    // zonder dat getal is dat verschil onzichtbaar.
+    const leeg = r.waarden.length === 0;
+    const label = `<text x="${BOX_LABEL_B - 12}" y="${mid - 2}" text-anchor="end"
+        class="box-rij-label${r.isTraject ? ' box-rij-label-sterk' : ''}${leeg ? ' box-rij-label-leeg' : ''}">${esc(r.label)}</text>`
+      + (leeg ? '' : `<text x="${BOX_LABEL_B - 12}" y="${mid + 12}" class="box-rij-n" text-anchor="end">${r.waarden.length} meting${r.waarden.length === 1 ? '' : 'en'}</text>`);
+    const normMerk = r.norm != null
+      ? `<line x1="${x(r.norm)}" y1="${top + 8}" x2="${x(r.norm)}" y2="${top + BOX_RIJ_H - 8}" class="box-norm"><title>Norm ${dagenAfgerond(r.norm)}</title></line>`
+      : '';
+
+    if (!r.box) {
+      // Te weinig voor een box: alleen de losse metingen als punten. Geen
+      // "nog geen metingen" dwars door het vlak — vijf van die regels onder
+      // elkaar overstemmen de rij die wél iets te vertellen heeft, en welke
+      // stappen nog leeg zijn staat al onder de plot.
+      const punten = r.waarden.map(w => `<circle cx="${x(w)}" cy="${mid}" r="3.5" class="box-punt box-punt-los"></circle>`).join('');
+      const tekst = r.waarden.length === 0 ? 'nog geen afgeronde metingen' : `${r.waarden.length} van de ${MIN_METINGEN_BOX} metingen die een box nodig heeft`;
+      return `<g class="box-rij"><title>${esc(r.label)} — ${tekst}</title>${scheiding}${label}${normMerk}${punten}</g>`;
+    }
+
+    const b = r.box;
+    const boxTop = top + 12;
+    const boxH = BOX_RIJ_H - 24;
+    const x1 = x(b.q1);
+    const x3 = x(b.q3);
+    const buiten = b.uitschieters.filter(w => w > max);
+    const binnenBeeld = b.uitschieters.filter(w => w <= max);
+    const randMerk = buiten.length
+      ? `<g class="box-buiten"><text x="${BOX_LABEL_B + plotB + 4}" y="${mid + 4}" class="box-buiten-label" ><title>${buiten.length} uitschieter${buiten.length === 1 ? '' : 's'} vallen buiten deze schaal, tot ${dagenAfgerond(b.max)} — kies "Inclusief uitschieters" om ze te zien</title>›${buiten.length}</text></g>`
+      : '';
+    const titel = `${r.label} — ${b.n} metingen · P25 ${dagenAfgerond(b.q1)} · P50 ${dagenAfgerond(b.mediaan)} · P75 ${dagenAfgerond(b.q3)} · bereik ${dagenAfgerond(b.laag)}–${dagenAfgerond(b.hoog)}`
+      + (b.uitschieters.length ? ` · ${b.uitschieters.length} uitschieter${b.uitschieters.length === 1 ? '' : 's'} tot ${dagenAfgerond(b.max)}` : '')
+      + (r.norm != null ? ` · norm ${dagenAfgerond(r.norm)}` : '');
+
+    return `<g class="box-rij"><title>${esc(titel)}</title>
+      ${scheiding}${label}
+      <line x1="${x(b.laag)}" y1="${mid}" x2="${x(b.hoog)}" y2="${mid}" class="box-whisker"></line>
+      <line x1="${x(b.laag)}" y1="${boxTop + 3}" x2="${x(b.laag)}" y2="${boxTop + boxH - 3}" class="box-whisker"></line>
+      <line x1="${x(b.hoog)}" y1="${boxTop + 3}" x2="${x(b.hoog)}" y2="${boxTop + boxH - 3}" class="box-whisker"></line>
+      <rect x="${x1}" y="${boxTop}" width="${Math.max(2, x3 - x1)}" height="${boxH}" rx="4" class="box-vlak"></rect>
+      <line x1="${x(b.mediaan)}" y1="${boxTop}" x2="${x(b.mediaan)}" y2="${boxTop + boxH}" class="box-mediaan"></line>
+      ${binnenBeeld.map(w => `<circle cx="${x(w)}" cy="${mid}" r="4" class="box-punt"></circle>`).join('')}
+      ${randMerk}${normMerk}
+    </g>`;
+  }).join('');
+
+  return `<div class="box-scroll"><svg class="chart-svg boxplot-svg" viewBox="0 0 ${BOX_BREEDTE} ${hoogte}"
+      style="width:100%;min-width:620px;height:${hoogte}px" role="img"
+      aria-label="Boxplot van de doorlooptijd per stap, in dagen">
+    ${grid}${rijenHtml}${asLabels}
+    <text x="${BOX_LABEL_B + plotB / 2}" y="${hoogte - 2}" class="box-as-label" text-anchor="middle">dagen</text>
+  </svg></div>`;
+}
+
+function boxplotTabelHtml(rijen) {
+  const body = rijen.map(r => {
+    if (!r.box) {
+      return `<tr><td>${esc(r.label)}</td><td class="num">${r.waarden.length}</td>
+        <td class="num muted" colspan="6">te weinig metingen (${MIN_METINGEN_BOX} nodig)</td>
+        <td class="num">${r.norm == null ? '—' : dagenAfgerond(r.norm)}</td></tr>`;
+    }
+    const b = r.box;
+    return `<tr>
+      <td>${esc(r.label)}</td>
+      <td class="num">${b.n}</td>
+      <td class="num">${dagenAfgerond(b.min)}</td>
+      <td class="num">${dagenAfgerond(b.q1)}</td>
+      <td class="num"><strong>${dagenAfgerond(b.mediaan)}</strong></td>
+      <td class="num">${dagenAfgerond(b.q3)}</td>
+      <td class="num">${dagenAfgerond(b.laag)}–${dagenAfgerond(b.hoog)}</td>
+      <td class="num">${b.uitschieters.length === 0 ? '—' : `${b.uitschieters.length} tot ${dagenAfgerond(b.max)}`}</td>
+      <td class="num">${r.norm == null ? '—' : dagenAfgerond(r.norm)}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="table-scroll"><table>
+    <thead><tr>
+      <th>Stap</th><th class="num">Metingen</th><th class="num">Kortste</th><th class="num">P25</th>
+      <th class="num">P50</th><th class="num">P75</th><th class="num">Normale bereik</th>
+      <th class="num">Uitschieters</th><th class="num">Norm</th>
+    </tr></thead>
+    <tbody>${body}</tbody>
+  </table></div>`;
+}
+
 function renderPrognose(current) {
   renderVerloopkalender(current);
   renderTempoCard();
   renderDoorstroomCard();
+  renderBoxplotCard();
   renderStagnatieCard();
 }
 
@@ -5955,6 +6197,9 @@ function wireEvents() {
         state.trendViewMode = state.trendViewMode === 'chart' ? 'table' : 'chart';
         btn.textContent = state.trendViewMode === 'chart' ? 'Toon als tabel' : 'Toon als grafiek';
         renderTrendChart(chronoSnapshots());
+      } else if (target === 'boxplot') {
+        state.boxplotViewMode = state.boxplotViewMode === 'chart' ? 'table' : 'chart';
+        renderBoxplotCard();
       }
     });
   });
@@ -6147,6 +6392,10 @@ function wireEvents() {
   document.querySelectorAll('#trend-periode button[data-trend-periode]').forEach(btn => {
     btn.addEventListener('click', () => { state.trendPeriode = btn.dataset.trendPeriode; renderTrendChart(chronoSnapshots()); });
   });
+  document.querySelectorAll('#boxplot-schaal button[data-boxplot-schaal]').forEach(btn => {
+    btn.addEventListener('click', () => { state.boxplotSchaal = btn.dataset.boxplotSchaal; renderBoxplotCard(); });
+  });
+
   document.querySelectorAll('#inuit-periode button[data-inuit-periode]').forEach(btn => {
     btn.addEventListener('click', () => { state.inUitPeriode = btn.dataset.inuitPeriode; renderInUitCard(); });
   });

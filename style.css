@@ -1030,6 +1030,44 @@ tr.detail-row > td {
 .spreiding-kop { min-width: 150px; }
 .verdeling-tegels { margin-bottom: 8px; }
 
+/* ---------- Boxplot: de verdeling per stap ----------
+
+   Eén meetwaarde (dagen), dus één tint — geen categorische reeks. De vorm doet
+   het werk: box, streep, whiskers, punten. De norm is geen data maar een
+   grens, en staat daarom in tekst-inkt in plaats van in de datakleur. */
+.box-scroll { overflow-x: auto; }
+.boxplot-svg { display: block; }
+.box-grid { stroke: var(--gridline); stroke-width: 1; }
+.box-scheiding { stroke: var(--border); stroke-width: 1; }
+.box-whisker { stroke: color-mix(in srgb, var(--series-1) 60%, transparent); stroke-width: 2; stroke-linecap: round; }
+.box-vlak { fill: color-mix(in srgb, var(--series-1) 28%, var(--surface-1)); }
+.box-mediaan { stroke: var(--series-1); stroke-width: 3; stroke-linecap: round; }
+/* Ring in de surface-kleur, zodat een punt leesbaar blijft waar 'ie de whisker
+   of een ander punt overlapt. */
+.box-punt { fill: var(--series-1); stroke: var(--surface-1); stroke-width: 2; }
+.box-punt-los { fill: color-mix(in srgb, var(--series-1) 70%, transparent); }
+.box-norm { stroke: var(--text-primary); stroke-width: 2; opacity: 0.55; stroke-linecap: round; }
+.box-rij-label { fill: var(--text-secondary); font-size: 12px; }
+.box-rij-label-sterk { fill: var(--text-primary); font-weight: 700; }
+.box-as-label { fill: var(--text-muted); font-size: 11px; }
+.box-rij-n { fill: var(--text-muted); font-size: 10px; }
+/* Een stap zonder metingen blijft staan (de rij hoort erbij) maar hoeft geen
+   aandacht te trekken. */
+.box-rij-label-leeg { fill: var(--text-muted); }
+/* De teller op de rand is een waarschuwing dat er iets buiten beeld valt, geen
+   asaanduiding: iets steviger, en aanklikbaar via zijn tooltip. */
+.box-buiten-label { fill: var(--text-secondary); font-size: 11px; font-weight: 700; cursor: help; }
+.box-rij:hover .box-vlak { fill: color-mix(in srgb, var(--series-1) 42%, var(--surface-1)); }
+.box-legenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 10px 0 4px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.box-legenda-item { display: inline-flex; align-items: center; gap: 6px; }
+
 /* De normbalk boven "Te lang in status": één vakje per status met de telling
    en waartegen die is afgemeten. Bewust vóór de tabel — de tabel zegt wélke
    storing, deze regel zegt of het aan één storing ligt of aan de hele stap. */

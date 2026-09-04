@@ -311,6 +311,19 @@
       <div id="doorstroom-body"></div>
     </section>
 
+    <section class="card" id="boxplot-card">
+      <div class="card-header">
+        <h2>📦 Verdeling van de doorlooptijd</h2>
+        <button class="btn-link toggle-table" data-target="boxplot">Toon als tabel</button>
+      </div>
+      <p class="muted small">Dezelfde metingen als hierboven, maar dan als verdeling in plaats van als twee getallen. Per stap: de box is de middelste helft van alle metingen, de streep erin is P50, de whiskers zijn het normale bereik en de losse punten zijn de uitschieters. Ligt de streep niet in het midden van de box, dan is de verdeling scheef. Alle afgeronde metingen tellen mee en de plot werkt zich bij zodra je nieuwe data plakt.</p>
+      <div class="filter-tabs" id="boxplot-schaal">
+        <button type="button" class="filter-tab active" data-boxplot-schaal="whisker">Tot het normale bereik</button>
+        <button type="button" class="filter-tab" data-boxplot-schaal="alles">Inclusief uitschieters</button>
+      </div>
+      <div id="boxplot-body"></div>
+    </section>
+
     <section class="card">
       <div class="card-header">
         <h2>🐢 Te lang onderweg</h2>
