@@ -1381,24 +1381,12 @@ tr.detail-row > td {
   margin-top: 22px;
 }
 
-/* Sanering: dezelfde "LS storing/schade" als alle andere, dus wel een eigen
-   merkteken nodig om ze in een lijst te kunnen aanwijzen. */
-.badge-sanering {
-  background: color-mix(in srgb, var(--series-2) 18%, var(--surface-1));
-  color: var(--series-2);
-}
 /* Een regel die wel bewaard is maar niet meetelt in de werkvoorraad. */
 .badge-niet-geteld {
   background: color-mix(in srgb, var(--text-muted) 16%, var(--surface-1));
   color: var(--text-secondary);
   font-weight: 400;
 }
-/* Een markering waarvan nog niet vaststaat wat hij betekent. */
-.badge-classificeren {
-  background: color-mix(in srgb, var(--status-warning) 15%, var(--surface-1));
-  color: var(--status-serious);
-}
-.markering-select { max-width: 150px; }
 /* Klantaanvragen die er sinds de vorige update bij zijn gekomen. */
 tr.klant-nieuw > td { background: color-mix(in srgb, var(--brand-highlight) 55%, var(--surface-1)); }
 .klant-termijn { white-space: nowrap; }

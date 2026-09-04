@@ -89,13 +89,12 @@ const COUNT_HEADER_RE = /^\d+\s+\S.*$/;
 const KLANTAANVRAAG_HEADER_RE = /klantaanvra/i;
 const KLANTAANVRAAG_TYPE_RE = /^schakelen\b/i;
 
-// Een losse regel "1" achter de naam van de uitvoerder is een markering, geen
-// naam en geen vlaggetje. Wat die markering betekent hangt af van het type:
-// bij "LS storing/schade" is het een sanering, bij elk ander type is het iets
-// anders (aanleg bijvoorbeeld) en dat valt hier niet uit af te leiden. De
-// parser legt daarom alleen het feit vast dat de markering er stond; de
-// betekenis wordt verderop bepaald (zie isSanering).
-const SANERING_MARKER_RE = /^1$/;
+// Een losse regel "1" achter de naam van de uitvoerder komt in de bron voor,
+// maar wordt niet betrouwbaar ingevuld — er is dus niets zinnigs uit af te
+// leiden en er hangt nergens meer een telling aan. De regel wordt hier alleen
+// nog overgeslagen bij het uitlezen van de namen: zonder dat zou bij een
+// storing met alleen een uitvoerder die "1" als WV'er worden gelezen.
+const LOSSE_EEN_RE = /^1$/;
 
 // Parseert precies één storing vanaf lines[start] en geeft { storing, next } terug,
 // waarbij `next` de regel-index is waar de volgende storing begint. Er wordt geen
@@ -163,12 +162,8 @@ function parseOneEntry(lines, start) {
   }
 
   const flagLineRe = /^[A-Z]+$/;
-  const markering1 = middleLines.some(l => SANERING_MARKER_RE.test(l));
   const flagLines = middleLines.filter(l => flagLineRe.test(l));
-  // De sanering-markering telt niet als naam: anders zou bij een storing met
-  // alleen een uitvoerder ("Marc van Veen" + "1") die uitvoerder als WV'er
-  // worden gelezen.
-  const nameLines = middleLines.filter(l => !flagLineRe.test(l) && !SANERING_MARKER_RE.test(l));
+  const nameLines = middleLines.filter(l => !flagLineRe.test(l) && !LOSSE_EEN_RE.test(l));
 
   let wvNaam = null;
   if (nameLines.length >= 2) wvNaam = nameLines[0]; // 1e naam = WV'er; 2e = uitvoerder (genegeerd)
@@ -179,7 +174,7 @@ function parseOneEntry(lines, start) {
 
   const storing = {
     type, city, street, postcode, order, asset, assetType,
-    wvNaam, names: nameLines, flags, daysLeft, overdue, executionDate, executionDateRaw, markering1,
+    wvNaam, names: nameLines, flags, daysLeft, overdue, executionDate, executionDateRaw,
   };
   return { storing, next: i };
 }
@@ -306,8 +301,31 @@ const DEFAULT_TYPE_WHITELIST = [
   'Mast geen spanning Infra',
   'OV Mof',
   'Branden overdag Infra',
-  'LS storing/schade',
 ];
+
+// "LS storing/schade" stond hier alleen om de saneringen binnen te halen: het
+// type telde mee, maar de regels zonder de markering "1" werden er daarna weer
+// uitgefilterd. Nu die markering is vervallen zou het type in één klap volledig
+// gaan meetellen — een stille sprong in de werkvoorraad met regels waarvan je
+// eerder hebt gezegd dat ze er niet in horen.
+//
+// Daarom wordt hij één keer uit een bestaand type-filter gehaald. Dat is geen
+// verstopte aftrek: het type verschijnt daarna bovenaan de Data-pagina in de
+// melding "telt niet mee", mét het aantal en een plusknop om het alsnog te
+// laten meetellen. De keuze ligt dus zichtbaar bij jou. De vlag zorgt dat het
+// bij één keer blijft — zet je het type terug, dan blijft het staan.
+const LS_TYPE = 'LS storing/schade';
+const LS_TYPE_OPGERUIMD_KEY = 'nusdash_ls_type_opgeruimd_v1';
+async function ruimLsTypeEenmaligOp(lijst) {
+  try {
+    if (await idbGet(LS_TYPE_OPGERUIMD_KEY)) return lijst;
+    await idbSet(LS_TYPE_OPGERUIMD_KEY, true);
+    if (!lijst.includes(LS_TYPE)) return lijst;
+    const zonder = lijst.filter(t => t !== LS_TYPE);
+    await idbSet(TYPE_WHITELIST_KEY, zonder);
+    return zonder;
+  } catch (e) { console.error(e); return lijst; }
+}
 
 async function loadSnapshots() {
   await migrateLegacyKey(STORAGE_KEY);
@@ -323,7 +341,11 @@ async function clearSnapshots() { await idbDelete(STORAGE_KEY); }
 
 async function loadTypeWhitelist() {
   await migrateLegacyKey(TYPE_WHITELIST_KEY);
-  try { const v = await idbGet(TYPE_WHITELIST_KEY); return v || DEFAULT_TYPE_WHITELIST.slice(); }
+  try {
+    const v = await idbGet(TYPE_WHITELIST_KEY);
+    if (!v) return DEFAULT_TYPE_WHITELIST.slice();
+    return await ruimLsTypeEenmaligOp(v);
+  }
   catch (e) { console.error(e); return DEFAULT_TYPE_WHITELIST.slice(); }
 }
 async function saveTypeWhitelist(list) {
@@ -446,20 +468,6 @@ async function saveLastBackupAt(iso) {
   catch (e) { console.error(e); }
 }
 
-// Handmatige classificatie van de "1"-markering bij een ander type dan
-// LS storing/schade. Eigen sleutel, dus puur toevoegend: de momentopnamen
-// blijven onaangeroerd, en zonder deze sleutel werkt alles gewoon door.
-const MARKERING_KLASSE_KEY = 'nusdash_markering_klasse_v1';
-const MARKERING_KLASSEN = { aanleg: 'Aanleg', sanering: 'Sanering', anders: 'Anders' };
-async function loadMarkeringKlasseMap() {
-  try { return (await idbGet(MARKERING_KLASSE_KEY)) || {}; }
-  catch (e) { console.error(e); return {}; }
-}
-async function saveMarkeringKlasseMap(map) {
-  try { await idbSet(MARKERING_KLASSE_KEY, map); }
-  catch (e) { showErrorToast('Opslaan van de classificatie is mislukt: ' + e.message); throw e; }
-}
-
 const OV_BLOCK_STATUS_KEY = 'nusdash_ov_block_status_v1';
 async function loadOvBlockStatusMap() {
   try { return (await idbGet(OV_BLOCK_STATUS_KEY)) || {}; }
@@ -487,7 +495,6 @@ async function exportBackup() {
     ovSnapshots: await loadSnapshots(),
     typeWhitelist: await loadTypeWhitelist(),
     ovBlockStatus: await loadOvBlockStatusMap(),
-    markeringKlasse: await loadMarkeringKlasseMap(),
     bijnaVerlopenThreshold: await loadBijnaVerlopenThreshold(),
     capaciteit: await loadCapaciteit(),
     statusStreef: await loadStatusStreef(),
@@ -528,7 +535,6 @@ function buildStandaloneExport() {
     ovSnapshots: state.snapshots,
     typeWhitelist: state.typeWhitelist,
     ovBlockStatus: state.ovBlockStatus,
-    markeringKlasse: state.markeringKlasse,
     bijnaVerlopenThreshold: state.bijnaVerlopenThreshold,
     statusStreef: state.statusStreef,
     doorlooptijdNorm: state.doorlooptijdNorm,
@@ -566,7 +572,6 @@ async function importBackup(file) {
   if (Array.isArray(backup.ovSnapshots)) await saveSnapshots(backup.ovSnapshots);
   if (Array.isArray(backup.typeWhitelist)) await saveTypeWhitelist(backup.typeWhitelist);
   if (backup.ovBlockStatus && typeof backup.ovBlockStatus === 'object') await saveOvBlockStatusMap(backup.ovBlockStatus);
-  if (backup.markeringKlasse && typeof backup.markeringKlasse === 'object') await saveMarkeringKlasseMap(backup.markeringKlasse);
   if (Number.isFinite(backup.bijnaVerlopenThreshold) && backup.bijnaVerlopenThreshold > 0) await saveBijnaVerlopenThreshold(backup.bijnaVerlopenThreshold);
   if (backup.capaciteit && typeof backup.capaciteit === 'object') await saveCapaciteit(backup.capaciteit);
   if (backup.statusStreef && typeof backup.statusStreef === 'object') await saveStatusStreef(schoonStatusStreef(backup.statusStreef));
@@ -676,62 +681,17 @@ function isTypeIncluded(s) { return state.typeWhitelist.includes(s.type); }
 // kaart op de Data-tab.
 function isKlantaanvraag(s) { return s.soort === 'klantaanvraag'; }
 
-// Alleen "LS storing/schade" mét de markering is een sanering. Eerder telde
-// elke storing met een "1" mee, waardoor er saneringen verschenen die het niet
-// konden zijn (straten zonder OV bijvoorbeeld).
-//
-// Het veld heette in oudere momentopnamen `sanering`, maar bevatte precies
-// hetzelfde ruwe feit: er stond een "1" in de tekst. Beide worden gelezen,
-// zodat al opgeslagen data meteen goed wordt geteld zonder opnieuw te plakken.
-const LS_STORING_TYPE_RE = /ls\s+storing\s*\/\s*schade/i;
-function heeftMarkering1(s) { return !!(s.markering1 || s.sanering); }
-function isLsStoringSchade(s) { return LS_STORING_TYPE_RE.test(s.type || ''); }
-
-function isSanering(s) {
-  // Een handmatige classificatie gaat altijd voor: bij een ander type kan het
-  // dashboard niet weten wat de markering betekent, dus dat oordeel is aan jou.
-  const klasse = markeringKlasseVan(s.order);
-  if (klasse) return klasse === 'sanering';
-  return heeftMarkering1(s) && isLsStoringSchade(s);
-}
-
-// Een markering bij een ander type dan LS storing/schade: dat is geen sanering,
-// maar wél iets bijzonders (meestal aanleg). Zolang er geen oordeel over is
-// geveld blijft het zichtbaar staan, zodat het niet stilzwijgend als gewone
-// storing wegzakt.
-function vraagtClassificatie(s) {
-  return heeftMarkering1(s) && !isLsStoringSchade(s) && !markeringKlasseVan(s.order);
-}
-// "LS storing/schade" staat alleen in de lijst om de saneringen eruit te
-// halen; zonder de markering is het geen werk voor deze werkvoorraad. Het type
-// moet daarom wél in het type-filter staan (anders komt de sanering niet
-// binnen), maar de regels zonder markering tellen niet mee.
+// Wat meetelt in de werkvoorraad: geen klantaanvraag, en een type dat in het
+// type-filter staat. Verder niets — er was een uitzondering voor
+// "LS storing/schade" (die telde alleen mee met een losse "1" erbij, want dan
+// was het een sanering), maar die "1" bleek in de bron niet betrouwbaar te
+// worden ingevuld. Een telling die daarop leunt zegt dus niets, en een
+// uitzondering die je niet kunt vertrouwen is erger dan geen uitzondering:
+// hij haalt stilletjes regels uit je werkvoorraad.
 function telAlsStoring(s) {
-  if (isKlantaanvraag(s) || !isTypeIncluded(s)) return false;
-  if (isLsStoringSchade(s) && !isSanering(s)) return false;
-  return true;
+  return !isKlantaanvraag(s) && isTypeIncluded(s);
 }
 function typeFiltered(list) { return list.filter(telAlsStoring); }
-
-// Hoeveel LS storing/schade-regels om die reden buiten beeld blijven — puur om
-// het te kunnen benoemen, zodat het geen stille aftrek is.
-function lsZonderMarkeringNu() {
-  const snaps = chronoSnapshots();
-  if (snaps.length === 0) return 0;
-  return snaps[snaps.length - 1].storingen
-    .filter(s => !isKlantaanvraag(s) && isTypeIncluded(s) && isLsStoringSchade(s) && !isSanering(s)).length;
-}
-
-// Een sanering staat er hetzelfde in als elke andere "LS storing/schade", dus
-// zonder merkteken zie je in een lijst niet welke het zijn. Hetzelfde geldt
-// voor de markeringen die nog een oordeel nodig hebben.
-function saneringBadgeHtml(s) {
-  if (isSanering(s)) return ' <span class="badge badge-sanering">sanering</span>';
-  const klasse = markeringKlasseVan(s.order);
-  if (klasse) return ` <span class="badge">${esc(MARKERING_KLASSEN[klasse])}</span>`;
-  if (vraagtClassificatie(s)) return ' <span class="badge badge-classificeren">1 · classificeren</span>';
-  return '';
-}
 
 // De grens voor "Bijna verlopen" (serious) is instelbaar (zie Instellingen);
 // "Aandacht" (warning) begint waar die grens ophoudt en loopt door tot 3
@@ -833,9 +793,7 @@ const state = {
   recidiveMode: 'straat',
   clusterMode: 'pc4',
   lijstSoort: 'nus',
-  markeringKlasse: {},
   lijstHerkend: null,
-  lijstSaneringenInTekst: 0,
   lijstHandmatig: false,
   inUitPeriode: '30',
   mioLeeftijdFilter: 'alles',
@@ -953,10 +911,6 @@ const OV_BLOCK_REASON_LABELS = { rezap: 'Aannemerij', aanleg: 'Naar Aanleg', uit
 // allang opgelost.
 const OV_BLOCK_STALE_DAYS = 28;
 function ovBlockStatusOf(order) { return state.ovBlockStatus[order] || {}; }
-function markeringKlasseVan(order) {
-  const k = (state.markeringKlasse || {})[order];
-  return MARKERING_KLASSEN[k] ? k : null;
-}
 // Zonder peildag: de blokkade zoals die nu staat. Mét peildag: de blokkade
 // zoals die in díé momentopname was vastgelegd (zie blokkadeReden, dat sinds
 // begin af aan wordt meegeschreven bij elke plakactie). Een blokkade die je
@@ -1024,7 +978,6 @@ function statTileFilters() {
     bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' && !isOvBlocked(s) },
     geblokkeerd: { title: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt)', test: s => isOvBlocked(s) },
     mastGeenSpanning: { title: 'Mast geen spanning', test: s => isMastGeenSpanning(s) },
-    sanering: { title: 'Sanering', test: s => isSanering(s) },
   };
   OV_STATUS_ORDER.forEach(status => {
     filters[OV_STATUS_FILTER_KEYS[status]] = { title: `Status: ${status}`, test: s => s.ovStatus === status && !isOvBlocked(s) };
@@ -1060,7 +1013,7 @@ const OV_STATUS_ICONS = { 'Nieuw': '🆕', 'In onderzoek': '🔍', 'Onderzoek co
 // momenten heen — inclusief meerdere updates op één dag. Alleen deze
 // tegels hebben er daarnaast ook een rij-per-storing-tabel bij (de rest
 // duplicerde toch al wat "Aandacht deze week"/"Volledige lijst" al tonen).
-const OV_DETAIL_LIST_KEYS = new Set([...Object.values(OV_STATUS_FILTER_KEYS), 'nieuwGezien', 'geblokkeerd', 'mastGeenSpanning', 'sanering']);
+const OV_DETAIL_LIST_KEYS = new Set([...Object.values(OV_STATUS_FILTER_KEYS), 'nieuwGezien', 'geblokkeerd', 'mastGeenSpanning']);
 const OV_TILE_TITLES = {
   totaal: 'Totaal open',
   verlopenDatum: 'Uitvoeringsdatum verstreken',
@@ -1068,7 +1021,6 @@ const OV_TILE_TITLES = {
   afgesloten: 'Afgesloten / uitgegaan',
   geblokkeerd: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt)',
   mastGeenSpanning: 'Mast geen spanning',
-  sanering: 'Sanering',
 };
 OV_STATUS_ORDER.forEach(status => { OV_TILE_TITLES[OV_STATUS_FILTER_KEYS[status]] = `Status: ${status}`; });
 OV_TILE_TITLES.nieuwGezien = 'Nieuw binnengekomen (nog niet eerder gezien)';
@@ -1187,7 +1139,6 @@ function renderStatTiles(current, mutations) {
   const overdueUnknown = current.filter(filters.unknown.test).length;
   const geblokkeerdCount = current.filter(filters.geblokkeerd.test).length;
   const mioCount = current.filter(filters.mastGeenSpanning.test).length;
-  const saneringCount = current.filter(filters.sanering.test).length;
   // Drie soorten getallen die er eerder als één uniforme rij uitzagen, terwijl
   // ze niet bij elkaar optellen en niet hetzelfde betekenen:
   //  - werkvoorraad: het totaal en de statussen die samen dat totaal vormen;
@@ -1214,8 +1165,6 @@ function renderStatTiles(current, mutations) {
       note: mutations.hasPrevious ? `sinds ${mutations.vorigeDag || 'de vorige update'}` : 'nog geen eerdere dag' },
     { groep: 'inzet', key: 'mastGeenSpanning', icon: '🗼', label: 'Mast geen spanning', value: mioCount,
       note: total > 0 ? `${Math.round((mioCount / total) * 100)}% van alle open storingen` : 'geen open storingen', scrollTarget: 'cluster-card' },
-    { groep: 'inzet', key: 'sanering', icon: '🧹', label: 'Sanering', value: saneringCount,
-      note: total > 0 ? `${Math.round((saneringCount / total) * 100)}% van alle open storingen` : 'geen open storingen' },
     { groep: 'signaal', key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
   );
   // Elke tegel is nu klikbaar: altijd voor het verloop-grafiekje in het
@@ -1425,10 +1374,6 @@ function renderStatDetail(current, mutations) {
 
   let badgeCount, body;
   const toonLeeftijdFilter = filterKey === 'mastGeenSpanning';
-  // Bij de saneringen hoort erbij wat er om die reden NIET in staat.
-  const zonderMarkering = filterKey === 'sanering' ? lsZonderMarkeringNu() : 0;
-  const saneringNoot = zonderMarkering === 0 ? '' :
-    `<p class="muted small">${zonderMarkering} ${zonderMarkering === 1 ? 'regel' : 'regels'} "LS storing/schade" zonder de markering "1" ${zonderMarkering === 1 ? 'telt' : 'tellen'} niet mee — dat zijn geen saneringen.</p>`;
   let leeftijdBalk = '';
   let leeftijdNoot = '';
   let maandBlok = '';
@@ -1486,7 +1431,7 @@ function renderStatDetail(current, mutations) {
           <td>${esc(s.city)} — ${esc(s.street)}, ${esc(s.postcode)}</td>
           <td class="num">${renderDaysPill(s)}</td>
           <td>${firstSeenMap[s.order] ? esc(firstSeenMap[s.order]) : '—'}</td>
-          <td>${esc(s.type)}${saneringBadgeHtml(s)}</td>
+          <td>${esc(s.type)}</td>
           <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
           ${showBlock ? `<td class="ov-block-cell">${blockCell}</td>` : ''}
         </tr>`;
@@ -1508,7 +1453,7 @@ function renderStatDetail(current, mutations) {
     <div class="tile-trend-chart">${chartHtml}</div>
     ${leeftijdBalk}
     ${leeftijdNoot}
-    ${saneringNoot}
+    
     ${maandBlok}
     ${body}`;
 
@@ -2293,8 +2238,8 @@ function buildOverlegText() {
 
 // Het type-filter bepaalt wat er meetelt. Staat een type er niet in, dan
 // verdwenen die regels geruisloos uit elke telling, grafiek en lijst: je zag
-// "Totaal open 6" terwijl je er 11 had geplakt, en een sanering waarvan het
-// type niet meetelde was nergens meer te vinden. Stil weglaten is voor een
+// "Totaal open 6" terwijl je er 11 had geplakt, en die regels waren nergens
+// meer te vinden. Stil weglaten is voor een
 // werkvoorraad het gevaarlijkste wat een hulpmiddel kan doen — dus staat het
 // er nu bij, met de knop om het meteen recht te zetten.
 function onbekendeTypesNu() {
@@ -2330,68 +2275,6 @@ function renderTypeOnbekendNotice() {
   });
 }
 
-/* ---------- Markering "1" die nog een oordeel nodig heeft ---------- */
-
-// Bij "LS storing/schade" betekent de markering een sanering. Bij elk ander
-// type betekent hij iets anders — meestal aanleg — en dat is niet uit de tekst
-// af te leiden. Zulke regels blijven hier staan tot er een keuze is gemaakt,
-// zodat ze niet als gewone storing wegzakken en ook niet ten onrechte bij de
-// saneringen worden opgeteld.
-function buildTeClassificeren() {
-  const snaps = chronoSnapshots();
-  if (snaps.length === 0) return [];
-  return typeFiltered(snaps[snaps.length - 1].storingen)
-    .filter(vraagtClassificatie)
-    .sort((a, b) => (a.type || '').localeCompare(b.type || '') || (a.daysLeft ?? 999) - (b.daysLeft ?? 999));
-}
-
-function renderClassificatieCard() {
-  const kaart = document.getElementById('classificatie-card');
-  const container = document.getElementById('classificatie-body');
-  if (!kaart || !container) return;
-  // In de teamexport valt er niets te classificeren: dat is jouw oordeel, en
-  // een WV'er kan het toch niet opslaan.
-  const rijen = isStaticExport ? [] : buildTeClassificeren();
-  kaart.classList.toggle('hidden', rijen.length === 0);
-  const telling = document.getElementById('classificatie-count');
-  if (telling) telling.textContent = rijen.length;
-  if (rijen.length === 0) { container.innerHTML = ''; return; }
-
-  const opties = (order) => {
-    const huidig = markeringKlasseVan(order);
-    return `<select class="markering-select" data-order="${esc(order)}">
-        <option value="" ${!huidig ? 'selected' : ''}>— Nog niet —</option>
-        ${Object.keys(MARKERING_KLASSEN).map(k => `<option value="${k}" ${huidig === k ? 'selected' : ''}>${esc(MARKERING_KLASSEN[k])}</option>`).join('')}
-      </select>`;
-  };
-
-  container.innerHTML = `<p class="prognose-headline"><strong>${rijen.length}</strong> ${rijen.length === 1 ? 'openstaande storing heeft' : 'openstaande storingen hebben'} een "1" in de tekst bij een ander type dan LS storing/schade. Dat is geen sanering; kies hier wat het wel is.</p>
-    <div class="table-scroll">
-      <table>
-        <thead><tr><th>Order</th><th>Type</th><th>Plaats</th><th>Adres</th><th class="num">Dagen</th><th>Wat is het?</th></tr></thead>
-        <tbody>${rijen.map(s => `
-          <tr>
-            <td>${orderLinkHtml(s.order)}</td>
-            <td>${esc(s.type)}</td>
-            <td>${esc(s.city)}</td>
-            <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-            <td class="num">${renderDaysPill(s)}</td>
-            <td>${opties(s.order)}</td>
-          </tr>`).join('')}</tbody>
-      </table>
-    </div>`;
-
-  container.querySelectorAll('.markering-select').forEach(sel => {
-    sel.addEventListener('change', async () => {
-      const order = sel.dataset.order;
-      if (sel.value) state.markeringKlasse[order] = sel.value;
-      else delete state.markeringKlasse[order];
-      await saveMarkeringKlasseMap(state.markeringKlasse);
-      renderDashboardFromState();
-    });
-  });
-}
-
 /* ---------- Invoer: welke lijst plak je? ---------- */
 
 // Met drie losse overzichten is "welke lijst is dit" geen detail meer: kies je
@@ -2418,9 +2301,6 @@ function renderLijstKeuze() {
     hint = state.lijstHerkend === state.lijstSoort
       ? `<strong>Herkend als ${esc(LIJST_LABELS[state.lijstHerkend])}.</strong> Klopt dat niet? Kies hierboven zelf. `
       : `<strong class="prognose-bad">Let op:</strong> deze tekst lijkt op ${esc(LIJST_LABELS[state.lijstHerkend])}, maar je hebt ${esc(LIJST_LABELS[state.lijstSoort])} gekozen. `;
-  }
-  if (state.lijstSaneringenInTekst > 0 && state.lijstHerkend === 'nus') {
-    hint += `Er staan ${state.lijstSaneringenInTekst} saneringen in deze tekst — komt dit uit het saneringen-overzicht, kies dan Saneringen. `;
   }
   el.innerHTML = hint + esc(stand);
 }
@@ -2696,7 +2576,7 @@ function renderClusterCard() {
         <tr>
           <td>${orderLinkHtml(s.order)}</td>
           <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-          <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}${saneringBadgeHtml(s)}</td>
+          <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}</td>
           <td>${ovStatusPillHtml(s)}</td>
           <td class="num">${renderDaysPill(s)}</td>
         </tr>`).join('');
@@ -3156,10 +3036,18 @@ function renderWvGebiedCard() {
 
 /* ---------- Historie-helpers ---------- */
 
-// De Instandhoudingsapp heeft drie losse overzichten die elk apart worden
-// geplakt: de NUS-storingen, de saneringen en de klantaanvragen. Elke
-// plakactie ververst dus maar één van die drie lijsten.
-const LIJST_SOORTEN = ['nus', 'sanering', 'klantaanvraag'];
+// De Instandhoudingsapp heeft twee losse overzichten die elk apart worden
+// geplakt: de NUS-storingen en de klantaanvragen. Een plakactie ververst dus
+// maar één van die twee lijsten.
+// Wat je kunt plakken. "Saneringen" was hier een derde keuze; die is vervallen
+// omdat de markering waarop dat overzicht leunde niet betrouwbaar is.
+const LIJST_SOORTEN = ['nus', 'klantaanvraag'];
+// Wat er in oude momentopnamen kan staan. 'sanering' houdt daarom zijn eigen
+// plek bij het samenvoegen: zonder dat zou zo'n oude plakactie op naam van
+// 'nus' komen te staan en door de NUS-plakactie van diezelfde dag worden
+// overschreven — dan verdwenen er met terugwerkende kracht storingen uit de
+// historie.
+const LIJST_SOORTEN_OPGESLAGEN = ['nus', 'sanering', 'klantaanvraag'];
 const LIJST_LABELS = {
   nus: 'NUS-storingen',
   sanering: 'Saneringen',
@@ -3168,17 +3056,16 @@ const LIJST_LABELS = {
 
 // Voor plakacties van vóór deze indeling (en als vangnet) wordt de soort uit
 // de inhoud afgeleid. Bewust streng: alleen als ALLES in de lijst een
-// klantaanvraag of een sanering is, is het dat overzicht. Een gemengde lijst
-// geldt als de NUS-lijst — dat is het oude gedrag, en dat mag niet stilletjes
+// klantaanvraag is, is het dat overzicht. Een gemengde lijst geldt als de
+// NUS-lijst — dat is het oude gedrag, en dat mag niet stilletjes
 // veranderen voor al opgeslagen data.
 function afleidenLijstSoort(storingen) {
   if (!storingen || storingen.length === 0) return 'nus';
   if (storingen.every(isKlantaanvraag)) return 'klantaanvraag';
-  if (storingen.every(isSanering)) return 'sanering';
   return 'nus';
 }
 function lijstSoortVan(sn) {
-  return LIJST_SOORTEN.includes(sn.lijst) ? sn.lijst : afleidenLijstSoort(sn.storingen);
+  return LIJST_SOORTEN_OPGESLAGEN.includes(sn.lijst) ? sn.lijst : afleidenLijstSoort(sn.storingen);
 }
 
 // Eén beeld per kalenderdag, chronologisch, samengesteld uit de drie lijsten.
@@ -3212,7 +3099,20 @@ function chronoSnapshots(snapshots) {
     }
     // Nieuwste plakactie eerst, zodat bij een ordernummer dat in twee lijsten
     // opduikt de meest recente informatie wint.
-    const bronnen = LIJST_SOORTEN.map(soort => laatstePerLijst[soort]).filter(Boolean)
+    //
+    // Carry-forward geldt alleen voor lijsten die je nog kúnt verversen. De
+    // vervallen saneringenlijst telt daarom alleen mee op de dag dat 'ie
+    // geplakt is: hij is nooit meer bij te werken, dus zou hij anders tot in
+    // de eeuwigheid in de werkvoorraad blijven staan zonder dat er ooit iets
+    // uit kan gaan. Op zijn eigen dag blijft hij gewoon staan, dus de historie
+    // van toen verandert niet.
+    const bronnen = LIJST_SOORTEN_OPGESLAGEN
+      .map(soort => {
+        const sn = laatstePerLijst[soort];
+        if (!sn) return null;
+        return (LIJST_SOORTEN.includes(soort) || sn.week === dag) ? sn : null;
+      })
+      .filter(Boolean)
       .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
     const gezien = new Set();
     const storingen = [];
@@ -3232,8 +3132,8 @@ function chronoSnapshots(snapshots) {
 let chronoCache = null;
 let chronoCacheSleutel = null;
 
-// Wanneer is elk overzicht voor het laatst geplakt? Met drie lijsten die
-// onafhankelijk worden ververst is dat geen detail meer: een sanering die
+// Wanneer is elk overzicht voor het laatst geplakt? Met twee lijsten die
+// onafhankelijk worden ververst is dat geen detail: een klantaanvraag die
 // allang weg is blijft in beeld tot dat overzicht opnieuw wordt geplakt.
 function lijstBijgewerkt() {
   const per = {};
@@ -4285,7 +4185,7 @@ function buildOrderIndex(alles) {
 function nietGeteldReden(r) {
   if (r.soort === 'klantaanvraag') return 'klantaanvraag';
   if (!state.typeWhitelist.includes(r.type)) return 'type buiten het filter';
-  return 'geen sanering-markering';
+  return 'telt niet mee';
 }
 
 const HISTORIE_COLUMNS = [
@@ -4501,7 +4401,7 @@ function recidiveDetailHtml(r) {
   const rijen = r.storingen.map(s => `<tr>
     <td>${orderLinkHtml(s.order)}</td>
     <td>${esc(s.street)}, ${esc(s.postcode)}</td>
-    <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}${saneringBadgeHtml(s)}</td>
+    <td>${isMastGeenSpanning(s) ? '<span class="badge">mast geen spanning</span>' : esc(s.type)}</td>
     <td>${esc(s.asset)}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>
     <td>${esc(s.eerst)}</td>
     <td>${s.open ? '<span class="ov-status-pill ov-status-nieuw">Nog open</span>' : `<span class="status-pill">Opgelost ${esc(s.laatst)}</span>`}</td>
@@ -4881,7 +4781,7 @@ function buildOvColumns() {
     { key: 'firstSeenWeek', label: 'Open sinds', cell: s => `<td>${s.firstSeenWeek ? esc(s.firstSeenWeek) : '—'}</td>` },
     { key: 'executionDate', label: 'Uitvoering', cell: s => `<td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>` },
     { key: 'flags', label: 'Aanvragen', cell: s => `<td>${s.flags.length ? s.flags.map(f => `<span class="badge" title="${esc(FLAG_LABELS[f])}">${esc(f)}</span>`).join(' ') : '—'}</td>` },
-    { key: 'type', label: 'Type', cell: s => `<td>${esc(s.type)}${saneringBadgeHtml(s)}</td>` },
+    { key: 'type', label: 'Type', cell: s => `<td>${esc(s.type)}</td>` },
     { key: 'blockReasonLabel', label: 'Blokkade', cell: s => `<td class="ov-block-cell">${ovBlockCellHtml(s)}</td>` },
   ];
 }
@@ -5051,8 +4951,8 @@ function renderFilterTabs(latestVisible) {
   const container = document.getElementById('filter-tabs');
   // Alleen de twee echte regio's als tab. "Overig" was in de praktijk het
   // restje zonder gebiedscode; die storingen zitten gewoon in Totaal, en waar
-  // ze vandaan komen zie je aan hun eigen tegel (saneringen) of aan de
-  // melding over onbekende gebiedscodes op de Gebieden-pagina.
+  // ze vandaan komen zie je aan de melding over onbekende gebiedscodes op de
+  // Gebieden-pagina.
   const present = latestVisible
     ? sortByGroupOrder(Array.from(new Set(latestVisible.map(s => regioGroupOf(s))))).filter(g => g !== 'Overig')
     : [];
@@ -5113,7 +5013,6 @@ function renderDashboardFromState() {
   renderTrendChart(perDag); // idem, filtert zelf op state.activeFilter
   renderLijstKeuze();
   renderTypeOnbekendNotice();
-  renderClassificatieCard();
   renderKlantaanvraagCard();
   renderGebiedPlaatsenCard();
   renderClusterCard();
@@ -5199,7 +5098,6 @@ async function reloadAllStateAndRender() {
   state.snapshots = await loadSnapshots();
   state.typeWhitelist = await loadTypeWhitelist();
   state.ovBlockStatus = await loadOvBlockStatusMap();
-  state.markeringKlasse = await loadMarkeringKlasseMap();
   state.bijnaVerlopenThreshold = await loadBijnaVerlopenThreshold();
   state.lastBackupAt = await loadLastBackupAt();
   state.capaciteit = await loadCapaciteit();
@@ -5346,10 +5244,9 @@ function wireEvents() {
     // "NUS-storingen" laten staan. Dat zou de hele werkvoorraad wegvagen,
     // want wat niet in de lijst staat geldt als opgelost.
     //
-    // Eerste signaal: de tekst is onmiskenbaar één soort (alles klantaanvraag
-    // of alles sanering) en dat is niet wat er gekozen staat. Bij een gemengde
-    // lijst valt de herkenning terug op "nus" en is er niets zeker genoeg om
-    // over te waarschuwen.
+    // Eerste signaal: de tekst bestaat onmiskenbaar uit klantaanvragen terwijl
+    // er iets anders gekozen staat. Bij een gemengde lijst valt de herkenning
+    // terug op "nus" en is er niets zeker genoeg om over te waarschuwen.
     const herkend = afleidenLijstSoort(storingen);
     if (herkend !== 'nus' && herkend !== lijst) {
       const door = confirm(`Deze tekst bestaat volledig uit ${LIJST_LABELS[herkend].toLowerCase()}, maar je hebt "${LIJST_LABELS[lijst]}" gekozen.\n\nOpslaan als ${LIJST_LABELS[lijst]} betekent dat alles wat nu in die lijst staat als opgelost telt. Toch doorgaan?`);
@@ -5391,9 +5288,7 @@ function wireEvents() {
     // Klantaanvragen apart benoemen, anders lijkt het alsof er meer storingen
     // in zitten dan er werkelijk zijn.
     const aantalAanvragen = storingen.filter(isKlantaanvraag).length;
-    const aantalSaneringen = storingen.filter(isSanering).length;
     const delen = [`${storingen.length} regels verwerkt in "${LIJST_LABELS[lijst]}" voor week ${week}`];
-    if (lijst === 'nus' && aantalSaneringen > 0) delen.push(`waarvan ${aantalSaneringen} ${aantalSaneringen === 1 ? 'sanering' : 'saneringen'}`);
     if (lijst === 'nus' && aantalAanvragen > 0) delen.push(`waarvan ${aantalAanvragen} ${aantalAanvragen === 1 ? 'klantaanvraag' : 'klantaanvragen'}`);
     if (errors.length) delen.push(`${errors.length} regels niet herkend`);
     // Types buiten het filter tellen nergens mee; dat moet je weten op het
@@ -5406,7 +5301,6 @@ function wireEvents() {
     statusEl.textContent = delen.join(', ');
     textarea.value = '';
     state.lijstHerkend = null;
-    state.lijstSaneringenInTekst = 0;
     state.lijstHandmatig = false;
     renderLijstKeuze();
   });
@@ -5430,11 +5324,9 @@ function wireEvents() {
         const raw = pasteInput.value;
         if (!raw.trim()) {
           state.lijstHerkend = null;
-          state.lijstSaneringenInTekst = 0;
         } else {
           const { storingen } = parseText(raw);
           state.lijstHerkend = storingen.length ? afleidenLijstSoort(storingen) : null;
-          state.lijstSaneringenInTekst = storingen.filter(isSanering).length;
           if (state.lijstHerkend && !state.lijstHandmatig) state.lijstSoort = state.lijstHerkend;
         }
         renderLijstKeuze();
@@ -5771,7 +5663,6 @@ function applyStaticExportData() {
   state.snapshots = STATIC_DATA.ovSnapshots || [];
   state.typeWhitelist = STATIC_DATA.typeWhitelist || [];
   state.ovBlockStatus = STATIC_DATA.ovBlockStatus || {};
-  state.markeringKlasse = STATIC_DATA.markeringKlasse || {};
   state.bijnaVerlopenThreshold = STATIC_DATA.bijnaVerlopenThreshold || DEFAULT_BIJNA_VERLOPEN_THRESHOLD;
   state.statusStreef = schoonStatusStreef(STATIC_DATA.statusStreef);
   state.doorlooptijdNorm = Number.isFinite(STATIC_DATA.doorlooptijdNorm) && STATIC_DATA.doorlooptijdNorm > 0
