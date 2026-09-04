@@ -285,6 +285,8 @@
       </div>
     </div>
 
+    <div id="prognose-filter-notitie" class="warning-box hidden"></div>
+
     <section class="card">
       <h2>⚖️ Benodigd tempo</h2>
       <p class="muted small">Hoeveel storingen er gemiddeld per week bijkomen tegenover hoeveel je er afsluit, en wat dat betekent voor de voorraad.</p>
@@ -424,6 +426,7 @@
         <input type="number" id="doorlooptijd-norm-input" min="1" max="365" step="1" inputmode="numeric" style="width:80px;">
         <span class="muted small">dagen (12 dagen = 10 werkdagen)</span>
       </div>
+      <p id="status-streef-filter" class="muted small hidden"></p>
       <div id="status-streef-body"></div>
       <p id="status-streef-som" class="muted small"></p>
       <p class="muted small">Laat een status leeg om daar af te meten tegen de gemeten P50. Handig zolang je nog geen norm hebt, maar wel een maatstaf die meeschuift met hoe het gaat: duurt een stap structureel lang, dan wordt dat vanzelf "normaal" en valt er niets meer op.</p>

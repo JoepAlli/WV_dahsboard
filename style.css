@@ -1387,6 +1387,12 @@ tr.detail-row > td {
   background: color-mix(in srgb, var(--series-2) 18%, var(--surface-1));
   color: var(--series-2);
 }
+/* Een regel die wel bewaard is maar niet meetelt in de werkvoorraad. */
+.badge-niet-geteld {
+  background: color-mix(in srgb, var(--text-muted) 16%, var(--surface-1));
+  color: var(--text-secondary);
+  font-weight: 400;
+}
 /* Een markering waarvan nog niet vaststaat wat hij betekent. */
 .badge-classificeren {
   background: color-mix(in srgb, var(--status-warning) 15%, var(--surface-1));

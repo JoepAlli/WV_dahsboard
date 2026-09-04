@@ -775,9 +775,22 @@ function computeMutations(current, previous) {
   return { nieuw, uitgegaan, hasPrevious: true, vorigeDag: previous.week || null };
 }
 
+// Een meetdag is een kalenderdag ('2026-08-17'), geen tijdstip. new Date()
+// leest zo'n string als middernacht UTC, en de datum wordt daarna met lokale
+// getters weer uitgelezen — ten westen van Greenwich levert dat een dag te
+// vroeg op. Vandaar één plek die een kalenderdag als lokale datum opbouwt;
+// alles met een echt tijdstip (een uitvoeringsdatum, een opslagmoment) blijft
+// gewoon door new Date() gaan.
+const KALENDERDAG_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+function dagBegin(waarde) {
+  const m = typeof waarde === 'string' ? waarde.match(KALENDERDAG_RE) : null;
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  return new Date(waarde);
+}
+
 function fmtDate(iso) {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = dagBegin(iso);
   const days = ['zo','ma','di','wo','do','vr','za'];
   const months = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'];
   const hh = String(d.getHours()).padStart(2, '0');
@@ -791,7 +804,7 @@ function fmtDate(iso) {
 // in een kolomkop kost het alleen maar breedte.
 function fmtDag(iso, metJaar) {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = dagBegin(iso);
   const months = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'];
   return `${d.getDate()} ${months[d.getMonth()]}${metJaar ? ' ' + d.getFullYear() : ''}`;
 }
@@ -917,13 +930,16 @@ function isUnplannedOverdue(s) { return !!s.overdue && !s.executionDate; }
 // Vergelijkt op kalenderdag (niet exacte tijd): een uitvoering die vandaag
 // gepland staat telt nog niet als verstreken, ook al is het geplande tijdstip
 // vandaag al gepasseerd — de dag is immers nog niet om.
-function isExpiredExecutionDate(s) {
+function isExpiredExecutionDate(s, peilDag) {
   if (!s.overdue || !s.executionDate) return false;
   const execDay = new Date(s.executionDate);
   execDay.setHours(0, 0, 0, 0);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return execDay.getTime() < today.getTime();
+  // Zonder peildag: vandaag. Mét: de dag waarop die momentopname is gemaakt —
+  // nodig voor een terugblik, want anders wordt de stand van vorige week
+  // beoordeeld met een datum die toen nog niet verstreken was.
+  const grens = peilDag ? dagBegin(peilDag) : new Date();
+  grens.setHours(0, 0, 0, 0);
+  return execDay.getTime() < grens.getTime();
 }
 
 // Sommige storingen moeten openblijven maar daar kunnen wij niets meer aan
@@ -941,7 +957,17 @@ function markeringKlasseVan(order) {
   const k = (state.markeringKlasse || {})[order];
   return MARKERING_KLASSEN[k] ? k : null;
 }
-function isOvBlocked(s) { return !!ovBlockStatusOf(s.order).reason; }
+// Zonder peildag: de blokkade zoals die nu staat. Mét peildag: de blokkade
+// zoals die in díé momentopname was vastgelegd (zie blokkadeReden, dat sinds
+// begin af aan wordt meegeschreven bij elke plakactie). Een blokkade die je
+// vandaag zet, hoort niet met terugwerkende kracht in de kolom van vorige week
+// te verschijnen. Momentopnamen van vóór het meeschrijven hebben geen
+// blokkadeReden; die gelden als "toen niet geblokkeerd", wat eerlijker is dan
+// de blokkade van vandaag erop plakken.
+function isOvBlocked(s, peilDag) {
+  if (peilDag) return !!s.blokkadeReden;
+  return !!ovBlockStatusOf(s.order).reason;
+}
 function ovBlockDaysSince(order) {
   const since = ovBlockStatusOf(order).since;
   return since ? Math.round((Date.now() - new Date(since).getTime()) / 86400000) : null;
@@ -1003,19 +1029,24 @@ function statTileFilters() {
   OV_STATUS_ORDER.forEach(status => {
     filters[OV_STATUS_FILTER_KEYS[status]] = { title: `Status: ${status}`, test: s => s.ovStatus === status && !isOvBlocked(s) };
   });
-  // "Nieuw" telt bewust NIET de zelf-gerapporteerde status van de Instand-
-  // houdingsapp: een storing die meteen wordt opgepakt kan al bij de eerste
-  // keer zien "In onderzoek" tonen, ook al is 'm vandaag pas binnengekomen —
-  // dan geeft de status-telling een scheef beeld van de instroom. In plaats
-  // daarvan: écht nieuw als het ordernummer nog nooit eerder is gezien, d.w.z.
-  // de eerst-gezien-week (zie firstSeenWeekMap, ook gebruikt voor "Open
-  // sinds") is gelijk aan de nieuwste verwerkte week. Meerdere updates op
-  // dezelfde dag delen dezelfde week-datum, dus dit ververst per dag, niet
-  // per status-wissel binnen die dag.
+  // "Nog niet eerder gezien" is iets anders dan de status "Nieuw", en ze
+  // stonden eerder op dezelfde tegel. Dat kostte de werkvoorraad zijn
+  // sluitende telling: een storing die al weken op status "Nieuw" staat is
+  // niet meer nieuw-gezien, en viel daardoor buiten élke statustegel — bij een
+  // bak die vooral in "Nieuw" zit telden de zes tegels op tot bijna niets
+  // terwijl er van alles openstond. Ze staan nu uit elkaar:
+  //  - de zes statustegels volgen de status uit de Instandhoudingsapp en
+  //    tellen samen met "geblokkeerd" op tot het totaal;
+  //  - "nog niet eerder gezien" is een mutatie (instroom), en hoort dus bij
+  //    "afgesloten/uitgegaan", niet bij de voorraad.
+  // Dat "Nieuw" als status scheef kan staan (een storing die meteen wordt
+  // opgepakt toont al bij de eerste keer zien "In onderzoek") blijft waar,
+  // maar dat is een reden om de instroom apart te tellen — niet om een gat in
+  // de voorraadtelling te laten vallen.
   const firstSeenMap = firstSeenWeekMap();
   const sortedSnaps = state.snapshots.slice().sort((a, b) => a.week.localeCompare(b.week));
   const latestWeek = sortedSnaps.length ? sortedSnaps[sortedSnaps.length - 1].week : null;
-  filters[OV_STATUS_FILTER_KEYS['Nieuw']] = {
+  filters.nieuwGezien = {
     title: 'Nieuw binnengekomen (nog niet eerder gezien)',
     test: s => firstSeenMap[s.order] === latestWeek && !isOvBlocked(s),
   };
@@ -1029,7 +1060,7 @@ const OV_STATUS_ICONS = { 'Nieuw': '🆕', 'In onderzoek': '🔍', 'Onderzoek co
 // momenten heen — inclusief meerdere updates op één dag. Alleen deze
 // tegels hebben er daarnaast ook een rij-per-storing-tabel bij (de rest
 // duplicerde toch al wat "Aandacht deze week"/"Volledige lijst" al tonen).
-const OV_DETAIL_LIST_KEYS = new Set([...Object.values(OV_STATUS_FILTER_KEYS), 'geblokkeerd', 'mastGeenSpanning', 'sanering']);
+const OV_DETAIL_LIST_KEYS = new Set([...Object.values(OV_STATUS_FILTER_KEYS), 'nieuwGezien', 'geblokkeerd', 'mastGeenSpanning', 'sanering']);
 const OV_TILE_TITLES = {
   totaal: 'Totaal open',
   verlopenDatum: 'Uitvoeringsdatum verstreken',
@@ -1040,7 +1071,7 @@ const OV_TILE_TITLES = {
   sanering: 'Sanering',
 };
 OV_STATUS_ORDER.forEach(status => { OV_TILE_TITLES[OV_STATUS_FILTER_KEYS[status]] = `Status: ${status}`; });
-OV_TILE_TITLES[OV_STATUS_FILTER_KEYS['Nieuw']] = 'Nieuw binnengekomen (nog niet eerder gezien)';
+OV_TILE_TITLES.nieuwGezien = 'Nieuw binnengekomen (nog niet eerder gezien)';
 
 // Berekent het verloop van één tegel over alle opgeslagen OV-momenten heen,
 // mét de actieve regiotab (net als de tegel zelf). "afgesloten" is een
@@ -1177,6 +1208,8 @@ function renderStatTiles(current, mutations) {
       note: expiredDateCount > 0 ? 'geplande datum is zelf ook al voorbij — zie Vraagt om actie' : 'geen', alert: expiredDateCount > 0, scrollTarget: 'attention-card' },
     { groep: 'signaal', key: 'unknown', icon: '⛔', label: 'Verlopen — uitvoering onbekend', value: overdueUnknown, deltaClass: overdueUnknown > 0 ? 'bad' : 'good',
       note: overdueUnknown > 0 ? 'nog niets ingepland — zie Vraagt om actie' : 'geen', alert: overdueUnknown > 0, scrollTarget: 'attention-card' },
+    { groep: 'mutatie', key: 'nieuwGezien', icon: '🆕', label: 'Nieuw binnengekomen', value: current.filter(filters.nieuwGezien.test).length,
+      note: 'ordernummer nog nooit eerder gezien', filterKey: 'nieuwGezien' },
     { groep: 'mutatie', key: 'afgesloten', icon: '✅', label: 'Afgesloten / uitgegaan', value: mutations.hasPrevious ? mutations.uitgegaan.length : '—',
       note: mutations.hasPrevious ? `sinds ${mutations.vorigeDag || 'de vorige update'}` : 'nog geen eerdere dag' },
     { groep: 'inzet', key: 'mastGeenSpanning', icon: '🗼', label: 'Mast geen spanning', value: mioCount,
@@ -1207,7 +1240,11 @@ function renderStatTiles(current, mutations) {
     </div>`;
   };
   const GROEPEN = [
-    { key: 'voorraad', label: 'Werkvoorraad', uitleg: 'De statussen tellen samen op tot het totaal.' },
+    // Geblokkeerd is uit de statustegels gehouden (daar gaat het om wat je kunt
+    // oppakken), dus de zes statussen tellen op tot het totaal mínus de
+    // geblokkeerde. Dat hoort er letterlijk bij te staan, anders lijkt een
+    // sluitende telling niet te kloppen zodra er iets geblokkeerd is.
+    { key: 'voorraad', label: 'Werkvoorraad', uitleg: 'De statussen tellen samen op tot het totaal; geblokkeerde storingen staan apart onder Signalen en zitten niet in een statustegel.' },
     { key: 'signaal', label: 'Signalen', uitleg: 'Lopen dwars door de statussen heen en kunnen elkaar overlappen.' },
     { key: 'inzet', label: 'Inzet', uitleg: 'Indeling op type, voor de planning — telt niet op bij de statussen.' },
     { key: 'mutatie', label: `Sinds ${mutations.vorigeDag || 'de vorige update'}`, uitleg: '' },
@@ -1969,19 +2006,26 @@ function stroomVan(stats, sleutel) {
 // De signalen die in het overleg langskomen: niet als stroom maar als stand,
 // vorige week naast nu. Voor een signaal is "hoeveel staan er nu" de vraag,
 // niet "hoeveel zijn er doorheen gelopen".
+// Elke test krijgt de dag mee waarop die momentopname is gemaakt. Voor de
+// kolom "nu" is dat de laatste meetdag en gedraagt alles zich als altijd; voor
+// de kolom van de peildag zorgt het ervoor dat er niet met de kennis van
+// vandaag naar vorige week wordt gekeken (zie isOvBlocked en
+// isExpiredExecutionDate). Zonder dat stond een blokkade die je vandaag zet
+// ook al in de kolom van vorige week, en kwam het verschil op "gelijk" uit
+// terwijl er wel degelijk iets veranderd was.
 const OVERLEG_SIGNALEN = [
   { key: 'onderzoekControleren', label: 'Onderzoek controleren', test: s => s.ovStatus === 'Onderzoek controleren' },
-  { key: 'verlopenOnbekend', label: 'Verlopen — uitvoering onbekend', test: s => isActionableOverdue(s) },
-  { key: 'verlopenDatum', label: 'Uitvoeringsdatum verstreken', test: s => isActionableExpiredDate(s) },
-  { key: 'bijnaVerlopen', label: 'Bijna verlopen', test: s => statusOf(s) === 'serious' && !isOvBlocked(s) },
-  { key: 'geblokkeerd', label: 'Geblokkeerd', test: s => isOvBlocked(s) },
+  { key: 'verlopenOnbekend', label: 'Verlopen — uitvoering onbekend', test: (s, dag) => isUnplannedOverdue(s) && !isOvBlocked(s, dag) },
+  { key: 'verlopenDatum', label: 'Uitvoeringsdatum verstreken', test: (s, dag) => isExpiredExecutionDate(s, dag) && !isOvBlocked(s, dag) },
+  { key: 'bijnaVerlopen', label: 'Bijna verlopen', test: (s, dag) => statusOf(s) === 'serious' && !isOvBlocked(s, dag) },
+  { key: 'geblokkeerd', label: 'Geblokkeerd', test: (s, dag) => isOvBlocked(s, dag) },
   { key: 'mastGeenSpanning', label: 'Mast geen spanning', test: s => isMastGeenSpanning(s) },
 ];
 
-function signalenVergelijk(peilLijst, nuLijst) {
+function signalenVergelijk(peilLijst, nuLijst, peilDag) {
   return OVERLEG_SIGNALEN.map(sig => {
-    const toen = peilLijst.filter(sig.test).length;
-    const nu = nuLijst.filter(sig.test).length;
+    const toen = peilLijst.filter(s => sig.test(s, peilDag)).length;
+    const nu = nuLijst.filter(s => sig.test(s, null)).length;
     return { key: sig.key, label: sig.label, toen, nu, verschil: nu - toen };
   });
 }
@@ -2024,7 +2068,7 @@ function buildWeekLogboek() {
       label: regioGroupLabel(groep),
       stroom,
       gebieden,
-      signalen: signalenVergelijk(peilLijst.filter(inGroep), nuLijst.filter(inGroep)),
+      signalen: signalenVergelijk(peilLijst.filter(inGroep), nuLijst.filter(inGroep), peil.week),
     };
   });
 
@@ -2045,7 +2089,7 @@ function buildWeekLogboek() {
     meetdagen: dagen.length,
     totaal,
     statusRijen,
-    signalen: signalenVergelijk(peilLijst, nuLijst),
+    signalen: signalenVergelijk(peilLijst, nuLijst, peil.week),
     gebiedsupdates,
     klant: { stroom: klantStroom, nieuw: klantNieuw, eerstvolgende: klantMetDatum[0] || null },
   };
@@ -3988,7 +4032,25 @@ function boxplotTabelHtml(rijen) {
   </table></div>`;
 }
 
+// De regiotabs staan op de Data-tab, maar filteren ook alles op Prognose:
+// doorlooptijden, verdeling, wat te lang onderweg is. Dat is bruikbaar — zo
+// vergelijk je Leiden met Haarlem — maar het was onzichtbaar, en dan lijkt het
+// alsof de cijfers zomaar veranderen. Nu staat erbij waar je naar kijkt.
+function renderFilterNotitie() {
+  const el = document.getElementById('prognose-filter-notitie');
+  if (!el) return;
+  const actief = state.activeFilter && state.activeFilter !== 'Totaal';
+  el.classList.toggle('hidden', !actief);
+  if (actief) {
+    el.innerHTML = `Alles op deze pagina is gefilterd op <strong>${esc(regioGroupLabel(state.activeFilter))}</strong>, `
+      + `volgens de regiokeuze op de Data-pagina. <button type="button" class="btn-link" id="prognose-filter-uit">Toon alle regio's</button>`;
+    const knop = document.getElementById('prognose-filter-uit');
+    if (knop) knop.addEventListener('click', () => { state.activeFilter = 'Totaal'; renderDashboardFromState(); });
+  }
+}
+
 function renderPrognose(current) {
+  renderFilterNotitie();
   renderTempoCard();
   renderDoorstroomCard();
   renderBoxplotCard();
@@ -4164,12 +4226,19 @@ function openTimeline(order) {
 // dezelfde keuze die de doorlooptijd-kaart al maakt (zie resolvedDurations) —
 // zouden we hier de laatst-geziene datum nemen, dan noemden twee kaarten in
 // hetzelfde dashboard een andere doorlooptijd voor dezelfde storing.
-function buildOrderIndex() {
+// alles=true neemt óók de regels mee die nergens meetellen: klantaanvragen,
+// types buiten het type-filter, en LS storing/schade zonder markering. Voor een
+// telling zou dat fout zijn, maar de historie is geen telling — die moet de
+// vraag "wat weten we over dit ordernummer" kunnen beantwoorden. Zonder deze
+// optie was een geplakte regel die buiten het filter viel nergens meer terug te
+// vinden, terwijl de gegevens gewoon bewaard waren.
+function buildOrderIndex(alles) {
   const snaps = chronoSnapshots();
   const index = new Map();
+  const kies = alles ? (lijst => lijst) : typeFiltered;
   snaps.forEach(sn => {
     const aanwezig = new Set();
-    typeFiltered(sn.storingen).forEach(s => {
+    kies(sn.storingen).forEach(s => {
       aanwezig.add(s.order);
       let e = index.get(s.order);
       if (!e) {
@@ -4201,13 +4270,26 @@ function buildOrderIndex() {
       eerst: e.eerst,
       laatst: open ? e.laatstGezien : e.opgelostOp,
       open,
+      // Telt deze regel mee in de werkvoorraad? In de historie staan ook
+      // regels die dat niet doen (klantaanvraag, type buiten het filter, LS
+      // zonder markering); die moeten vindbaar zijn, maar wel herkenbaar.
+      telt: telAlsStoring(e.record),
+      soort: e.record.soort || 'storing',
       looptijd: dagenTussen(e.eerst, open ? e.laatstGezien : e.opgelostOp),
     };
   });
 }
 
+// Waarom telt een regel niet mee? Precies benoemen is hier het punt: "staat er
+// wel, telt niet mee" zonder reden zou net zo verwarrend zijn als hem weglaten.
+function nietGeteldReden(r) {
+  if (r.soort === 'klantaanvraag') return 'klantaanvraag';
+  if (!state.typeWhitelist.includes(r.type)) return 'type buiten het filter';
+  return 'geen sanering-markering';
+}
+
 const HISTORIE_COLUMNS = [
-  { key: 'order', label: 'Order', cell: r => `<td>${orderLinkHtml(r.order)}</td>` },
+  { key: 'order', label: 'Order', cell: r => `<td>${orderLinkHtml(r.order)}${r.telt ? '' : ` <span class="badge badge-niet-geteld" title="Staat wel in de opgeslagen gegevens, maar telt niet mee in de werkvoorraad">${esc(nietGeteldReden(r))}</span>`}</td>` },
   { key: 'city', label: 'Plaats', cell: r => `<td>${esc(r.city)}</td>` },
   { key: 'street', label: 'Adres', cell: r => `<td>${esc(r.street)}, ${esc(r.postcode)}</td>` },
   { key: 'asset', label: 'Asset', cell: r => `<td>${esc(r.asset)}${r.assetType ? ' ' + esc(r.assetType) : ''}</td>` },
@@ -4222,12 +4304,14 @@ function renderHistorieSearch() {
   const summary = document.getElementById('historie-summary');
   if (!container) return;
 
-  const alle = buildOrderIndex();
+  const alle = buildOrderIndex(true);
   if (summary) {
     const opgelost = alle.filter(r => !r.open).length;
+    const nietGeteld = alle.filter(r => !r.telt).length;
     summary.textContent = alle.length === 0
       ? ''
-      : `${alle.length} storingen in de historie, waarvan ${opgelost} opgelost en ${alle.length - opgelost} nu open.`;
+      : `${alle.length} regels in de historie, waarvan ${opgelost} opgelost en ${alle.length - opgelost} nu open.`
+        + (nietGeteld ? ` Hiervan tellen er ${nietGeteld} niet mee in de werkvoorraad; die staan er met de reden bij.` : '');
   }
 
   const q = (state.historieQuery || '').trim().toLowerCase();
@@ -4928,6 +5012,14 @@ function renderStatusStreefCard() {
 
   const norm = document.getElementById('doorlooptijd-norm-input');
   if (norm && document.activeElement !== norm) norm.value = state.doorlooptijdNorm;
+  // De gemeten waarden hiernaast volgen de regiokeuze op de Data-pagina; zonder
+  // die vermelding lijkt het alsof er metingen ontbreken.
+  const notitie = document.getElementById('status-streef-filter');
+  if (notitie) {
+    const actief = state.activeFilter && state.activeFilter !== 'Totaal';
+    notitie.classList.toggle('hidden', !actief);
+    if (actief) notitie.textContent = `Let op: de gemeten waarden hiernaast gaan alleen over ${regioGroupLabel(state.activeFilter)}, volgens de regiokeuze op de Data-pagina.`;
+  }
   toonStreefSom();
 }
 
@@ -5067,9 +5159,9 @@ function buildWeekSummaryText() {
     `Verlopen — uitvoering onbekend: ${count('unknown')}`,
   );
   OV_STATUS_ORDER.forEach(status => {
-    const label = status === 'Nieuw' ? 'Nog niet eerder gezien (écht nieuw)' : `Status ${status}`;
-    lines.push(`${label}: ${count(OV_STATUS_FILTER_KEYS[status])}`);
+    lines.push(`Status ${status}: ${count(OV_STATUS_FILTER_KEYS[status])}`);
   });
+  lines.push(`Nog niet eerder gezien (écht nieuw): ${count('nieuwGezien')}`);
   lines.push(`Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt): ${count('geblokkeerd')}`);
   return lines.join('\n');
 }
