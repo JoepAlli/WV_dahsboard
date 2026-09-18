@@ -1028,6 +1028,10 @@ tr.detail-row > td {
   opacity: 0.75;
 }
 .spreiding-kop { min-width: 150px; }
+/* Een maand waarvan maar een deel gemeten is telt niet mee in de vergelijking;
+   de regel blijft staan (je wilt zien dat 'ie er is) maar treedt niet op de
+   voorgrond. */
+.maand-partieel td { color: var(--text-secondary); }
 .verdeling-tegels { margin-bottom: 8px; }
 
 /* ---------- Boxplot: de verdeling per status ----------

@@ -3167,15 +3167,29 @@ function buildTempoStats() {
   // uit elkaar — maar na een weekend of vakantie ineens drie of tien. Zou je
   // simpelweg over overgangen middelen, dan telt een gat van tien dagen even
   // zwaar als een gat van één en klopt het tempo niet meer.
+  // Instroom wordt gesplitst in twee soorten, want ze zeggen iets heel anders.
+  // "Nieuw" is een ordernummer dat nog nooit in een meetdag stond: echt werk
+  // dat binnenkomt. "Teruggekeerd" stond er eerder al, was even weg en is er
+  // weer — meestal geen nieuwe storing maar een meetartefact: een lijst die
+  // onvolledig geplakt is, of een storing die één dag uit de bron viel. Zo'n
+  // geval telt twee keer fout: de dag dat 'ie verdween als opgelost, en de dag
+  // dat 'ie terugkwam als instroom. Het benodigd tempo leunt op de instroom,
+  // dus dat getal loopt daarmee op zonder dat er meer werk is.
+  const ooitGezien = new Set(visibleOf(snaps[0].storingen).map(s => s.order));
   const transitions = [];
   for (let i = 1; i < snaps.length; i++) {
     const prevOrders = new Set(visibleOf(snaps[i - 1].storingen).map(s => s.order));
     const curOrders = new Set(visibleOf(snaps[i].storingen).map(s => s.order));
-    let instroom = 0, opgelost = 0;
-    curOrders.forEach(o => { if (!prevOrders.has(o)) instroom++; });
+    let instroom = 0, instroomNieuw = 0, instroomTerug = 0, opgelost = 0;
+    curOrders.forEach(o => {
+      if (prevOrders.has(o)) return;
+      instroom++;
+      if (ooitGezien.has(o)) instroomTerug++; else instroomNieuw++;
+    });
     prevOrders.forEach(o => { if (!curOrders.has(o)) opgelost++; });
+    curOrders.forEach(o => ooitGezien.add(o));
     const dagen = Math.max(1, Math.round((new Date(snaps[i].week) - new Date(snaps[i - 1].week)) / 86400000));
-    transitions.push({ week: snaps[i].week, vorigeWeek: snaps[i - 1].week, instroom, opgelost, dagen, open: curOrders.size });
+    transitions.push({ week: snaps[i].week, vorigeWeek: snaps[i - 1].week, instroom, instroomNieuw, instroomTerug, opgelost, dagen, open: curOrders.size });
   }
 
   const laatste = new Date(snaps[snaps.length - 1].week);
@@ -3184,6 +3198,8 @@ function buildTempoStats() {
 
   const totaalDagen = recent.reduce((sum, tr) => sum + tr.dagen, 0);
   const totaalIn = recent.reduce((sum, tr) => sum + tr.instroom, 0);
+  const totaalInNieuw = recent.reduce((sum, tr) => sum + tr.instroomNieuw, 0);
+  const totaalInTerug = recent.reduce((sum, tr) => sum + tr.instroomTerug, 0);
   const totaalUit = recent.reduce((sum, tr) => sum + tr.opgelost, 0);
   if (totaalDagen === 0) return null;
 
@@ -3217,7 +3233,19 @@ function buildTempoStats() {
   }
   buckets.reverse();
 
-  return { buckets, avgIn, avgUit, open, netto: avgIn - avgUit, dagen: totaalDagen, updates: recent.length };
+  // Beginstand van het venster: daarmee is na te rekenen of instroom en
+  // uitstroom kloppen met hoe de voorraad werkelijk is bewogen.
+  const eersteInVenster = snaps.find(sn => (laatste - new Date(sn.week)) / 86400000 <= TEMPO_VENSTER_DAGEN
+    && sn.week <= recent[0].vorigeWeek);
+  const beginOpen = eersteInVenster ? visibleOf(eersteInVenster.storingen).length : null;
+
+  return {
+    buckets, avgIn, avgUit, open, netto: avgIn - avgUit, dagen: totaalDagen, updates: recent.length,
+    avgInNieuw: perWeek(totaalInNieuw),
+    avgInTerug: perWeek(totaalInTerug),
+    totaalIn, totaalInNieuw, totaalInTerug, totaalUit,
+    beginOpen, vanaf: recent[0].vorigeWeek, tot: snaps[snaps.length - 1].week,
+  };
 }
 
 // Aandeel "mast geen spanning" in de huidige werkvoorraad — gebruikt om de
@@ -3289,7 +3317,7 @@ function renderTempoCard() {
     ${oordeel}
     ${capBlok}
     <div class="tempo-grid">
-      <div class="tempo-stat"><div class="label">Gem. instroom</div><div class="value">${t.avgIn.toFixed(1)}</div><div class="muted small">per week</div></div>
+      <div class="tempo-stat"><div class="label">Gem. instroom</div><div class="value">${t.avgIn.toFixed(1)}</div><div class="muted small">per week — ${t.avgInNieuw.toFixed(1)} nieuw, ${t.avgInTerug.toFixed(1)} terug</div></div>
       <div class="tempo-stat"><div class="label">Gem. opgelost</div><div class="value">${t.avgUit.toFixed(1)}</div><div class="muted small">per week</div></div>
       <div class="tempo-stat"><div class="label">Benodigd tempo</div><div class="value">${Math.ceil(t.avgIn)}</div><div class="muted small">per week om vlak te blijven</div></div>
       <div class="tempo-stat"><div class="label">Nu open</div><div class="value">${t.open}</div><div class="muted small">storingen</div></div>
@@ -3300,7 +3328,164 @@ function renderTempoCard() {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <p class="muted small">Gebaseerd op ${t.dagen} dag${t.dagen === 1 ? '' : 'en'} historie. Instroom en oplostempo worden omgerekend naar een weektempo, zodat de getallen niet verspringen als je een dag overslaat.</p>`;
+    ${tempoBetrouwbaarheidHtml(t)}`;
+}
+
+// Het benodigd tempo is niet meer dan de gemeten instroom: sluit je er net zo
+// veel af als er binnenkomen, dan blijft de voorraad vlak. Dat is geen
+// voorspelling, en het zegt ook niets over de achterstand die er al ligt.
+// Daarom staat hieronder wat het getal waard is in plaats van alleen het getal:
+// waar het op gebaseerd is, hoeveel ervan terugkeerders zijn, en of instroom
+// min uitstroom klopt met hoe de voorraad werkelijk bewoog. Klopt dat laatste
+// niet, dan mist er een meetdag of is er een lijst onvolledig geplakt — en dan
+// is het tempo ook niet te vertrouwen.
+const TEMPO_TERUG_AANDEEL = 0.1;
+
+function tempoBetrouwbaarheidHtml(t) {
+  const regels = [`Gebaseerd op ${t.dagen} dag${t.dagen === 1 ? '' : 'en'} historie (${t.vanaf} t/m ${t.tot}), omgerekend naar een weektempo zodat de getallen niet verspringen als je een dag overslaat. "Benodigd tempo" is de gemeten instroom: precies genoeg om de voorraad vlak te houden — de achterstand die er al ligt zit er niet in.`];
+
+  if (t.totaalIn > 0 && t.totaalInTerug / t.totaalIn >= TEMPO_TERUG_AANDEEL) {
+    const pct = Math.round((t.totaalInTerug / t.totaalIn) * 100);
+    regels.push(`<strong class="prognose-bad">Let op:</strong> ${pct}% van de instroom (${t.totaalInTerug} van de ${t.totaalIn}) bestaat uit ordernummers die er eerder al stonden, even weg waren en weer terugkwamen. Dat is meestal geen nieuw werk maar een onvolledig geplakte lijst of een storing die een dag uit de bron viel. Het benodigd tempo is daardoor hoger dan het werkelijke aanbod; kijk naar de ${t.avgInNieuw.toFixed(1)} echt nieuwe per week als ondergrens.`);
+  }
+
+  if (t.beginOpen != null) {
+    const verwacht = t.beginOpen + t.totaalIn - t.totaalUit;
+    const afwijking = t.open - verwacht;
+    regels.push(Math.abs(afwijking) <= 0.5
+      ? `Narekening: ${t.beginOpen} open bij aanvang + ${t.totaalIn} erbij − ${t.totaalUit} eraf = ${t.open} nu. Dat klopt, dus er ontbreken geen meetdagen in dit venster.`
+      : `<strong class="prognose-bad">Narekening klopt niet:</strong> ${t.beginOpen} + ${t.totaalIn} − ${t.totaalUit} = ${verwacht}, terwijl er ${t.open} open staan (${afwijking > 0 ? '+' : ''}${afwijking}). Er is iets veranderd aan het type-filter of aan de opgeslagen weken; behandel het tempo met een slag om de arm.`);
+  }
+  return `<p class="muted small">${regels.join(' ')}</p>`;
+}
+
+/* ---------- Prognose: instroom per maand ---------- */
+
+// Het benodigd tempo kijkt 8 weken terug en behandelt die weken als één klomp.
+// Dat verbergt precies wat je voor de planning wilt weten: of het aanbod door
+// het jaar heen schommelt. Bij openbare verlichting is dat aannemelijk — een
+// kapotte lantaarn valt pas op als het donker is — maar aannemelijk is niet
+// gemeten. Deze kaart zet het per kalendermaand naast elkaar, zodat het uit je
+// eigen data blijkt in plaats van uit een verwachting.
+//
+// Een maand telt alleen mee als er genoeg dagen van gemeten zijn; anders zou
+// een maand waarin je twee keer hebt geplakt naast een volledig gemeten maand
+// komen te staan alsof ze even zwaar wegen.
+const MAAND_MIN_DEKKING = 0.5;
+function dagenInMaand(sleutel) {
+  const [jaar, maand] = sleutel.split('-').map(Number);
+  return new Date(jaar, maand, 0).getDate();
+}
+
+function buildMaandTempo() {
+  const snaps = chronoSnapshots();
+  if (snaps.length < 2) return null;
+  const visibleOf = (list) => filterByActive(typeFiltered(list));
+
+  const ooitGezien = new Set(visibleOf(snaps[0].storingen).map(s => s.order));
+  const perMaand = new Map();
+  const ensure = (sleutel) => {
+    if (!perMaand.has(sleutel)) {
+      perMaand.set(sleutel, { sleutel, in: 0, nieuw: 0, terug: 0, uit: 0, dagen: 0, eind: null, laatsteDag: null });
+    }
+    return perMaand.get(sleutel);
+  };
+
+  for (let i = 1; i < snaps.length; i++) {
+    const prev = new Set(visibleOf(snaps[i - 1].storingen).map(s => s.order));
+    const cur = new Set(visibleOf(snaps[i].storingen).map(s => s.order));
+    // Een overgang die over een maandgrens loopt wordt volledig toegerekend aan
+    // de maand waarin 'ie eindigt. Bij dagelijks bijwerken scheelt dat niets;
+    // bij een gat van twee weken over de jaarwisseling wel, en dat staat in de
+    // dekking van die maand terug te zien.
+    const m = ensure(snaps[i].week.slice(0, 7));
+    cur.forEach(o => {
+      if (prev.has(o)) return;
+      m.in++;
+      if (ooitGezien.has(o)) m.terug++; else m.nieuw++;
+    });
+    prev.forEach(o => { if (!cur.has(o)) m.uit++; });
+    cur.forEach(o => ooitGezien.add(o));
+    m.dagen += Math.max(1, dagenTussen(snaps[i - 1].week, snaps[i].week));
+    m.eind = cur.size;
+    m.laatsteDag = snaps[i].week;
+  }
+
+  const rijen = Array.from(perMaand.values())
+    .map(m => {
+      const totaal = dagenInMaand(m.sleutel);
+      const dekking = Math.min(1, m.dagen / totaal);
+      return Object.assign({}, m, {
+        label: maandLabel(m.sleutel),
+        dekking,
+        volledig: dekking >= MAAND_MIN_DEKKING,
+        inPerWeek: (m.in / m.dagen) * 7,
+        nieuwPerWeek: (m.nieuw / m.dagen) * 7,
+        uitPerWeek: (m.uit / m.dagen) * 7,
+      });
+    })
+    .sort((a, b) => a.sleutel.localeCompare(b.sleutel));
+
+  const bruikbaar = rijen.filter(r => r.volledig);
+  return { rijen, bruikbaar };
+}
+
+function renderMaandTempoCard() {
+  const container = document.getElementById('maand-tempo-body');
+  if (!container) return;
+  const data = buildMaandTempo();
+  if (!data || data.rijen.length === 0) {
+    container.innerHTML = '<p class="empty-note">Nog te weinig meetdagen om maanden met elkaar te kunnen vergelijken.</p>';
+    return;
+  }
+  const { rijen, bruikbaar } = data;
+
+  // Zonder minstens twee voldoende gemeten maanden valt er niets te
+  // vergelijken. Dat met zoveel woorden zeggen is hier het eerlijke antwoord —
+  // een verschil tussen twee halve maanden zou nergens op slaan.
+  let kop;
+  if (bruikbaar.length < 2) {
+    kop = `<p class="prognose-headline">Er ${bruikbaar.length === 1 ? 'is pas één maand' : 'zijn nog geen maanden'} volledig genoeg gemeten, dus over verschillen per maand valt nog niets te zeggen. Daar zijn minstens twee maanden voor nodig; de tabel groeit vanzelf mee.</p>`;
+  } else {
+    const opInstroom = bruikbaar.slice().sort((a, b) => b.inPerWeek - a.inPerWeek);
+    const hoogste = opInstroom[0];
+    const laagste = opInstroom[opInstroom.length - 1];
+    const verhouding = laagste.inPerWeek > 0 ? hoogste.inPerWeek / laagste.inPerWeek : null;
+    kop = `<p class="prognose-headline">Over ${bruikbaar.length} voldoende gemeten maanden loopt de instroom van `
+      + `<strong>${laagste.inPerWeek.toFixed(1)}</strong> per week (${esc(laagste.label)}) tot `
+      + `<strong>${hoogste.inPerWeek.toFixed(1)}</strong> per week (${esc(hoogste.label)})`
+      + (verhouding && verhouding >= 1.25 ? ` — een factor ${verhouding.toFixed(1)}. Eén jaargemiddelde dekt die spreiding dus niet.` : '. Dat ligt dicht genoeg bij elkaar om met één gemiddelde te werken.')
+      + `</p>`;
+  }
+
+  const maxIn = Math.max(1, ...rijen.map(r => r.inPerWeek));
+  const body = rijen.map(r => {
+    const netto = r.inPerWeek - r.uitPerWeek;
+    const balk = Math.round((r.inPerWeek / maxIn) * 100);
+    return `<tr class="${r.volledig ? '' : 'maand-partieel'}">
+      <td>${esc(r.label)}${r.volledig ? '' : ' <span class="muted small">deels gemeten</span>'}</td>
+      <td class="num">${Math.round(r.dekking * 100)}%</td>
+      <td class="num"><strong>${r.inPerWeek.toFixed(1)}</strong></td>
+      <td class="num muted">${r.nieuwPerWeek.toFixed(1)}</td>
+      <td class="num">${r.uitPerWeek.toFixed(1)}</td>
+      <td class="num ${netto > 0 ? 'prognose-bad' : netto < 0 ? 'prognose-good' : ''}">${netto > 0 ? '+' : ''}${netto.toFixed(1)}</td>
+      <td><div class="doorstroom-balk"><span style="width:${balk}%"></span></div></td>
+      <td class="num">${r.eind == null ? '—' : r.eind}</td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `${kop}
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Maand</th><th class="num">Gemeten</th><th class="num">Instroom p/w</th>
+          <th class="num">waarvan nieuw</th><th class="num">Opgelost p/w</th><th class="num">Netto p/w</th>
+          <th>Instroom</th><th class="num">Open aan eind</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+    <p class="muted small">Alles per week, zodat maanden van verschillende lengte en met verschillende meetdekking vergelijkbaar blijven. "Gemeten" is het deel van de maand waarover meetdagen beschikbaar zijn; onder de ${Math.round(MAAND_MIN_DEKKING * 100)}% telt een maand niet mee in de vergelijking hierboven, want dan zegt het gemiddelde te weinig. "waarvan nieuw" laat ordernummers weg die eerder al eens in de lijst stonden.</p>`;
 }
 
 /* ---------- Prognose: stagnatiesignaal ---------- */
@@ -3952,6 +4137,7 @@ function renderFilterNotitie() {
 function renderPrognose(current) {
   renderFilterNotitie();
   renderTempoCard();
+  renderMaandTempoCard();
   renderDoorstroomCard();
   renderBoxplotCard();
   renderStagnatieCard();
