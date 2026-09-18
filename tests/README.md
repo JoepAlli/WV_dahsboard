@@ -17,3 +17,4 @@ IndexedDB en sluit af met `ALLES GOED` of het aantal mislukte controles.
 |---|---|
 | `smoke.js` | Elk tabblad tekent zonder fouten, met data erin |
 | `maand_tempo.js` | Instroom per maand en de betrouwbaarheid van het benodigd tempo |
+| `tempo_twee_tekorten.js` | Dat de gemeten achterstand en het tekort op capaciteit als twee verschillende dingen worden gepresenteerd |

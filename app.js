@@ -3273,16 +3273,23 @@ function renderTempoCard() {
   const krimpt = t.netto < -0.05;
   const tekort = Math.abs(t.netto);
 
+  // Beide getallen in deze kaart heten "per week", maar ze worden tegen iets
+  // anders afgezet: dit oordeel vergelijkt de instroom met wat je FEITELIJK
+  // afsluit, het capaciteitsblok hieronder met wat je als capaciteit hebt
+  // INGEVULD. Staan die twee ver uit elkaar, dan lijken de tekorten elkaar
+  // tegen te spreken terwijl ze allebei kloppen. Daarom staan de twee
+  // grootheden er nu bij in plaats van alleen het verschil.
+  const gemetenBasis = `Er komen <strong>${t.avgIn.toFixed(1)}</strong> storingen per week bij en je sluit er <strong>${t.avgUit.toFixed(1)}</strong> af`;
   let oordeel;
   if (groeit) {
     const over8 = Math.round(t.open + t.netto * 8);
-    oordeel = `<p class="prognose-headline">Je loopt <strong class="prognose-bad">${tekort.toFixed(1)} storing${tekort.toFixed(1) === '1.0' ? '' : 'en'} per week achter</strong>. Blijft dit zo, dan staan er over 8 weken ongeveer <strong>${over8}</strong> open in plaats van ${t.open}.</p>`;
+    oordeel = `<p class="prognose-headline">${gemetenBasis}: je loopt <strong class="prognose-bad">${tekort.toFixed(1)} per week achter</strong>. Blijft dit zo, dan staan er over 8 weken ongeveer <strong>${over8}</strong> open in plaats van ${t.open}.</p>`;
   } else if (krimpt) {
     const wekenLeeg = t.open / tekort;
     const extra = wekenLeeg <= 52 ? ` Bij dit tempo is de huidige voorraad over ongeveer ${Math.round(wekenLeeg)} weken weggewerkt.` : '';
-    oordeel = `<p class="prognose-headline">Je werkt de voorraad in: <strong class="prognose-good">${tekort.toFixed(1)} storing${tekort.toFixed(1) === '1.0' ? '' : 'en'} per week minder</strong> dan er bijkomen.${extra}</p>`;
+    oordeel = `<p class="prognose-headline">${gemetenBasis}: je werkt de voorraad in met <strong class="prognose-good">${tekort.toFixed(1)} per week</strong>.${extra}</p>`;
   } else {
-    oordeel = `<p class="prognose-headline">Instroom en uitstroom zijn <strong>in evenwicht</strong> — de voorraad blijft rond de ${t.open} storingen hangen.</p>`;
+    oordeel = `<p class="prognose-headline">${gemetenBasis}: dat is <strong>in evenwicht</strong> — de voorraad blijft rond de ${t.open} storingen hangen.</p>`;
   }
 
   const rows = t.buckets.map(b => {
@@ -3304,10 +3311,22 @@ function renderTempoCard() {
     const mioAandeel = mioAandeelVanOpen();
     const mioNodig = mioAandeel === null ? null : benodigd * mioAandeel;
     const meetNodig = mioNodig === null ? null : benodigd - mioNodig;
+    // Verschilt de ingevulde capaciteit wezenlijk van wat er feitelijk wordt
+    // afgesloten, dan is dát de eerste vraag — niet het tekort. Eén van beide
+    // getallen klopt dan namelijk niet, en zolang dat zo is zijn de twee
+    // tekorten in deze kaart niet met elkaar te rijmen.
+    const verschilMetGemeten = t.avgUit - capTotaal;
+    const noemenswaardig = Math.abs(verschilMetGemeten) >= 1 && Math.abs(verschilMetGemeten) >= capTotaal * 0.1;
     capBlok = `
-      <p class="prognose-headline">Beschikbaar is <strong>${capTotaal}</strong> per week tegenover <strong>${benodigd.toFixed(1)}</strong> nodig — `
+      <p class="prognose-headline">Op papier: <strong>${capTotaal}</strong> per week beschikbaar tegenover <strong>${benodigd.toFixed(1)}</strong> nodig — `
       + `<strong class="${haalbaar ? 'prognose-good' : 'prognose-bad'}">${haalbaar ? `${gat.toFixed(1)} over` : `${Math.abs(gat).toFixed(1)} te kort`}</strong>`
-      + `${haalbaar ? ' om de voorraad vlak te houden.' : ' om de voorraad vlak te houden; de achterstand loopt dus op.'}</p>`
+      + `${haalbaar ? ' om de voorraad vlak te houden.' : ' om de voorraad vlak te houden.'}</p>`
+      + (noemenswaardig ? `<p class="warning-box">De twee tekorten hierboven gaan over verschillende dingen, en dat verklaart waarom ze niet gelijk zijn. `
+        + `Het eerste zet de instroom af tegen wat je <strong>feitelijk afsluit</strong> (${t.avgUit.toFixed(1)} per week), het tweede tegen de capaciteit die je hebt <strong>ingevuld</strong> (${capTotaal} per week). `
+        + `Je sluit er dus ${Math.abs(verschilMetGemeten).toFixed(1)} per week ${verschilMetGemeten > 0 ? 'méér' : 'mínder'} af dan je capaciteit zegt. `
+        + `${verschilMetGemeten > 0 ? 'Of de ingevulde capaciteit is te laag, of er wordt structureel meer gedaan dan waar het team op staat.' : 'Of de ingevulde capaciteit is te hoog, of er blijft capaciteit onbenut.'} `
+        + `Zolang dat verschil er is, is <strong>${tekort.toFixed(1)} per week</strong> het getal dat je werkelijk ziet gebeuren. `
+        + `<button type="button" class="btn-link" data-goto-instelling="capaciteit-card" data-goto-veld="cap-meetdienst">Capaciteit bijstellen</button></p>` : '')
       + (mioNodig !== null && cap.mio > 0 ? `<p class="muted small">Naar de huidige verhouding (${Math.round(mioAandeel * 100)}% mast geen spanning) `
         + `zou dat ruwweg ${meetNodig.toFixed(1)} Meetdienst en ${mioNodig.toFixed(1)} MIO per week zijn, tegenover ${cap.meetdienst} en ${cap.mio} beschikbaar. `
         + `Niet elke mast kan zonder Meetdienst, dus dit is een bovengrens voor MIO.</p>` : '');
@@ -5305,14 +5324,18 @@ function wireEvents() {
   // "De norm klopt niet" is de eerste gedachte bij een lijst die te lang of te
   // kort is. Vanuit de lijst moet je die dus kunnen bijstellen zonder eerst te
   // gaan zoeken waar dat ook alweer stond.
-  document.querySelectorAll('[data-goto-normen]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      switchTab('settings');
-      const kaart = document.getElementById('status-streef-card');
-      if (kaart) kaart.scrollIntoView({ block: 'center' });
-      const veld = document.getElementById(btn.dataset.gotoNormen || 'doorlooptijd-norm-input');
-      if (veld) veld.focus();
-    });
+  // "Dat getal klopt niet" is de eerste gedachte bij een cijfer dat op een
+  // invoer leunt. Vanaf de kaart moet je die invoer dus kunnen bijstellen
+  // zonder te gaan zoeken waar 'ie ook alweer stond. Gedelegeerd, want deze
+  // knoppen worden bij elke hertekening opnieuw opgebouwd.
+  document.body.addEventListener('click', (e) => {
+    const knop = e.target.closest('[data-goto-instelling]');
+    if (!knop) return;
+    switchTab('settings');
+    const kaart = document.getElementById(knop.dataset.gotoInstelling);
+    if (kaart) kaart.scrollIntoView({ block: 'center' });
+    const veld = document.getElementById(knop.dataset.gotoVeld || '');
+    if (veld) veld.focus();
   });
 
   document.getElementById('export-backup-btn').addEventListener('click', async () => {
