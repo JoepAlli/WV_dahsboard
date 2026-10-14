@@ -2378,6 +2378,131 @@ function renderKlantaanvraagCard() {
     </div>`;
 }
 
+/* ---------- Twee of meer orders op hetzelfde adres ---------- */
+
+// Twee openstaande orders op precies hetzelfde adres is iets anders dan twee
+// orders in dezelfde straat. Het betekent bijna altijd één van twee dingen, en
+// allebei kosten ze onnodig werk als je ze niet ziet:
+//
+//  - dezelfde asset: waarschijnlijk twee meldingen van hetzelfde probleem. Los
+//    je er één op, dan blijft de andere open staan in een lijst waar 'ie niet
+//    hoort — en telt 'ie mee in elk cijfer.
+//  - verschillende assets: twee masten op één adres. Geen dubbeling, maar wel
+//    twee ritten naar dezelfde deur als je ze los inplant.
+//
+// Het onderscheid staat er daarom bij: wat je ermee moet doen verschilt.
+function adresSleutel(s) {
+  const norm = (v) => (v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const straat = norm(s.street);
+  const plaats = norm(s.city);
+  if (!straat || !plaats) return null;
+  return `${plaats}|||${straat}|||${norm(s.postcode)}`;
+}
+
+function buildZelfdeAdres() {
+  const snaps = chronoSnapshots();
+  if (snaps.length === 0) return [];
+  const open = typeFiltered(snaps[snaps.length - 1].storingen);
+
+  const groepen = new Map();
+  open.forEach(s => {
+    const sleutel = adresSleutel(s);
+    if (!sleutel) return;
+    if (!groepen.has(sleutel)) groepen.set(sleutel, []);
+    groepen.get(sleutel).push(s);
+  });
+
+  return Array.from(groepen.values())
+    .filter(lijst => lijst.length >= 2)
+    .map(lijst => {
+      const assets = new Set(lijst.map(s => (s.asset || '').trim()).filter(Boolean));
+      const dagen = lijst.map(s => (typeof s.daysLeft === 'number' ? s.daysLeft : null)).filter(d => d !== null);
+      const eerste = lijst[0];
+      return {
+        key: adresSleutel(eerste),
+        city: eerste.city,
+        street: eerste.street,
+        postcode: eerste.postcode,
+        aantal: lijst.length,
+        // Eén asset over alle orders = vrijwel zeker hetzelfde object.
+        zelfdeAsset: assets.size === 1,
+        assets: Array.from(assets),
+        types: Array.from(new Set(lijst.map(s => s.type))),
+        vroegste: dagen.length ? Math.min(...dagen) : null,
+        verlopen: lijst.filter(s => s.overdue).length,
+        storingen: lijst.slice().sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999)),
+      };
+    })
+    // Dezelfde asset eerst: dat is het geval waar iets mis kán zijn.
+    .sort((a, b) => (b.zelfdeAsset ? 1 : 0) - (a.zelfdeAsset ? 1 : 0)
+      || (a.vroegste ?? 999) - (b.vroegste ?? 999)
+      || a.city.localeCompare(b.city));
+}
+
+function renderZelfdeAdresCard() {
+  const kaart = document.getElementById('zelfde-adres-card');
+  const container = document.getElementById('zelfde-adres-body');
+  if (!kaart || !container) return;
+  const groepen = buildZelfdeAdres();
+
+  kaart.classList.toggle('hidden', groepen.length === 0);
+  const teller = document.getElementById('zelfde-adres-count');
+  if (teller) teller.textContent = groepen.length;
+  if (groepen.length === 0) { container.innerHTML = ''; return; }
+
+  const dubbel = groepen.filter(g => g.zelfdeAsset).length;
+  const samen = groepen.reduce((n, g) => n + g.aantal, 0);
+  const kop = `<p class="prognose-headline">${samen} openstaande storingen staan op ${groepen.length} ${groepen.length === 1 ? 'adres' : 'adressen'} waar er meer dan één openstaat`
+    + (dubbel > 0
+        ? `, waarvan <strong class="prognose-bad">${dubbel}</strong> op dezelfde asset — controleer daar eerst of het niet twee meldingen van hetzelfde zijn.`
+        : '. Steeds op verschillende assets, dus geen dubbeling: wel twee ritten naar dezelfde deur als je ze los inplant.')
+    + `</p>`;
+
+  const blokken = groepen.map(g => `
+    <div class="adres-groep${g.zelfdeAsset ? ' adres-groep-asset' : ''}">
+      <div class="adres-kop">
+        <strong>${esc(g.street)}, ${esc(g.postcode)}</strong> — ${esc(g.city)}
+        <span class="badge">${g.aantal} orders</span>
+        ${g.zelfdeAsset
+          ? `<span class="badge badge-zelfde-asset">zelfde asset ${esc(g.assets[0] || '—')}</span>`
+          : `<span class="badge">${g.assets.length} verschillende assets</span>`}
+        ${g.verlopen > 0 ? `<span class="badge badge-verlopen">${g.verlopen} verlopen</span>` : ''}
+      </div>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Order</th><th>Type</th><th>Asset</th><th>Status</th><th class="num">Dagen</th></tr></thead>
+        <tbody>${g.storingen.map(s => `<tr>
+          <td>${orderLinkHtml(s.order)}</td>
+          <td>${esc(s.type)}</td>
+          <td>${esc(s.asset || '—')}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>
+          <td>${ovStatusPillHtml(s)}</td>
+          <td class="num">${renderDaysPill(s)}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>`).join('');
+
+  container.innerHTML = kop + blokken;
+}
+
+// Platte tekst voor het "Kopieer"-knopje — zelfde volgorde als op het scherm.
+function buildZelfdeAdresText() {
+  const groepen = buildZelfdeAdres();
+  const snaps = chronoSnapshots();
+  const datum = snaps.length ? snaps[snaps.length - 1].week : '';
+  if (groepen.length === 0) return `Meerdere orders op één adres — ${datum}\n\nGeen adressen met meer dan één openstaande storing.`;
+  const r = [`Meerdere orders op één adres — ${datum}`, ''];
+  groepen.forEach(g => {
+    r.push(`${g.street}, ${g.postcode} — ${g.city} (${g.aantal} orders, ${g.zelfdeAsset ? 'zelfde asset ' + (g.assets[0] || '—') : g.assets.length + ' verschillende assets'})`);
+    g.storingen.forEach(s => {
+      const dagen = typeof s.daysLeft === 'number'
+        ? (s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : `nog ${s.daysLeft} dgn`)
+        : 'onbekend';
+      r.push(`  ${s.order} — ${s.type} — ${s.asset || '—'} — ${dagen}`);
+    });
+    r.push('');
+  });
+  return r.join('\n');
+}
+
 /* ---------- Clusters: openstaande storingen die dicht bij elkaar liggen ---------- */
 
 // Meetdienst-capaciteit is schaars, dus één rit moet zoveel mogelijk opleveren.
@@ -2489,6 +2614,97 @@ function clustersPerPlaats(clusters, openPerPlaats) {
 // Platte tekst van de clusters, om in een mail of Teams-bericht te plakken.
 // De interactieve versie zit al in de teamexport, maar voor "hier is je lijstje
 // voor morgen" is een blok tekst praktischer dan een bestand.
+// Een printklare ritlijst: één bestand dat je kunt openen, uitprinten of
+// doorsturen, met per plaats de clusters en daarbinnen de orders. Het
+// kopieerknopje levert dezelfde inhoud als platte tekst, maar dat is een blok
+// om door te scrollen; dit is een document waar je mee op pad kunt, met per
+// order een hokje om af te vinken.
+//
+// Bewust één zelfstandig HTML-bestand zonder verwijzingen naar buiten: het moet
+// openen op een laptop zonder internet en zonder dat er iets geïnstalleerd is,
+// precies zoals de rest van dit dashboard.
+function buildRitlijstHtml() {
+  const { clusters, plaatsen, totaal, zonderLocatie } = buildClusters(state.clusterMode);
+  const snaps = chronoSnapshots();
+  const datum = snaps.length ? snaps[snaps.length - 1].week : '';
+  const modus = CLUSTER_MODI[state.clusterMode];
+  const inCluster = clusters.reduce((sum, c) => sum + c.aantal, 0);
+
+  const dagenTekstVan = (s) => typeof s.daysLeft !== 'number' ? '—'
+    : (s.overdue ? `${Math.abs(s.daysLeft)} dgn verlopen` : `nog ${s.daysLeft} dgn`);
+
+  const plaatsBlokken = plaatsen.map(p => {
+    const clusterBlokken = p.clusters.map(c => `
+      <section class="cluster">
+        <h3>${esc(c.sleutel)} <span class="licht">${esc(c.city)}</span></h3>
+        <p class="meta">${c.aantal} storingen${c.mio > 0 ? ` · ${c.mio} mast geen spanning` : ''}${c.verlopen > 0 ? ` · ${c.verlopen} verlopen` : ''}${c.vroegste !== null ? ` · krapste termijn ${c.vroegste < 0 ? `${Math.abs(c.vroegste)} dgn verlopen` : `nog ${c.vroegste} dgn`}` : ''}</p>
+        <table>
+          <thead><tr><th class="vink">✓</th><th>Order</th><th>Adres</th><th>Type</th><th>Asset</th><th>Termijn</th></tr></thead>
+          <tbody>${c.storingen.map(s => `<tr>
+            <td class="vink">☐</td>
+            <td>${esc(s.order)}</td>
+            <td>${esc(s.street)}, ${esc(s.postcode)}</td>
+            <td>${esc(s.type)}</td>
+            <td>${esc(s.asset || '—')}${s.assetType ? ' ' + esc(s.assetType) : ''}</td>
+            <td>${esc(dagenTekstVan(s))}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </section>`).join('');
+    return `<div class="plaats">
+      <h2>${esc(p.city)} <span class="licht">${p.inCluster} storingen in ${p.clusters.length} ${p.clusters.length === 1 ? 'cluster' : 'clusters'}</span></h2>
+      ${clusterBlokken}
+    </div>`;
+  }).join('');
+
+  const leeg = `<p class="meta">Geen clusters van twee of meer op dit niveau.</p>`;
+
+  return `<!doctype html>
+<html lang="nl"><head><meta charset="utf-8">
+<title>Ritlijst NUS — ${esc(datum)}</title>
+<style>
+  body { font: 12px/1.45 Arial, Helvetica, sans-serif; color: #1A1A1A; margin: 24px; }
+  h1 { font-size: 18px; margin: 0 0 2px; }
+  h2 { font-size: 15px; margin: 0 0 10px; padding-bottom: 4px; border-bottom: 2px solid #4C6E23; }
+  h3 { font-size: 13px; margin: 0 0 2px; }
+  .licht { font-weight: normal; color: #5A5A5A; }
+  .meta { color: #5A5A5A; margin: 0 0 6px; }
+  .plaats { margin-bottom: 22px; }
+  .cluster { margin: 0 0 14px; padding-left: 10px; border-left: 2px solid #e2e1dc; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid #e2e1dc; vertical-align: top; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: #5A5A5A; }
+  .vink { width: 18px; text-align: center; font-size: 14px; }
+  .kop { margin-bottom: 18px; padding-bottom: 10px; border-bottom: 1px solid #c9c8c2; }
+  /* Elke plaats op een eigen pagina: dan kun je per plaats één vel meegeven. */
+  @media print {
+    body { margin: 10mm; }
+    .plaats { page-break-after: always; }
+    .plaats:last-child { page-break-after: auto; }
+    .cluster { page-break-inside: avoid; }
+  }
+</style></head><body>
+<div class="kop">
+  <h1>Ritlijst NUS — ${esc(datum)}</h1>
+  <p class="meta">Gegroepeerd op ${esc(modus.label.toLowerCase())}. ${inCluster} van de ${totaal} openstaande storingen liggen in ${clusters.length} ${clusters.length === 1 ? 'cluster' : 'clusters'} van twee of meer, verspreid over ${plaatsen.length} ${plaatsen.length === 1 ? 'plaats' : 'plaatsen'}. ${totaal - inCluster} ${totaal - inCluster === 1 ? 'staat' : 'staan'} op zichzelf${zonderLocatie > 0 ? ` (${zonderLocatie} zonder bruikbare locatiegegevens)` : ''} en staan hier niet in.</p>
+</div>
+${clusters.length === 0 ? leeg : plaatsBlokken}
+</body></html>`;
+}
+
+function downloadRitlijst() {
+  const snaps = chronoSnapshots();
+  const datum = snaps.length ? snaps[snaps.length - 1].week : new Date().toISOString().slice(0, 10);
+  const blob = new Blob([buildRitlijstHtml()], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `ritlijst-nus-${datum}.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function buildClusterText() {
   const { clusters, plaatsen, totaal, zonderLocatie } = buildClusters(state.clusterMode);
   const snaps = chronoSnapshots();
@@ -5219,6 +5435,7 @@ function renderDashboardFromState() {
   renderLijstKeuze();
   renderTypeOnbekendNotice();
   renderKlantaanvraagCard();
+  renderZelfdeAdresCard();
   renderGebiedPlaatsenCard();
   renderClusterCard();
   renderInUitCard();
@@ -5738,6 +5955,31 @@ function wireEvents() {
       btn.textContent = '⚠️ Kopiëren mislukt';
     }
     setTimeout(() => { btn.textContent = original; }, 2000);
+  });
+
+  document.getElementById('copy-zelfde-adres-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('copy-zelfde-adres-btn');
+    const origineel = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(buildZelfdeAdresText());
+      btn.textContent = '✅ Gekopieerd!';
+    } catch (e) {
+      btn.textContent = '⚠️ Kopiëren mislukt';
+    }
+    setTimeout(() => { btn.textContent = origineel; }, 2000);
+  });
+
+  document.getElementById('ritlijst-btn').addEventListener('click', () => {
+    const btn = document.getElementById('ritlijst-btn');
+    const origineel = btn.textContent;
+    try {
+      downloadRitlijst();
+      btn.textContent = '✅ Gedownload';
+    } catch (e) {
+      btn.textContent = '⚠️ Mislukt';
+      showErrorToast('Ritlijst maken is mislukt: ' + e.message);
+    }
+    setTimeout(() => { btn.textContent = origineel; }, 2000);
   });
 
   document.getElementById('copy-clusters-btn').addEventListener('click', async () => {

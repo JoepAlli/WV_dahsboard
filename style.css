@@ -1385,6 +1385,26 @@ tr.detail-row > td {
   margin-top: 22px;
 }
 
+/* Meerdere orders op één adres. Het geval met dezelfde asset krijgt een
+   randaccent: daar kán iets dubbel zijn, en dat vraagt een ander soort actie
+   dan twee masten op één adres. */
+.adres-groep {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-top: 12px;
+}
+.adres-groep-asset { border-left: 3px solid var(--status-warning); }
+.adres-kop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.badge-zelfde-asset {
+  background: color-mix(in srgb, var(--status-warning) 15%, var(--surface-1));
+  color: var(--status-serious);
+}
+.badge-verlopen {
+  background: color-mix(in srgb, var(--status-critical) 14%, var(--surface-1));
+  color: var(--status-critical);
+}
+
 /* Een regel die wel bewaard is maar niet meetelt in de werkvoorraad. */
 .badge-niet-geteld {
   background: color-mix(in srgb, var(--text-muted) 16%, var(--surface-1));
