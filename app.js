@@ -3940,7 +3940,7 @@ function buildDoorstroomStats() {
   const snaps = chronoSnapshots();
   if (snaps.length === 0) return [];
   const latest = snaps[snaps.length - 1];
-  const { lopend, verdelingen, medianen } = buildStatusDuurStats();
+  const { lopend } = buildStatusDuurStats();
   const huidig = filterByActive(typeFiltered(latest.storingen));
 
   return OV_STATUS_ORDER.map(status => {
@@ -3949,17 +3949,9 @@ function buildDoorstroomStats() {
       const cur = lopend[s.order];
       return cur ? dagenTussen(cur.sinds, latest.week) : 0;
     });
-    const v = verdelingen[status] || null;
-    const normInfo = statusNormVan(status, medianen);
     return {
       status,
       aantal: inStatus.length,
-      verdeling: v,
-      norm: normInfo ? normInfo.norm : null,
-      normBron: normInfo ? normInfo.bron : null,
-      p50: v ? v.p50 : null,
-      p90: v ? v.p90 : null,
-      metingen: v ? v.n : 0,
       opgehoopt: wachttijden.reduce((a, b) => a + b, 0),
       langste: wachttijden.length ? Math.max(...wachttijden) : 0,
     };
@@ -3981,59 +3973,29 @@ function renderDoorstroomCard() {
     ? `<p class="prognose-headline">De meeste tijd hoopt zich op bij <strong>${esc(zwaarste.status)}</strong>: ${zwaarste.aantal} storing${zwaarste.aantal === 1 ? '' : 'en'}, samen <strong>${zwaarste.opgehoopt}</strong> wachtdagen.</p>`
     : '';
 
-  // Alle spreidingsbalken op dezelfde schaal, anders lijkt een status met een
-  // korte staart net zo scheef als een met een lange.
-  const schaal = Math.max(1, ...rijen.map(r => (r.verdeling ? r.verdeling.p90 || r.verdeling.p50 || 0 : 0)), ...rijen.map(r => r.norm || 0));
-
   const body = rijen.map(r => `<tr>
       <td>${esc(r.status)}</td>
       <td class="num">${r.aantal}</td>
-      <td class="num">${dagenAfgerond(r.p50)}</td>
-      <td class="num">${dagenAfgerond(r.p90)}</td>
-      <td>${spreidingBalkHtml(r, schaal)}</td>
       <td class="num">${r.opgehoopt}</td>
       <td class="num">${r.langste || '—'}</td>
     </tr>`).join('');
 
-  const scheef = rijen.filter(r => r.p50 != null && r.p90 != null && r.p50 > 0 && r.p90 / r.p50 >= STAART_RATIO)
-    .sort((a, b) => (b.p90 / b.p50) - (a.p90 / a.p50))[0];
-  const staart = scheef
-    ? `<p class="prognose-headline">Bij <strong>${esc(scheef.status)}</strong> zit het verschil vooral in de staart: de helft is er binnen ${dagenAfgerond(scheef.p50)} doorheen, maar één op de tien doet er ${dagenAfgerond(scheef.p90)} of langer over.</p>`
-    : '';
-
-  container.innerHTML = `${kop}${staart}
+  container.innerHTML = `${kop}
     <div class="table-scroll">
       <table>
         <thead><tr>
-          <th>Status</th><th class="num">Nu in deze status</th><th class="num">P50</th><th class="num">P90</th>
-          <th class="spreiding-kop">Spreiding <span class="muted small">(P50 · P90 · norm)</span></th>
+          <th>Status</th><th class="num">Nu in deze status</th>
           <th class="num">Opgehoopt</th><th class="num">Langst wachtend</th>
         </tr></thead>
         <tbody>${body}</tbody>
       </table>
     </div>
-    <p class="muted small">P50 is hoe lang een storing normaal in die status blijft: de helft is er sneller doorheen. P90 is de staart: negen van de tien blijven eronder. Staan die twee ver uit elkaar, dan zit het probleem bij een paar gevallen en niet bij de hele bak — dat is precies wat een gemiddelde onzichtbaar maakt. P50 vanaf ${MIN_METINGEN_P50} afgeronde metingen, P90 vanaf ${MIN_METINGEN_P90}. "Opgehoopt" is alle wachttijd van de storingen die nu in die status staan bij elkaar opgeteld, in dagen.</p>`;
+    <p class="muted small">Dit is de stand van nu: waar het werk op dit moment ligt. "Opgehoopt" is alle wachttijd van de storingen die nu in die status staan bij elkaar opgeteld, in dagen — veel storingen die net binnen zijn geeft hetzelfde getal als een paar die al heel lang stilstaan, dus kijk er altijd naast naar "langst wachtend". Hoe lang een stap normaal duurt staat in de kaart hieronder.</p>`;
 }
 
 // De verdeling als balkje: massief tot P50, lichter tot P90, met een streepje
 // op de norm. Zo zie je in één blik of de norm ergens tussen P50 en P90 ligt
 // (dan haalt een deel het niet) of voorbij P90 (dan is het echt uitzondering).
-function spreidingBalkHtml(r, schaal) {
-  const v = r.verdeling;
-  if (!v || v.p50 == null) return '<span class="muted small">te weinig metingen</span>';
-  const pct = (waarde) => Math.max(0, Math.min(100, (waarde / schaal) * 100));
-  const p50Pct = pct(v.p50);
-  const p90Pct = v.p90 == null ? p50Pct : pct(v.p90);
-  const normMerk = r.norm != null
-    ? `<span class="spreiding-norm" style="left:${pct(r.norm)}%" title="Norm ${dagenAfgerond(r.norm)}"></span>`
-    : '';
-  const titel = `P50 ${dagenAfgerond(v.p50)}${v.p90 == null ? '' : ` · P90 ${dagenAfgerond(v.p90)}`} · langste ${dagenAfgerond(v.max)} · ${v.n} metingen`;
-  return `<div class="spreiding-balk" title="${esc(titel)}">
-      <span class="spreiding-staart" style="width:${p90Pct}%"></span>
-      <span class="spreiding-kern" style="width:${p50Pct}%"></span>
-      ${normMerk}
-    </div>`;
-}
 
 // Boven de lijst een vak per norm: het hele traject voorop, daarna elke status.
 // Elk vak zegt hoeveel er in staan, hoeveel daarvan te lang, en waartegen dat
@@ -4228,9 +4190,26 @@ function renderBoxplotCard() {
     container.innerHTML = `<p class="empty-note">Nog te weinig afgeronde metingen voor een verdeling: er zijn er ${MIN_METINGEN_BOX} per stap nodig en de verste staat nu op ${meeste}. Elke keer dat een storing doorstroomt komt er een meting bij; deze plot vult zich vanzelf.</p>`;
     return;
   }
-  container.innerHTML = state.boxplotViewMode === 'table'
+  const kop = boxplotStaartKop(rijen);
+  container.innerHTML = kop + (state.boxplotViewMode === 'table'
     ? boxplotTabelHtml(rijen)
-    : boxplotSvgHtml(rijen) + boxplotLegendaHtml() + boxplotNoteHtml(rijen);
+    : boxplotSvgHtml(rijen) + boxplotLegendaHtml() + boxplotNoteHtml(rijen));
+}
+
+// De plot laat de scheefheid zien, maar alleen als je hem leest. Deze regel
+// zegt het in woorden voor de status waar P50 en P90 het verst uit elkaar
+// liggen: daar zit het probleem bij een paar gevallen en niet bij de hele bak.
+function boxplotStaartKop(rijen) {
+  const scheef = rijen
+    .filter(r => r.box && r.waarden.length >= MIN_METINGEN_P90)
+    .map(r => {
+      const a = r.waarden.slice().sort((x, y) => x - y);
+      return { label: r.label, p50: percentiel(a, 0.5), p90: percentiel(a, 0.9) };
+    })
+    .filter(r => r.p50 > 0 && r.p90 / r.p50 >= STAART_RATIO)
+    .sort((a, b) => (b.p90 / b.p50) - (a.p90 / a.p50))[0];
+  if (!scheef) return '';
+  return `<p class="prognose-headline">Bij <strong>${esc(scheef.label)}</strong> zit het verschil vooral in de staart: de helft is er binnen ${dagenAfgerond(scheef.p50)} doorheen, maar één op de tien doet er ${dagenAfgerond(scheef.p90)} of langer over.</p>`;
 }
 
 function boxplotNoteHtml(rijen) {
