@@ -2573,39 +2573,113 @@ function renderZelfdeAdresCard() {
 // opnieuw gecheckt moeten worden. De wachttijd komt uit de eigen markering
 // (sinds wanneer staat deze blokkade er), niet uit de orderdatum — anders zou
 // een storing die vorige week geblokkeerd raakte al maanden lijken te wachten.
-function buildBlokkadeOverzicht() {
+// Hoeveel werk heeft er over de hele meetperiode stilgestaan op iets buiten dit
+// team? Dat is een andere vraag dan "hoeveel staan er nu geblokkeerd" — dat
+// laatste staat al in de tegel bovenaan Data. Deze kaart gaat over de periode:
+// een blokkade die drie weken duurde en daarna is opgeheven, is verdwenen uit
+// elke momentopname maar heeft die drie weken wél gekost.
+//
+// De bron is blokkadeReden, dat bij elke plakactie wordt meegeschreven in de
+// momentopname. Daarmee is per meetdag terug te zien wie er toen op wachtte,
+// ook als de blokkade inmiddels weg is. Momentopnamen van vóór die functie
+// hebben geen reden en gelden als "toen niet geblokkeerd"; vandaar dat de
+// horizon apart wordt teruggegeven.
+//
+// Een episode is een aaneengesloten reeks meetdagen met dezelfde reden. Een
+// reden die wisselt (Aannemerij -> Naar Aanleg) begint een nieuwe episode: dat
+// is een ander wachtmoment, ook al staat dezelfde storing stil. Wachtdagen
+// lopen van de eerste meetdag van de episode tot de eerste meetdag waarop de
+// blokkade weg is — dezelfde "stand op de meetdag, geldig tot de volgende"-
+// regel die de app overal gebruikt voor duur.
+function buildBlokkadePeriode() {
+  const leeg = {
+    gemeten: false, episodes: [], redenen: [], ooitGeblokkeerd: 0, gezienTotaal: 0,
+    wachtdagen: 0, openDagen: 0, nuGeblokkeerd: 0, nogOpen: 0, inmiddelsVrij: 0,
+    verdwenenGeblokkeerd: 0, horizon: null, periodeVan: null, periodeTot: null, verouderd: 0,
+  };
   const snaps = chronoSnapshots();
-  if (snaps.length === 0) return { totaal: 0, redenen: [], storingen: [], meetDag: null };
-  const latest = snaps[snaps.length - 1];
-  const open = filterByActive(typeFiltered(latest.storingen));
+  if (snaps.length === 0) return leeg;
+  const visibleOf = (list) => filterByActive(typeFiltered(list));
+
+  const episodes = [];
+  const lopend = {};            // order -> { reden, vanIdx, laatsteIdx }
+  const gezien = new Set();     // alle orders die we in de periode hebben gezien
+  let horizon = null;           // eerste meetdag waarop een blokkade is meegeschreven
+  let openDagen = 0;            // alle openstaande dagen bij elkaar, als noemer
+
+  // De episode loopt door tot de eerste meetdag waarop 'ie niet meer
+  // geblokkeerd was; staat 'ie er op de laatste meetdag nog, dan is dat de
+  // stand van nu en loopt de episode nog.
+  const sluit = (order, ep) => {
+    const loopt = ep.laatsteIdx === snaps.length - 1;
+    const eindIdx = Math.min(ep.laatsteIdx + 1, snaps.length - 1);
+    const dagen = Math.max(0, dagenTussen(snaps[ep.vanIdx].week, snaps[eindIdx].week));
+    episodes.push({
+      order, reden: ep.reden, label: OV_BLOCK_REASON_LABELS[ep.reden] || ep.reden,
+      van: snaps[ep.vanIdx].week, tot: snaps[eindIdx].week, dagen, loopt,
+    });
+  };
+
+  snaps.forEach((sn, idx) => {
+    const lijst = visibleOf(sn.storingen);
+    const aanwezig = new Set(lijst.map(s => s.order));
+    if (idx < snaps.length - 1) {
+      openDagen += lijst.length * Math.max(0, dagenTussen(sn.week, snaps[idx + 1].week));
+    }
+    lijst.forEach(s => {
+      gezien.add(s.order);
+      const reden = s.blokkadeReden || null;
+      if (reden && horizon === null) horizon = sn.week;
+      const cur = lopend[s.order];
+      if (reden) {
+        if (cur && cur.reden === reden && cur.laatsteIdx === idx - 1) {
+          cur.laatsteIdx = idx;
+        } else {
+          if (cur) sluit(s.order, cur);
+          lopend[s.order] = { reden, vanIdx: idx, laatsteIdx: idx };
+        }
+      } else if (cur) {
+        sluit(s.order, cur);
+        delete lopend[s.order];
+      }
+    });
+    // Uit de lijst verdwenen terwijl de blokkade er nog stond: de episode
+    // eindigt hier, want vanaf nu is er niets meer om op te wachten.
+    Object.keys(lopend).forEach(order => {
+      if (aanwezig.has(order)) return;
+      sluit(order, lopend[order]);
+      delete lopend[order];
+    });
+  });
+  Object.keys(lopend).forEach(order => sluit(order, lopend[order]));
+
+  const laatste = snaps[snaps.length - 1];
+  const nuLijst = visibleOf(laatste.storingen);
+  const nuOrders = new Set(nuLijst.map(s => s.order));
+  // "Nu geblokkeerd" komt uit de huidige markering, precies zoals de tegel
+  // bovenaan Data het telt — anders zouden twee getallen op één pagina over
+  // hetzelfde gaan en verschillen.
+  const nuGeblokkeerd = nuLijst.filter(s => isOvBlocked(s)).length;
+
+  const ooitSet = new Set(episodes.map(e => e.order));
+  let nogOpen = 0, inmiddelsVrij = 0, verdwenenGeblokkeerd = 0;
+  ooitSet.forEach(order => {
+    if (!nuOrders.has(order)) { verdwenenGeblokkeerd++; return; }
+    const s = nuLijst.find(x => x.order === order);
+    if (s && isOvBlocked(s)) nogOpen++;
+    else inmiddelsVrij++;
+  });
 
   const perReden = {};
-  const storingen = [];
-  open.forEach(s => {
-    const reden = (ovBlockStatusOf(s.order) || {}).reason;
-    if (!reden) return;
-    const dagen = ovBlockDaysSince(s.order);
-    const rij = {
-      order: s.order,
-      reden,
-      redenLabel: OV_BLOCK_REASON_LABELS[reden] || reden,
-      plaats: s.city || 'Onbekend',
-      straat: s.street || '',
-      gebiedscode: s.gebiedscode || '—',
-      ovStatus: s.ovStatus || '—',
-      dagen,
-      verouderd: isOvBlockStale(s.order),
-      toelichting: (ovBlockStatusOf(s.order) || {}).note || '',
-      meetNietMee: blokkadeSluitUit(reden),
-      storing: s,
+  episodes.forEach(e => {
+    const v = perReden[e.reden] = perReden[e.reden] || {
+      reden: e.reden, label: e.label, orders: new Set(), episodes: 0, wachtdagen: 0, dagenLijst: [], nuNog: 0,
     };
-    storingen.push(rij);
-    const vak = perReden[reden] = perReden[reden] || {
-      reden, label: rij.redenLabel, aantal: 0, verouderd: 0, dagenLijst: [], meetNietMee: rij.meetNietMee,
-    };
-    vak.aantal++;
-    if (rij.verouderd) vak.verouderd++;
-    if (dagen !== null) vak.dagenLijst.push(dagen);
+    v.orders.add(e.order);
+    v.episodes++;
+    v.wachtdagen += e.dagen;
+    v.dagenLijst.push(e.dagen);
+    if (e.loopt) v.nuNog++;
   });
 
   const redenen = Object.keys(OV_BLOCK_REASON_LABELS)
@@ -2613,88 +2687,136 @@ function buildBlokkadeOverzicht() {
     .filter(Boolean)
     .map(v => {
       const gesorteerd = v.dagenLijst.slice().sort((a, b) => a - b);
-      return Object.assign(v, {
+      return {
+        reden: v.reden, label: v.label, storingen: v.orders.size, episodes: v.episodes,
+        wachtdagen: v.wachtdagen, nuNog: v.nuNog,
         p50: gesorteerd.length ? percentiel(gesorteerd, 0.5) : null,
         langste: gesorteerd.length ? gesorteerd[gesorteerd.length - 1] : null,
-      });
+        meetNietMee: blokkadeSluitUit(v.reden),
+      };
     })
-    .sort((a, b) => b.aantal - a.aantal);
+    .sort((a, b) => b.wachtdagen - a.wachtdagen || b.storingen - a.storingen);
 
-  return { totaal: storingen.length, redenen, storingen, meetDag: latest.week, totaalOpen: open.length };
+  const verouderd = nuLijst.filter(s => isOvBlocked(s) && isOvBlockStale(s.order)).length;
+
+  return {
+    gemeten: episodes.length > 0,
+    episodes, redenen,
+    ooitGeblokkeerd: ooitSet.size,
+    gezienTotaal: gezien.size,
+    wachtdagen: episodes.reduce((n, e) => n + e.dagen, 0),
+    openDagen,
+    nuGeblokkeerd, nogOpen, inmiddelsVrij, verdwenenGeblokkeerd, verouderd,
+    horizon,
+    periodeVan: snaps[0].week,
+    periodeTot: laatste.week,
+  };
 }
 
 function renderBlokkadeOverzichtCard() {
   const kaart = document.getElementById('blokkade-overzicht-card');
   const container = document.getElementById('blokkade-overzicht-body');
   if (!kaart || !container) return;
-  const o = buildBlokkadeOverzicht();
+  const o = buildBlokkadePeriode();
 
-  kaart.classList.toggle('hidden', o.totaal === 0);
+  kaart.classList.toggle('hidden', !o.gemeten);
   const teller = document.getElementById('blokkade-overzicht-count');
-  if (teller) teller.textContent = o.totaal;
-  if (o.totaal === 0) { container.innerHTML = ''; return; }
+  if (teller) teller.textContent = o.ooitGeblokkeerd;
+  if (!o.gemeten) { container.innerHTML = ''; return; }
 
-  const aandeel = o.totaalOpen > 0 ? Math.round((o.totaal / o.totaalOpen) * 100) : 0;
-  const verouderd = o.redenen.reduce((n, r) => n + r.verouderd, 0);
-  const kop = `<p class="prognose-headline"><strong>${o.totaal}</strong> van de ${o.totaalOpen} openstaande storingen ${o.totaal === 1 ? 'staat' : 'staan'} geblokkeerd — <strong>${aandeel}%</strong> van de werkvoorraad wacht op iemand anders.</p>`
-    + (verouderd > 0
-        ? `<p class="muted small">${verouderd === 1 ? '1 blokkade staat' : `${verouderd} blokkades staan`} er al ${OV_BLOCK_STALE_DAYS} dagen of langer — nog actueel? Een tekort van twee maanden terug is misschien allang opgelost.</p>`
-        : '');
+  const aandeelStoringen = o.gezienTotaal > 0 ? Math.round((o.ooitGeblokkeerd / o.gezienTotaal) * 100) : 0;
+  const aandeelDagen = o.openDagen > 0 ? Math.round((o.wachtdagen / o.openDagen) * 100) : null;
+
+  const kop = `<p class="prognose-headline">Van de ${o.gezienTotaal} storingen die we sinds ${fmtDag(o.periodeVan, true)} hebben gezien, ${o.ooitGeblokkeerd === 1 ? 'heeft er <strong>1</strong>' : `hebben er <strong>${o.ooitGeblokkeerd}</strong>`} op een of ander moment stilgestaan op iets buiten dit team — <strong>${aandeelStoringen}%</strong> van alles wat voorbijkwam.</p>`
+    + `<p class="prognose-headline">Samen <strong>${o.wachtdagen}</strong> wachtdagen${aandeelDagen !== null ? `, oftewel <strong>${aandeelDagen}%</strong> van alle tijd dat er werk open stond` : ''}.</p>`;
+
+  const stand = [];
+  stand.push(`${o.nuGeblokkeerd === 1 ? '1 storing staat' : `${o.nuGeblokkeerd} storingen staan`} er nu nog geblokkeerd`);
+  if (o.inmiddelsVrij > 0) stand.push(`${o.inmiddelsVrij} ${o.inmiddelsVrij === 1 ? 'is' : 'zijn'} weer vrijgegeven en nog open`);
+  if (o.verdwenenGeblokkeerd > 0) stand.push(`${o.verdwenenGeblokkeerd} ${o.verdwenenGeblokkeerd === 1 ? 'is' : 'zijn'} inmiddels uit de lijst`);
+  const standRegel = `<p class="muted small">Stand nu: ${stand.join(', ')}.`
+    + (o.verouderd > 0
+        ? ` Let op: ${o.verouderd === 1 ? '1 blokkade staat' : `${o.verouderd} blokkades staan`} er al ${OV_BLOCK_STALE_DAYS} dagen of langer — nog actueel? Een tekort van twee maanden terug is misschien allang opgelost.`
+        : '')
+    + `</p>`;
 
   const rijen = o.redenen.map(r => `<tr>
       <td>${esc(r.label)}</td>
-      <td class="num">${r.aantal}</td>
+      <td class="num">${r.storingen}</td>
+      <td class="num">${r.episodes}</td>
+      <td class="num">${r.wachtdagen}</td>
       <td class="num">${r.p50 == null ? '—' : dagenAfgerond(r.p50)}</td>
       <td class="num">${r.langste == null ? '—' : r.langste}</td>
-      <td class="num${r.verouderd > 0 ? ' geblokkeerd-cel' : ''}">${r.verouderd || '—'}</td>
+      <td class="num${r.nuNog > 0 ? ' geblokkeerd-cel' : ''}">${r.nuNog || '—'}</td>
       <td>${r.meetNietMee ? 'nee' : '<strong>ja</strong>'}</td>
     </tr>`).join('');
 
-  container.innerHTML = kop + `
+  // De som per reden kan hoger uitvallen dan het totaal: een storing die eerst
+  // op de aannemerij wachtte en daarna op Aanleg staat bij beide redenen. Dat
+  // hoort er letterlijk bij te staan, anders lijkt de tabel niet te kloppen.
+  const somStoringen = o.redenen.reduce((n, r) => n + r.storingen, 0);
+  const dubbel = somStoringen > o.ooitGeblokkeerd
+    ? ` De aantallen per reden tellen op tot ${somStoringen} en dus hoger dan ${o.ooitGeblokkeerd}: ${somStoringen - o.ooitGeblokkeerd} ${somStoringen - o.ooitGeblokkeerd === 1 ? 'storing heeft' : 'storingen hebben'} in deze periode op meer dan één ding gewacht.`
+    : '';
+
+  const horizonRegel = o.horizon && o.horizon !== o.periodeVan
+    ? `<p class="muted small">Blokkades worden sinds ${fmtDag(o.horizon, true)} meegeschreven in de opgeslagen updates. Wat daarvoor geblokkeerd stond is niet terug te zien, dus dit is een ondergrens: het werkelijke aantal over de hele periode ligt hoger.</p>`
+    : '';
+
+  container.innerHTML = kop + standRegel + `
     <div class="table-scroll">
       <table>
         <thead><tr>
-          <th>Waar wachten we op</th><th class="num">Aantal</th><th class="num">Mediaan wachttijd</th>
-          <th class="num">Langst</th><th class="num">${OV_BLOCK_STALE_DAYS}+ dagen</th><th>Telt mee in doorlooptijd</th>
+          <th>Waar wachten we op</th><th class="num">Storingen</th><th class="num">Blokkades</th>
+          <th class="num">Wachtdagen</th><th class="num">Mediaan per blokkade</th><th class="num">Langst</th>
+          <th class="num">Nu nog</th><th>Telt mee in doorlooptijd</th>
         </tr></thead>
         <tbody>${rijen}</tbody>
       </table>
     </div>
-    <p class="muted small">Wachttijd gerekend vanaf het moment dat de blokkade hier is aangezet, niet vanaf de melddatum — een storing die vorige week geblokkeerd raakte wacht één week, ook als 'ie al maanden openstaat. ${blokkadeUitlegLink()}</p>`;
+    <p class="muted small">Een "blokkade" is één aaneengesloten wachtperiode. Wisselt de reden, dan is dat een nieuwe blokkade op dezelfde storing — een ander wachtmoment.${dubbel} Wachtdagen lopen van de meetdag waarop de blokkade voor het eerst meekwam tot de meetdag waarop 'ie weg was; staat een blokkade er op de laatste meetdag nog, dan telt de tijd tot nu. Een blokkade die maar op één meetdag zichtbaar was levert 0 dagen op — dan is er niet genoeg gemeten om te weten hoe lang 'ie duurde. ${blokkadeUitlegLink()}</p>`
+    + horizonRegel;
 }
 
 // Een bericht dat je zonder bewerken kunt doorsturen aan de bouwers van de
-// applicatie: wat er stilstaat, waarop het wacht en hoe lang al. Geen namen en
-// geen adressen — alleen ordernummers, redenen en getallen.
+// applicatie: wat er over de meetperiode heeft stilgestaan, waarop het wachtte
+// en hoe lang. Geen namen en geen adressen — alleen ordernummers, redenen en
+// getallen.
 function buildBlokkadeText() {
-  const o = buildBlokkadeOverzicht();
-  if (o.totaal === 0) return 'Op dit moment staan er geen storingen geblokkeerd.';
+  const o = buildBlokkadePeriode();
+  if (!o.gemeten) return 'In de gemeten periode zijn er geen geblokkeerde storingen vastgelegd.';
+  const aandeelStoringen = o.gezienTotaal > 0 ? Math.round((o.ooitGeblokkeerd / o.gezienTotaal) * 100) : 0;
+  const aandeelDagen = o.openDagen > 0 ? Math.round((o.wachtdagen / o.openDagen) * 100) : null;
+
   const regels = [
-    `Geblokkeerde NUS-storingen — stand ${fmtDag(o.meetDag, true)}`,
-    `${o.totaal} van de ${o.totaalOpen} openstaande storingen staan geblokkeerd (${o.totaalOpen > 0 ? Math.round((o.totaal / o.totaalOpen) * 100) : 0}% van de werkvoorraad).`,
+    `Geblokkeerde NUS-storingen — periode ${fmtDag(o.periodeVan, true)} t/m ${fmtDag(o.periodeTot, true)}`,
     '',
-    'Per reden:',
+    `${o.ooitGeblokkeerd} van de ${o.gezienTotaal} storingen (${aandeelStoringen}%) hebben in deze periode stilgestaan op iets buiten ons team.`,
+    `Samen ${o.wachtdagen} wachtdagen${aandeelDagen !== null ? ` (${aandeelDagen}% van alle tijd dat er werk open stond)` : ''}.`,
+    `Stand nu: ${o.nuGeblokkeerd} geblokkeerd, ${o.inmiddelsVrij} weer vrijgegeven en nog open, ${o.verdwenenGeblokkeerd} inmiddels uit de lijst.`,
+    '',
+    'Per reden (storingen / blokkades / wachtdagen / mediaan / langst / nu nog):',
   ];
   o.redenen.forEach(r => {
-    const delen = [`${r.aantal}x`];
-    if (r.p50 != null) delen.push(`mediaan ${dagenAfgerond(r.p50)} wachttijd`);
-    if (r.langste != null) delen.push(`langst ${r.langste} dagen`);
-    if (r.verouderd > 0) delen.push(`${r.verouderd} al ${OV_BLOCK_STALE_DAYS}+ dagen`);
-    regels.push(`- ${r.label}: ${delen.join(', ')}`);
+    regels.push(`- ${r.label}: ${r.storingen} storingen, ${r.episodes} blokkades, ${r.wachtdagen} wachtdagen`
+      + `${r.p50 == null ? '' : `, mediaan ${dagenAfgerond(r.p50)}`}`
+      + `${r.langste == null ? '' : `, langst ${r.langste} dagen`}`
+      + `, nu nog ${r.nuNog}`);
   });
-  regels.push('', 'Orders per reden:');
-  o.redenen.forEach(r => {
-    const orders = o.storingen.filter(s => s.reden === r.reden)
-      .sort((a, b) => (b.dagen || 0) - (a.dagen || 0))
-      .map(s => `${s.order} (${s.ovStatus}${s.dagen == null ? '' : `, ${s.dagen} dgn`})`);
-    regels.push(`${r.label}: ${orders.join('; ')}`);
-  });
-  const metToelichting = o.storingen.filter(s => s.toelichting);
-  if (metToelichting.length > 0) {
-    regels.push('', 'Toelichting waar ingevuld:');
-    metToelichting.forEach(s => regels.push(`- ${s.order}: ${s.toelichting}`));
+
+  // De langste wachtperiodes zijn waar het gesprek over gaat; de hele lijst
+  // ordernummers maakt het bericht onleesbaar.
+  const langste = o.episodes.slice().sort((a, b) => b.dagen - a.dagen).slice(0, 15);
+  if (langste.length > 0) {
+    regels.push('', `Langste wachtperiodes (top ${langste.length}):`);
+    langste.forEach(e => {
+      regels.push(`- ${e.order}: ${e.label}, ${e.dagen} dagen (${fmtDag(e.van, true)} t/m ${fmtDag(e.tot, true)})${e.loopt ? ' — loopt nog' : ''}`);
+    });
   }
-  regels.push('', 'Wachttijd gerekend vanaf het moment dat de blokkade in ons dashboard is gezet.');
+  if (o.horizon && o.horizon !== o.periodeVan) {
+    regels.push('', `Let op: blokkades zijn pas vanaf ${fmtDag(o.horizon, true)} vastgelegd, dus dit is een ondergrens.`);
+  }
+  regels.push('', 'Wachtdagen gerekend tussen de meetdagen van ons dashboard; een blokkade die op één meetdag zichtbaar was levert 0 dagen op.');
   return regels.join('\n');
 }
 
@@ -5551,16 +5673,18 @@ function renderTypeWhitelist() {
 function renderBlokkadeUitsluitenCard() {
   const el = document.getElementById('blokkade-uitsluiten-body');
   if (!el) return;
-  const o = state.snapshots.length > 0 ? buildBlokkadeOverzicht() : { redenen: [] };
+  const o = state.snapshots.length > 0 ? buildBlokkadePeriode() : { redenen: [] };
   const perReden = {};
   o.redenen.forEach(r => { perReden[r.reden] = r; });
 
   el.innerHTML = Object.keys(OV_BLOCK_REASON_LABELS).map((reden, i) => {
     const aan = (state.blokkadeUitsluiten || []).includes(reden);
     const r = perReden[reden];
+    // Het cumulatieve getal, niet de stand van nu: of je deze reden wilt
+    // uitsluiten hangt af van hoeveel metingen het raakt over de hele periode.
     const hint = r
-      ? `${r.aantal} ${r.aantal === 1 ? 'storing staat' : 'storingen staan'} hier nu op${r.p50 == null ? '' : `, mediaan ${dagenAfgerond(r.p50)} wachttijd`}`
-      : 'nu geen storingen met deze reden';
+      ? `${r.storingen} ${r.storingen === 1 ? 'storing heeft' : 'storingen hebben'} hier in de meetperiode op gewacht, samen ${r.wachtdagen} dagen`
+      : 'nog niets gemeten op deze reden';
     return `<div class="input-row streef-rij">
       <label for="blok-uit-${i}">
         <input type="checkbox" id="blok-uit-${i}" data-blokkade-reden="${esc(reden)}" ${aan ? 'checked' : ''}>
