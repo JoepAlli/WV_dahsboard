@@ -1288,6 +1288,10 @@ tr.detail-row > td {
   color: var(--text-primary);
 }
 .prognose-bad { color: var(--status-critical); }
+/* Een cel met een blokkade of een verouderde markering: opvallend genoeg om te
+   zien dat er iets staat, niet zo rood dat het op een fout lijkt — een blokkade
+   is geen storing in het dashboard maar een feit over de buitenwereld. */
+.geblokkeerd-cel { color: var(--status-warning, var(--text-primary)); font-weight: 600; }
 .prognose-good { color: var(--status-good); }
 
 .tempo-grid {

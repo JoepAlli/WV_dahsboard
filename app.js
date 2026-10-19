@@ -422,6 +422,68 @@ async function saveDoorlooptijdNorm(n) {
   catch (e) { showErrorToast('Opslaan van de doorlooptijd-norm is mislukt: ' + e.message); }
 }
 
+// Een geblokkeerde storing staat stil om een reden die buiten dit team ligt:
+// de aannemerij heeft geen materiaal, het wacht op Aanleg, de uitvoerder is
+// nog niet geweest. Die wachttijd telt wél mee in de kalenderdagen, maar zegt
+// niets over hoe snel dít team werkt — en trekt de gemeten duur zo ver omhoog
+// dat de verdeling onbruikbaar wordt.
+//
+// Erger nog: die gemeten mediaan is óók de terugvalnorm als er geen
+// streefwaarde is ingevuld (zie statusNormVan), en de drempel voor "te lang"
+// is twee keer die mediaan. Blokkades maakten de norm dus soepeler, precies
+// bij de statussen waar ze het meest voorkomen. Een blokkade verborg
+// stilstand daarmee twee keer.
+//
+// Welke redenen uitgesloten worden is een keuze: Aannemerij, Naar Aanleg en
+// Uitvoerder liggen bij anderen, maar "Onderzoek loopt" is het eigen proces —
+// dat uitsluiten zou echte stilstand in het onderzoek wegpoetsen. Vandaar een
+// instelling in plaats van een vaste lijst.
+const BLOKKADE_UITSLUITEN_KEY = 'nusdash_blokkade_uitsluiten_v1';
+const DEFAULT_BLOKKADE_UITSLUITEN = ['rezap', 'aanleg', 'uitvoerder', 'onderzoek'];
+async function loadBlokkadeUitsluiten() {
+  try {
+    const v = await idbGet(BLOKKADE_UITSLUITEN_KEY);
+    if (!Array.isArray(v)) return DEFAULT_BLOKKADE_UITSLUITEN.slice();
+    return v.filter(r => r in OV_BLOCK_REASON_LABELS);
+  } catch (e) { console.error(e); return DEFAULT_BLOKKADE_UITSLUITEN.slice(); }
+}
+async function saveBlokkadeUitsluiten(lijst) {
+  try { await idbSet(BLOKKADE_UITSLUITEN_KEY, lijst); }
+  catch (e) { showErrorToast('Opslaan van de blokkade-instelling is mislukt: ' + e.message); }
+}
+// Telt deze blokkade-reden mee als "niet meten"? Een lege reden is geen
+// blokkade.
+function blokkadeSluitUit(reden) {
+  return !!reden && (state.blokkadeUitsluiten || []).includes(reden);
+}
+// Overal waar metingen zijn weggelaten hoort te staan wáárom, met een weg naar
+// de knop die het bepaalt. Anders is een stiller geworden verdeling niet te
+// onderscheiden van een fout.
+function blokkadeUitlegLink() {
+  if (isStaticExport) return 'Welke blokkade-redenen niet meetellen is een instelling bij degene die dit gedeeld heeft.';
+  return `<button type="button" class="btn-link" data-goto-instelling="blokkade-card">Welke blokkades niet meetellen</button>`;
+}
+// Eén regel onder een lijst waaruit geblokkeerde storingen zijn weggelaten.
+// Een lijst die korter is dan verwacht moet zelf vertellen waarom, anders ga je
+// zoeken naar een fout die er niet is.
+function blokkadeOvergeslagenHtml(aantal) {
+  if (!aantal) return '';
+  return `<p class="muted small">${aantal === 1 ? '1 storing staat' : `${aantal} storingen staan`} geblokkeerd en ${aantal === 1 ? 'is' : 'zijn'} hier weggelaten — daar kan hier niemand iets aan doen, dus ${aantal === 1 ? 'die telt' : 'die tellen'} ook niet mee in de vakken hierboven. ${blokkadeUitlegLink()}</p>`;
+}
+// De redenen die nu uitgesloten zijn, als leesbare opsomming.
+function blokkadeUitgeslotenTekst() {
+  const namen = (state.blokkadeUitsluiten || []).map(r => OV_BLOCK_REASON_LABELS[r]).filter(Boolean);
+  if (namen.length === 0) return 'geen';
+  if (namen.length === 1) return namen[0];
+  return namen.slice(0, -1).join(', ') + ' en ' + namen[namen.length - 1];
+}
+// Dezelfde vraag voor een storing zoals die nu is (live blokkade, nog niet in
+// een momentopname) én zoals die in een momentopname stond.
+function meetBlokkadeUit(s, inMomentopname) {
+  if (inMomentopname) return blokkadeSluitUit(s.blokkadeReden);
+  return blokkadeSluitUit((ovBlockStatusOf(s.order) || {}).reason);
+}
+
 const STATUS_STREEF_KEY = 'nusdash_status_streef_v1';
 // Samen 12. "Nieuw" en "Onderzoek controleren" zijn doorgeefstappen — daar
 // hoort niets te blijven liggen, dus één dag. De ruimte zit in het onderzoek
@@ -499,6 +561,7 @@ async function exportBackup() {
     capaciteit: await loadCapaciteit(),
     statusStreef: await loadStatusStreef(),
     doorlooptijdNorm: await loadDoorlooptijdNorm(),
+    blokkadeUitsluiten: await loadBlokkadeUitsluiten(),
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -538,6 +601,7 @@ function buildStandaloneExport() {
     bijnaVerlopenThreshold: state.bijnaVerlopenThreshold,
     statusStreef: state.statusStreef,
     doorlooptijdNorm: state.doorlooptijdNorm,
+    blokkadeUitsluiten: state.blokkadeUitsluiten,
     exportedAt: new Date().toISOString(),
   };
   const dataScript = escapeForInlineTag('window.__DASHBOARD_DATA__ = ' + JSON.stringify(data) + ';', 'script');
@@ -576,6 +640,7 @@ async function importBackup(file) {
   if (backup.capaciteit && typeof backup.capaciteit === 'object') await saveCapaciteit(backup.capaciteit);
   if (backup.statusStreef && typeof backup.statusStreef === 'object') await saveStatusStreef(schoonStatusStreef(backup.statusStreef));
   if (Number.isFinite(backup.doorlooptijdNorm) && backup.doorlooptijdNorm > 0) await saveDoorlooptijdNorm(backup.doorlooptijdNorm);
+  if (Array.isArray(backup.blokkadeUitsluiten)) await saveBlokkadeUitsluiten(backup.blokkadeUitsluiten.filter(r => r in OV_BLOCK_REASON_LABELS));
 }
 
 // Bouwt, in één keer over alle bestaande OV-snapshots (nieuwste eerst), een
@@ -784,6 +849,7 @@ const state = {
   capaciteit: { meetdienst: 0, mio: 0 },
   statusStreef: {},
   doorlooptijdNorm: DEFAULT_DOORLOOPTIJD_NORM,
+  blokkadeUitsluiten: DEFAULT_BLOKKADE_UITSLUITEN.slice(),
   stagnatieFilter: null,
   boxplotSchaal: 'whisker',
   boxplotViewMode: 'chart',
@@ -1632,25 +1698,35 @@ function renderAttentionList(current, allVisible) {
 // de eerst-geziene week en de week van verdwijnen. Geeft een beeld van of de
 // achterstand structureel groeit of krimpt, los van de wekelijkse
 // momentopname.
+// Anders dan per status is het hele traject één meting per storing: stond 'ie
+// ergens onderweg geblokkeerd, dan is er niets over te houden en valt de hele
+// storing weg. Grover dan de meting per status, maar het alternatief is een
+// trajectduur waar wachttijd van de aannemerij in zit.
 function resolvedDurations() {
   const snaps = chronoSnapshots();
   const visibleOf = (list) => filterByActive(typeFiltered(list));
   const firstSeen = {};
+  const geblokkeerdOoit = new Set();
   const results = [];
+  let overgeslagen = 0;
   snaps.forEach((sn, i) => {
     const curOrders = new Set(visibleOf(sn.storingen).map(s => s.order));
     if (i > 0) {
       const prevOrders = visibleOf(snaps[i - 1].storingen).map(s => s.order);
       prevOrders.forEach(order => {
         if (!curOrders.has(order) && firstSeen[order]) {
+          if (geblokkeerdOoit.has(order)) { overgeslagen++; return; }
           const days = Math.round((new Date(sn.week) - new Date(firstSeen[order])) / 86400000);
           results.push({ week: sn.week, order, days });
         }
       });
     }
-    visibleOf(sn.storingen).forEach(s => { if (!(s.order in firstSeen)) firstSeen[s.order] = sn.week; });
+    visibleOf(sn.storingen).forEach(s => {
+      if (!(s.order in firstSeen)) firstSeen[s.order] = sn.week;
+      if (meetBlokkadeUit(s, true) || meetBlokkadeUit(s, false)) geblokkeerdOoit.add(s.order);
+    });
   });
-  return results;
+  return { lijst: results, overgeslagen };
 }
 
 /* ---------- Verdeling: P50 en P90 ---------- */
@@ -1732,9 +1808,11 @@ function verdelingTegelsHtml(v, wat) {
 function renderDoorlooptijdCard() {
   const el = document.getElementById('doorlooptijd-card-body');
   if (!el) return;
-  const durations = resolvedDurations();
+  const { lijst: durations, overgeslagen } = resolvedDurations();
   if (durations.length === 0) {
-    el.innerHTML = '<p class="empty-note">Nog geen storingen uit de lijst verdwenen sinds we zijn gaan meten — kom hier later op terug.</p>';
+    el.innerHTML = overgeslagen > 0
+      ? `<p class="empty-note">Er ${overgeslagen === 1 ? 'is 1 storing' : `zijn ${overgeslagen} storingen`} uit de lijst verdwenen, maar ${overgeslagen === 1 ? 'die stond' : 'die stonden'} onderweg geblokkeerd — dan meet je de wachttijd van een ander. ${blokkadeUitlegLink()}</p>`
+      : '<p class="empty-note">Nog geen storingen uit de lijst verdwenen sinds we zijn gaan meten — kom hier later op terug.</p>';
     return;
   }
   const v = verdelingVan(durations.map(d => d.days));
@@ -1754,7 +1832,7 @@ function renderDoorlooptijdCard() {
   el.innerHTML = verdelingTegelsHtml(v, durations.length === 1 ? 'storing' : 'storingen')
     + (staart ? `<p class="prognose-headline">${esc(staart)}</p>` : '')
     + trendHtml
-    + `<p class="muted small">Over ${durations.length} storing${durations.length === 1 ? '' : 'en'} die sinds het begin van de metingen uit de lijst zijn verdwenen (van eerst gezien tot niet meer aanwezig). Het gemiddelde staat er alleen ter vergelijking bij: zit dat ver boven P50, dan wordt het opgetrokken door een paar hele lange gevallen en beschrijft het geen enkele storing.</p>`;
+    + `<p class="muted small">Over ${durations.length} storing${durations.length === 1 ? '' : 'en'} die sinds het begin van de metingen uit de lijst zijn verdwenen (van eerst gezien tot niet meer aanwezig). Het gemiddelde staat er alleen ter vergelijking bij: zit dat ver boven P50, dan wordt het opgetrokken door een paar hele lange gevallen en beschrijft het geen enkele storing.${overgeslagen > 0 ? ` Daarnaast ${overgeslagen === 1 ? 'is 1 storing' : `zijn ${overgeslagen} storingen`} weggelaten omdat ${overgeslagen === 1 ? 'die' : 'die'} onderweg geblokkeerd ${overgeslagen === 1 ? 'stond' : 'stonden'}. ${blokkadeUitlegLink()}` : ''}</p>`;
 }
 
 /* ---------- Instroom en uitstroom per gebied ---------- */
@@ -2484,6 +2562,142 @@ function renderZelfdeAdresCard() {
 }
 
 // Platte tekst voor het "Kopieer"-knopje — zelfde volgorde als op het scherm.
+/* ---------- Geblokkeerd: waar wachten we op ---------- */
+
+// Een blokkade is geen eigenschap van de storing maar van de wereld eromheen:
+// de aannemerij heeft geen materiaal, het wacht op Aanleg. Dat is precies het
+// soort informatie dat de bouwers van de applicatie willen hebben, want zij
+// zien alleen dat een order lang openstaat en niet waarom.
+//
+// Per reden: hoeveel, hoe lang al, en hoeveel daarvan zo oud zijn dat ze
+// opnieuw gecheckt moeten worden. De wachttijd komt uit de eigen markering
+// (sinds wanneer staat deze blokkade er), niet uit de orderdatum — anders zou
+// een storing die vorige week geblokkeerd raakte al maanden lijken te wachten.
+function buildBlokkadeOverzicht() {
+  const snaps = chronoSnapshots();
+  if (snaps.length === 0) return { totaal: 0, redenen: [], storingen: [], meetDag: null };
+  const latest = snaps[snaps.length - 1];
+  const open = filterByActive(typeFiltered(latest.storingen));
+
+  const perReden = {};
+  const storingen = [];
+  open.forEach(s => {
+    const reden = (ovBlockStatusOf(s.order) || {}).reason;
+    if (!reden) return;
+    const dagen = ovBlockDaysSince(s.order);
+    const rij = {
+      order: s.order,
+      reden,
+      redenLabel: OV_BLOCK_REASON_LABELS[reden] || reden,
+      plaats: s.city || 'Onbekend',
+      straat: s.street || '',
+      gebiedscode: s.gebiedscode || '—',
+      ovStatus: s.ovStatus || '—',
+      dagen,
+      verouderd: isOvBlockStale(s.order),
+      toelichting: (ovBlockStatusOf(s.order) || {}).note || '',
+      meetNietMee: blokkadeSluitUit(reden),
+      storing: s,
+    };
+    storingen.push(rij);
+    const vak = perReden[reden] = perReden[reden] || {
+      reden, label: rij.redenLabel, aantal: 0, verouderd: 0, dagenLijst: [], meetNietMee: rij.meetNietMee,
+    };
+    vak.aantal++;
+    if (rij.verouderd) vak.verouderd++;
+    if (dagen !== null) vak.dagenLijst.push(dagen);
+  });
+
+  const redenen = Object.keys(OV_BLOCK_REASON_LABELS)
+    .map(r => perReden[r])
+    .filter(Boolean)
+    .map(v => {
+      const gesorteerd = v.dagenLijst.slice().sort((a, b) => a - b);
+      return Object.assign(v, {
+        p50: gesorteerd.length ? percentiel(gesorteerd, 0.5) : null,
+        langste: gesorteerd.length ? gesorteerd[gesorteerd.length - 1] : null,
+      });
+    })
+    .sort((a, b) => b.aantal - a.aantal);
+
+  return { totaal: storingen.length, redenen, storingen, meetDag: latest.week, totaalOpen: open.length };
+}
+
+function renderBlokkadeOverzichtCard() {
+  const kaart = document.getElementById('blokkade-overzicht-card');
+  const container = document.getElementById('blokkade-overzicht-body');
+  if (!kaart || !container) return;
+  const o = buildBlokkadeOverzicht();
+
+  kaart.classList.toggle('hidden', o.totaal === 0);
+  const teller = document.getElementById('blokkade-overzicht-count');
+  if (teller) teller.textContent = o.totaal;
+  if (o.totaal === 0) { container.innerHTML = ''; return; }
+
+  const aandeel = o.totaalOpen > 0 ? Math.round((o.totaal / o.totaalOpen) * 100) : 0;
+  const verouderd = o.redenen.reduce((n, r) => n + r.verouderd, 0);
+  const kop = `<p class="prognose-headline"><strong>${o.totaal}</strong> van de ${o.totaalOpen} openstaande storingen ${o.totaal === 1 ? 'staat' : 'staan'} geblokkeerd — <strong>${aandeel}%</strong> van de werkvoorraad wacht op iemand anders.</p>`
+    + (verouderd > 0
+        ? `<p class="muted small">${verouderd === 1 ? '1 blokkade staat' : `${verouderd} blokkades staan`} er al ${OV_BLOCK_STALE_DAYS} dagen of langer — nog actueel? Een tekort van twee maanden terug is misschien allang opgelost.</p>`
+        : '');
+
+  const rijen = o.redenen.map(r => `<tr>
+      <td>${esc(r.label)}</td>
+      <td class="num">${r.aantal}</td>
+      <td class="num">${r.p50 == null ? '—' : dagenAfgerond(r.p50)}</td>
+      <td class="num">${r.langste == null ? '—' : r.langste}</td>
+      <td class="num${r.verouderd > 0 ? ' geblokkeerd-cel' : ''}">${r.verouderd || '—'}</td>
+      <td>${r.meetNietMee ? 'nee' : '<strong>ja</strong>'}</td>
+    </tr>`).join('');
+
+  container.innerHTML = kop + `
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Waar wachten we op</th><th class="num">Aantal</th><th class="num">Mediaan wachttijd</th>
+          <th class="num">Langst</th><th class="num">${OV_BLOCK_STALE_DAYS}+ dagen</th><th>Telt mee in doorlooptijd</th>
+        </tr></thead>
+        <tbody>${rijen}</tbody>
+      </table>
+    </div>
+    <p class="muted small">Wachttijd gerekend vanaf het moment dat de blokkade hier is aangezet, niet vanaf de melddatum — een storing die vorige week geblokkeerd raakte wacht één week, ook als 'ie al maanden openstaat. ${blokkadeUitlegLink()}</p>`;
+}
+
+// Een bericht dat je zonder bewerken kunt doorsturen aan de bouwers van de
+// applicatie: wat er stilstaat, waarop het wacht en hoe lang al. Geen namen en
+// geen adressen — alleen ordernummers, redenen en getallen.
+function buildBlokkadeText() {
+  const o = buildBlokkadeOverzicht();
+  if (o.totaal === 0) return 'Op dit moment staan er geen storingen geblokkeerd.';
+  const regels = [
+    `Geblokkeerde NUS-storingen — stand ${fmtDag(o.meetDag, true)}`,
+    `${o.totaal} van de ${o.totaalOpen} openstaande storingen staan geblokkeerd (${o.totaalOpen > 0 ? Math.round((o.totaal / o.totaalOpen) * 100) : 0}% van de werkvoorraad).`,
+    '',
+    'Per reden:',
+  ];
+  o.redenen.forEach(r => {
+    const delen = [`${r.aantal}x`];
+    if (r.p50 != null) delen.push(`mediaan ${dagenAfgerond(r.p50)} wachttijd`);
+    if (r.langste != null) delen.push(`langst ${r.langste} dagen`);
+    if (r.verouderd > 0) delen.push(`${r.verouderd} al ${OV_BLOCK_STALE_DAYS}+ dagen`);
+    regels.push(`- ${r.label}: ${delen.join(', ')}`);
+  });
+  regels.push('', 'Orders per reden:');
+  o.redenen.forEach(r => {
+    const orders = o.storingen.filter(s => s.reden === r.reden)
+      .sort((a, b) => (b.dagen || 0) - (a.dagen || 0))
+      .map(s => `${s.order} (${s.ovStatus}${s.dagen == null ? '' : `, ${s.dagen} dgn`})`);
+    regels.push(`${r.label}: ${orders.join('; ')}`);
+  });
+  const metToelichting = o.storingen.filter(s => s.toelichting);
+  if (metToelichting.length > 0) {
+    regels.push('', 'Toelichting waar ingevuld:');
+    metToelichting.forEach(s => regels.push(`- ${s.order}: ${s.toelichting}`));
+  }
+  regels.push('', 'Wachttijd gerekend vanaf het moment dat de blokkade in ons dashboard is gezet.');
+  return regels.join('\n');
+}
+
 function buildZelfdeAdresText() {
   const groepen = buildZelfdeAdres();
   const snaps = chronoSnapshots();
@@ -3745,27 +3959,45 @@ function buildStatusDuurStats() {
   // Per status: alle afgeronde "hoe lang stond het hierop"-metingen, in weken.
   const afgerond = {};
 
+  // Hoeveel metingen per status zijn weggelaten omdat de storing in die
+  // periode geblokkeerd stond. Gaat mee naar buiten: een verdeling die stiller
+  // wordt zonder te zeggen hoeveel er is weggelaten, is niet te vertrouwen.
+  const overgeslagen = {};
+  // Een meting sluit af. Stond de storing ergens in die periode geblokkeerd om
+  // een reden die niet meetelt, dan is dit geen meting van ons tempo.
+  const sluitAf = (cur, totDag) => {
+    const dagen = dagenTussen(cur.sinds, totDag);
+    if (dagen < 0) return;
+    if (cur.geblokkeerd) overgeslagen[cur.status] = (overgeslagen[cur.status] || 0) + 1;
+    else (afgerond[cur.status] = afgerond[cur.status] || []).push(dagen);
+  };
+
   snaps.forEach((sn, idx) => {
     const seen = new Set();
     visibleOf(sn.storingen).forEach(s => {
       if (!s.ovStatus) return;
       seen.add(s.order);
+      // De blokkade zoals die in díé momentopname stond. Een blokkade die nu
+      // pas gezet is, hoort niet met terugwerkende kracht hele perioden uit
+      // de meting te halen — behalve voor de periode die nú nog loopt.
+      const geblokkeerd = meetBlokkadeUit(s, true) || (idx === snaps.length - 1 && meetBlokkadeUit(s, false));
       const cur = lopend[s.order];
       if (!cur) {
-        lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx };
+        lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx, geblokkeerd };
       } else if (cur.status !== s.ovStatus) {
-        const dagen = dagenTussen(cur.sinds, sn.week);
-        if (dagen >= 0) (afgerond[cur.status] = afgerond[cur.status] || []).push(dagen);
-        lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx };
+        sluitAf(cur, sn.week);
+        lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx, geblokkeerd };
+      } else if (geblokkeerd) {
+        // Zelfde status, maar inmiddels geblokkeerd: de hele lopende periode
+        // is daarmee besmet.
+        cur.geblokkeerd = true;
       }
     });
     // Verdwenen storingen sluiten hun lopende status-periode af: ook dát is
     // een meting van hoe lang die status normaal duurt.
     Object.keys(lopend).forEach(order => {
       if (seen.has(order) || lopend[order].index >= idx) return;
-      const cur = lopend[order];
-      const dagen = dagenTussen(cur.sinds, sn.week);
-      if (dagen >= 0) (afgerond[cur.status] = afgerond[cur.status] || []).push(dagen);
+      sluitAf(lopend[order], sn.week);
       delete lopend[order];
     });
   });
@@ -3785,7 +4017,7 @@ function buildStatusDuurStats() {
   });
   // De losse metingen gaan mee naar buiten: een boxplot heeft de punten zelf
   // nodig, niet alleen de samenvatting ervan.
-  return { lopend, medianen, metingen, verdelingen, metingenPerStatus: afgerond };
+  return { lopend, medianen, metingen, verdelingen, metingenPerStatus: afgerond, overgeslagen };
 }
 
 // De norm per status: waartegen wordt "te lang" afgemeten?
@@ -3836,7 +4068,7 @@ function statusNormVan(status, medianen) {
 // al stonden toen je begon met meten is dat te kort; die tellen dus mild.
 function buildTeLangInStatus() {
   const snaps = chronoSnapshots();
-  const leeg = { rijen: [], perStatus: [], traject: null, gemeten: false };
+  const leeg = { rijen: [], perStatus: [], traject: null, gemeten: false, geblokkeerdOvergeslagen: 0 };
   if (snaps.length < 2) return leeg;
   const latest = snaps[snaps.length - 1];
   const { lopend, medianen, metingen } = buildStatusDuurStats();
@@ -3855,9 +4087,15 @@ function buildTeLangInStatus() {
   const bijStatus = new Map(perStatus.map(p => [p.status, p]));
   const traject = { norm: trajectNorm, aantal: 0, teLang: 0, langste: 0 };
 
+  // Een geblokkeerde storing staat stil om een reden die buiten dit team ligt.
+  // Die hoort niet in een lijst die zegt "hier moet iets gebeuren", en al
+  // helemaal niet mee te tellen in de norm-vakken erboven: dan lijkt een stap
+  // uit de pas te lopen terwijl de aannemerij aan zet is.
+  let geblokkeerdOvergeslagen = 0;
   filterByActive(typeFiltered(latest.storingen)).forEach(s => {
     const cur = lopend[s.order];
     if (!cur || !s.ovStatus) return;
+    if (meetBlokkadeUit(s, false)) { geblokkeerdOvergeslagen++; return; }
     const dagen = dagenTussen(cur.sinds, latest.week);
     if (dagen < 0) return;
     const vak = bijStatus.get(s.ovStatus);
@@ -3892,13 +4130,12 @@ function buildTeLangInStatus() {
       // Bij een streefwaarde van 0 dagen is delen zinloos; dan is de
       // overschrijding in dagen het enige zinnige getal.
       ratio: normInfo && normInfo.norm > 0 ? dagen / normInfo.norm : null,
-      geblokkeerd: isOvBlocked(s),
       daysLeft: typeof s.daysLeft === 'number' ? s.daysLeft : null,
       storing: s,
     });
   });
 
-  return { rijen, perStatus, traject, gemeten: true };
+  return { rijen, perStatus, traject, gemeten: true, geblokkeerdOvergeslagen };
 }
 
 // "Norm" toont er meteen bij wáár die vandaan komt. Zonder dat verschil kun je
@@ -3924,7 +4161,6 @@ const STAGNATIE_COLUMNS = [
   { key: 'traject', label: 'Traject totaal', num: true, cell: r => `<td class="num${r.teLangTraject ? ' prognose-bad' : ''}"><strong>${r.traject}</strong></td>` },
   { key: 'trajectOver', label: 'Te lang traject', num: true, cell: r => `<td class="num">${r.teLangTraject ? `<span class="prognose-bad">+${r.trajectOver}</span>` : '<span class="muted">binnen norm</span>'}</td>` },
   { key: 'daysLeft', label: 'Deadline', num: true, cell: r => `<td class="num">${r.daysLeft == null ? '—' : renderDaysPill(r.storing)}</td>` },
-  { key: 'geblokkeerd', label: 'Geblokkeerd', cell: r => `<td>${r.geblokkeerd ? '🚧 ja' : '—'}</td>` },
 ];
 
 // Waar hoopt het werk zich op? Het stagnatiesignaal wijst individuele
@@ -3945,13 +4181,19 @@ function buildDoorstroomStats() {
 
   return OV_STATUS_ORDER.map(status => {
     const inStatus = huidig.filter(s => s.ovStatus === status);
-    const wachttijden = inStatus.map(s => {
+    // Geblokkeerde storingen staan wél in deze status, maar niemand hier kan
+    // ze verder helpen. Ze krijgen een eigen kolom in plaats van de opgehoopte
+    // wachttijd op te blazen — en daarmee tellen de aantallen weer gelijk op
+    // met de statustegels op Data, die blokkades al apart zetten.
+    const actief = inStatus.filter(s => !meetBlokkadeUit(s, false));
+    const wachttijden = actief.map(s => {
       const cur = lopend[s.order];
       return cur ? dagenTussen(cur.sinds, latest.week) : 0;
     });
     return {
       status,
-      aantal: inStatus.length,
+      aantal: actief.length,
+      geblokkeerd: inStatus.length - actief.length,
       opgehoopt: wachttijden.reduce((a, b) => a + b, 0),
       langste: wachttijden.length ? Math.max(...wachttijden) : 0,
     };
@@ -3976,21 +4218,27 @@ function renderDoorstroomCard() {
   const body = rijen.map(r => `<tr>
       <td>${esc(r.status)}</td>
       <td class="num">${r.aantal}</td>
+      <td class="num${r.geblokkeerd > 0 ? ' geblokkeerd-cel' : ''}">${r.geblokkeerd || '—'}</td>
       <td class="num">${r.opgehoopt}</td>
       <td class="num">${r.langste || '—'}</td>
     </tr>`).join('');
+
+  const totaalGeblokkeerd = rijen.reduce((sum, r) => sum + r.geblokkeerd, 0);
+  const blokRegel = totaalGeblokkeerd > 0
+    ? ` Daarnaast ${totaalGeblokkeerd === 1 ? 'staat 1 storing' : `staan ${totaalGeblokkeerd} storingen`} geblokkeerd; ${totaalGeblokkeerd === 1 ? 'die' : 'die'} staan in de eigen kolom en tellen niet mee in de opgehoopte wachttijd, want daar kan hier niemand iets aan doen.`
+    : '';
 
   container.innerHTML = `${kop}
     <div class="table-scroll">
       <table>
         <thead><tr>
-          <th>Status</th><th class="num">Nu in deze status</th>
+          <th>Status</th><th class="num">Nu in deze status</th><th class="num">Geblokkeerd</th>
           <th class="num">Opgehoopt</th><th class="num">Langst wachtend</th>
         </tr></thead>
         <tbody>${body}</tbody>
       </table>
     </div>
-    <p class="muted small">Dit is de stand van nu: waar het werk op dit moment ligt. "Opgehoopt" is alle wachttijd van de storingen die nu in die status staan bij elkaar opgeteld, in dagen — veel storingen die net binnen zijn geeft hetzelfde getal als een paar die al heel lang stilstaan, dus kijk er altijd naast naar "langst wachtend". Hoe lang een stap normaal duurt staat in de kaart hieronder.</p>`;
+    <p class="muted small">Dit is de stand van nu: waar het werk op dit moment ligt. "Opgehoopt" is alle wachttijd van de storingen die nu in die status staan bij elkaar opgeteld, in dagen — veel storingen die net binnen zijn geeft hetzelfde getal als een paar die al heel lang stilstaan, dus kijk er altijd naast naar "langst wachtend".${blokRegel} Hoe lang een stap normaal duurt staat in de kaart hieronder.</p>`;
 }
 
 // De verdeling als balkje: massief tot P50, lichter tot P90, met een streepje
@@ -4069,7 +4317,7 @@ function stagnatieGefilterd(rijen) {
 function renderStagnatieCard() {
   const container = document.getElementById('stagnatie-body');
   if (!container) return;
-  const { rijen, perStatus, traject, gemeten } = buildTeLangInStatus();
+  const { rijen, perStatus, traject, gemeten, geblokkeerdOvergeslagen } = buildTeLangInStatus();
   if (!gemeten) {
     container.innerHTML = '<p class="empty-note">Er zijn minstens twee meetdagen nodig om te kunnen zien hoe lang iets ergens staat. Plak de lijst een tweede dag; daarna vult dit zich vanzelf.</p>';
     return;
@@ -4086,7 +4334,7 @@ function renderStagnatieCard() {
       : (isStaticExport
           ? 'Alles blijft binnen de norm — zowel per status als over het hele traject.'
           : 'Alles blijft binnen de norm — zowel per status als over het hele traject. Klopt dat niet met wat je ziet? Stel de normen bij in Instellingen.');
-    container.innerHTML = balk + `<p class="empty-note">${esc(uitleg)}</p>`;
+    container.innerHTML = balk + `<p class="empty-note">${esc(uitleg)}</p>` + blokkadeOvergeslagenHtml(geblokkeerdOvergeslagen);
     return;
   }
 
@@ -4094,7 +4342,7 @@ function renderStagnatieCard() {
   const overStatus = zichtbaar.filter(r => r.teLangStatus).length;
   const kop = state.stagnatieFilter
     ? `<p class="prognose-headline">Gefilterd op <strong>${esc(state.stagnatieFilter === 'traject' ? 'Hele traject' : state.stagnatieFilter)}</strong>: ${zichtbaar.length} storing${zichtbaar.length === 1 ? '' : 'en'}. <button type="button" class="btn-link" data-stagnatie-filter="">Toon alles</button></p>`
-    : `<p class="prognose-headline"><strong>${zichtbaar.length}</strong> ${zichtbaar.length === 1 ? 'storing zit' : 'storingen zitten'} boven een norm: <strong class="prognose-bad">${overTraject}</strong> langer dan ${traject.norm} dagen onderweg, <strong>${overStatus}</strong> te lang in hun huidige status.</p>`;
+    : `<p class="prognose-headline"><strong>${zichtbaar.length}</strong> ${zichtbaar.length === 1 ? 'storing zit' : 'storingen zitten'} boven een norm: <strong class="prognose-bad">${overTraject}</strong> langer dan ${traject.norm} dagen onderweg, <strong>${overStatus}</strong> te lang in hun huidige status.</p>` + blokkadeOvergeslagenHtml(geblokkeerdOvergeslagen);
 
   const sorted = sortByState(zichtbaar, state.stagnatieSortState);
   const tabel = document.createElement('div');
@@ -4142,10 +4390,16 @@ function boxplotVan(waarden) {
 }
 
 function buildBoxplotRijen() {
-  const { metingenPerStatus } = buildStatusDuurStats();
+  const { metingenPerStatus, overgeslagen } = buildStatusDuurStats();
   return OV_STATUS_ORDER.map(status => {
     const waarden = (metingenPerStatus && metingenPerStatus[status]) || [];
-    return { key: status, label: status, waarden, box: boxplotVan(waarden) };
+    return {
+      key: status,
+      label: status,
+      waarden,
+      box: boxplotVan(waarden),
+      overgeslagen: (overgeslagen && overgeslagen[status]) || 0,
+    };
   });
 }
 
@@ -4219,6 +4473,10 @@ function boxplotNoteHtml(rijen) {
   if (zonder.length) delen.push(`${zonder.map(r => esc(r.label)).join(', ')} ${zonder.length === 1 ? 'heeft' : 'hebben'} nog minder dan ${MIN_METINGEN_BOX} afgeronde metingen — daar staan de losse punten getekend zonder box.`);
   if (leeg.length) delen.push(`${leeg.map(r => esc(r.label)).join(', ')} ${leeg.length === 1 ? 'heeft' : 'hebben'} nog geen enkele afgeronde meting.`);
   delen.push('Een meting ontstaat zodra een storing van status wisselt, dus de plot wordt vanzelf scherper naarmate je langer meet.');
+  const weg = rijen.reduce((sum, r) => sum + (r.overgeslagen || 0), 0);
+  if (weg > 0) {
+    delen.push(`${weg === 1 ? 'Eén meting is' : `${weg} metingen zijn`} weggelaten omdat de storing in die periode geblokkeerd stond (${esc(blokkadeUitgeslotenTekst())}) — dan meet je de wachttijd van iemand anders, niet die van dit team. ${blokkadeUitlegLink()}`);
+  }
   return `<p class="muted small">${delen.join(' ')}</p>`;
 }
 
@@ -5287,6 +5545,32 @@ function renderTypeWhitelist() {
 // Eén invoerveld per status, met de gemeten mediaan als grijze hint ernaast.
 // Die hint is het punt van deze kaart: je zet een streefwaarde pas zinnig als
 // je weet wat het nu doet.
+// Per blokkade-reden een vinkje, met het huidige aantal erachter. Dat aantal
+// hoort erbij: of je "Onderzoek loopt" wilt uitsluiten hangt er maar van af
+// hoeveel storingen het raakt.
+function renderBlokkadeUitsluitenCard() {
+  const el = document.getElementById('blokkade-uitsluiten-body');
+  if (!el) return;
+  const o = state.snapshots.length > 0 ? buildBlokkadeOverzicht() : { redenen: [] };
+  const perReden = {};
+  o.redenen.forEach(r => { perReden[r.reden] = r; });
+
+  el.innerHTML = Object.keys(OV_BLOCK_REASON_LABELS).map((reden, i) => {
+    const aan = (state.blokkadeUitsluiten || []).includes(reden);
+    const r = perReden[reden];
+    const hint = r
+      ? `${r.aantal} ${r.aantal === 1 ? 'storing staat' : 'storingen staan'} hier nu op${r.p50 == null ? '' : `, mediaan ${dagenAfgerond(r.p50)} wachttijd`}`
+      : 'nu geen storingen met deze reden';
+    return `<div class="input-row streef-rij">
+      <label for="blok-uit-${i}">
+        <input type="checkbox" id="blok-uit-${i}" data-blokkade-reden="${esc(reden)}" ${aan ? 'checked' : ''}>
+        ${esc(OV_BLOCK_REASON_LABELS[reden])}
+      </label>
+      <span class="muted small">${esc(hint)}</span>
+    </div>`;
+  }).join('');
+}
+
 function renderStatusStreefCard() {
   const el = document.getElementById('status-streef-body');
   if (!el) return;
@@ -5399,6 +5683,7 @@ function renderDashboardFromState() {
 
   renderTypeWhitelist();
   renderStatusStreefCard();
+  renderBlokkadeUitsluitenCard();
   renderFilterTabs(latestVisible);
 
   const latestFiltered = filterByActive(latestVisible);
@@ -5415,6 +5700,7 @@ function renderDashboardFromState() {
   renderTypeOnbekendNotice();
   renderKlantaanvraagCard();
   renderZelfdeAdresCard();
+  renderBlokkadeOverzichtCard();
   renderGebiedPlaatsenCard();
   renderClusterCard();
   renderInUitCard();
@@ -5504,8 +5790,9 @@ async function reloadAllStateAndRender() {
   state.capaciteit = await loadCapaciteit();
   state.statusStreef = await loadStatusStreef();
   state.doorlooptijdNorm = await loadDoorlooptijdNorm();
+  state.blokkadeUitsluiten = await loadBlokkadeUitsluiten();
   if (state.snapshots.length > 0) renderDashboardFromState();
-  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderStatusStreefCard(); renderBackupReminder(); renderBackupStatus(); }
+  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderStatusStreefCard(); renderBlokkadeUitsluitenCard(); renderBackupReminder(); renderBackupStatus(); }
 }
 
 function wireEvents() {
@@ -5924,6 +6211,31 @@ function wireEvents() {
     else renderStatusStreefCard();
   });
 
+  document.getElementById('blokkade-save-btn').addEventListener('click', async () => {
+    const aangevinkt = Array.from(document.querySelectorAll('#blokkade-uitsluiten-body input[data-blokkade-reden]'))
+      .filter(i => i.checked)
+      .map(i => i.dataset.blokkadeReden);
+    state.blokkadeUitsluiten = aangevinkt;
+    await saveBlokkadeUitsluiten(aangevinkt);
+    document.getElementById('blokkade-status').textContent = aangevinkt.length === 0
+      ? 'Opgeslagen — alle blokkades tellen weer mee in de doorlooptijd.'
+      : `Opgeslagen — ${blokkadeUitgeslotenTekst()} ${aangevinkt.length === 1 ? 'telt' : 'tellen'} niet mee in de doorlooptijd.`;
+    if (state.snapshots.length > 0) renderDashboardFromState();
+    else renderBlokkadeUitsluitenCard();
+  });
+
+  document.getElementById('copy-blokkade-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('copy-blokkade-btn');
+    const origineel = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(buildBlokkadeText());
+      btn.textContent = '✅ Gekopieerd!';
+    } catch (e) {
+      btn.textContent = '⚠️ Kopiëren mislukt';
+    }
+    setTimeout(() => { btn.textContent = origineel; }, 2000);
+  });
+
   document.getElementById('copy-overleg-btn').addEventListener('click', async () => {
     const btn = document.getElementById('copy-overleg-btn');
     const original = btn.textContent;
@@ -6097,6 +6409,9 @@ function applyStaticExportData() {
   state.statusStreef = schoonStatusStreef(STATIC_DATA.statusStreef);
   state.doorlooptijdNorm = Number.isFinite(STATIC_DATA.doorlooptijdNorm) && STATIC_DATA.doorlooptijdNorm > 0
     ? STATIC_DATA.doorlooptijdNorm : DEFAULT_DOORLOOPTIJD_NORM;
+  state.blokkadeUitsluiten = Array.isArray(STATIC_DATA.blokkadeUitsluiten)
+    ? STATIC_DATA.blokkadeUitsluiten.filter(r => r in OV_BLOCK_REASON_LABELS)
+    : DEFAULT_BLOKKADE_UITSLUITEN.slice();
 
   if (state.snapshots.length > 0) renderDashboardFromState();
   else setDashboardEmpty('dashboard', 'dashboard-empty', true);

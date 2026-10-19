@@ -122,6 +122,15 @@
           <div id="zelfde-adres-body"></div>
         </section>
 
+        <section class="card hidden" id="blokkade-overzicht-card">
+          <div class="card-header">
+            <h2>🔒 Geblokkeerd — waar wachten we op <span id="blokkade-overzicht-count" class="badge"></span></h2>
+            <button id="copy-blokkade-btn" class="btn-link">📋 Kopieer terugkoppeling</button>
+          </div>
+          <p class="muted small">Alle storingen die stilstaan om een reden die buiten dit team ligt, geteld per reden en met de wachttijd erbij. Deze storingen tellen niet mee in de gemeten doorlooptijd — dan zou je de wachttijd van iemand anders meten — maar ze blijven wel openstaan en drukken dus wel op de werkvoorraad. De kopieerknop maakt er een bericht van dat je kunt terugkoppelen aan de bouwers van de applicatie.</p>
+          <div id="blokkade-overzicht-body"></div>
+        </section>
+
         <section class="card hidden" id="klantaanvraag-card">
           <div class="card-header">
             <h2>🔌 Klantaanvragen <span id="klantaanvraag-count" class="badge"></span></h2>
@@ -441,6 +450,18 @@
         <button id="status-streef-save-btn" class="btn-primary">Opslaan</button>
         <span id="status-streef-status" class="muted small"></span>
       </div>
+    </section>
+
+    <section class="card" id="blokkade-card">
+      <h2>🔒 Blokkades en meten</h2>
+      <p class="muted small">Een geblokkeerde storing staat stil om een reden die buiten dit team ligt. Die wachttijd telt wél in kalenderdagen, maar zegt niets over hoe snel hier gewerkt wordt — en trok de gemeten duur zo ver omhoog dat de verdeling onbruikbaar werd. Erger nog: die gemeten mediaan is ook de terugvalnorm als je geen streefwaarde invult, dus blokkades maakten de norm juist soepeler bij de statussen waar ze het meest voorkomen.</p>
+      <p class="muted small">Vink aan welke redenen níet meetellen in de doorlooptijd. Aannemerij, Naar Aanleg en Uitvoerder liggen bij anderen. <strong>Onderzoek loopt</strong> is een twijfelgeval: dat is het eigen proces, dus dat uitsluiten poetst echte stilstand in het onderzoek weg. Blokkades blijven altijd gewoon meetellen in de werkvoorraad — ze verdwijnen nergens, ze worden alleen niet als eigen tempo gemeten.</p>
+      <div id="blokkade-uitsluiten-body"></div>
+      <div class="input-row">
+        <button id="blokkade-save-btn" class="btn-primary">Opslaan</button>
+        <span id="blokkade-status" class="muted small"></span>
+      </div>
+      <p class="muted small">Let op: dit werkt zo ver terug als de blokkades zijn meegeschreven in de opgeslagen updates. Momentopnamen van vóór die functie hebben geen blokkade-reden en gelden als "toen niet geblokkeerd" — de recente metingen worden dus schoner dan de oudste.</p>
     </section>
 
     <section class="card" id="bijna-verlopen-card">
