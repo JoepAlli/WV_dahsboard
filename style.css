@@ -1304,6 +1304,19 @@ tr.detail-row > td {
 }
 .kaart-kop:first-child { margin-top: 0; }
 
+/* Opvolging: de markering van je eigen beslissingen. Bewust rustig vormgegeven
+   — dit is geen alarm maar een aantekening. De vervalmelding eronder is dat
+   wél, want een markering die niet meer klopt moet opvallen. */
+.opvolging-cel { min-width: 170px; }
+.opvolging-cel select,
+.opvolging-cel input { width: 100%; margin-bottom: 0.25rem; font-size: 0.8rem; }
+.opvolging-wissel {
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: var(--status-warning);
+  font-weight: 600;
+}
+
 /* Het aandeel van een lichting dat nog openstaat, als balkje in de tabelcel.
    De kleur loopt mee met de ernst: onder een kwart is normaal doorstromen,
    boven de helft is er sinds die maand weinig gebeurd. */

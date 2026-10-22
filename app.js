@@ -530,6 +530,106 @@ async function saveLastBackupAt(iso) {
   catch (e) { console.error(e); }
 }
 
+// ---------- Opvolging: het geheugen van je eigen beslissingen ----------
+//
+// Het dashboard kon alles zien behalve wat JIJ er al mee gedaan had. Daardoor
+// meldde het elke week dezelfde storingen en moest je telkens opnieuw uit je
+// hoofd filteren wat je al wist. Dat is het verschil tussen een overzicht en
+// een hulpmiddel: een lijst die niet korter wordt van werken, wordt genegeerd.
+//
+// Drie markeringen, bewust niet meer:
+//   gezien     - ik heb ernaar gekeken, er hoeft nu niets
+//   opgepakt   - ligt bij iemand, laat me niet opnieuw porren
+//   geparkeerd - bewust uitgesteld tot een datum
+//
+// Twee dingen maken dit veilig genoeg om echt te gebruiken, en zonder die twee
+// zou ik het niet bouwen:
+//
+//  1. Parkeren loopt AF. Op de parkeerdatum komt de storing vanzelf terug in
+//     de lijsten, met de melding dat de parkeertijd om is. Je kunt dus iets
+//     wegzetten zonder het kwijt te raken.
+//  2. Een markering VERVALT BIJ VERANDERING. Verandert de status van een
+//     storing nadat je 'm hebt gemarkeerd, dan klopt je beslissing niet meer
+//     met de werkelijkheid en wordt de markering als verouderd gemeld. Anders
+//     park je iets dat daarna gaat schuiven en merk je dat nooit.
+const OPVOLGING_KEY = 'nusdash_opvolging_v1';
+const OPVOLGING_SOORTEN = {
+  gezien: { label: 'Gezien', uitleg: 'bekeken, er hoeft nu niets', icon: '👁️' },
+  opgepakt: { label: 'Opgepakt', uitleg: 'ligt bij iemand', icon: '🔧' },
+  geparkeerd: { label: 'Geparkeerd', uitleg: 'bewust uitgesteld tot een datum', icon: '🅿️' },
+};
+// Zonder einddatum is parkeren hetzelfde als vergeten. Kies je er geen, dan
+// valt het hierop terug.
+const OPVOLGING_PARKEER_DAGEN = 14;
+
+async function loadOpvolging() {
+  try { return (await idbGet(OPVOLGING_KEY)) || {}; }
+  catch (e) { console.error(e); return {}; }
+}
+async function saveOpvolging(map) {
+  try { await idbSet(OPVOLGING_KEY, map); }
+  catch (e) { showErrorToast('Opslaan van de markering is mislukt: ' + e.message); throw e; }
+}
+function opvolgingVan(order) { return (state.opvolging || {})[order] || null; }
+
+// Zet of wist een markering. De status van dat moment gaat mee, zodat later te
+// zien is of de storing sindsdien is opgeschoven.
+function setOpvolging(order, soort, opts) {
+  opts = opts || {};
+  const map = Object.assign({}, state.opvolging);
+  if (!soort) { delete map[order]; state.opvolging = map; return; }
+  const bestaand = map[order] || {};
+  map[order] = {
+    soort,
+    sinds: bestaand.soort === soort ? (bestaand.sinds || new Date().toISOString()) : new Date().toISOString(),
+    tot: soort === 'geparkeerd' ? (opts.tot || dagPlus(vandaagIso(), OPVOLGING_PARKEER_DAGEN)) : undefined,
+    notitie: opts.notitie !== undefined ? opts.notitie : (bestaand.notitie || ''),
+    bijStatus: opts.bijStatus !== undefined ? opts.bijStatus : (opts.storing ? opts.storing.ovStatus : bestaand.bijStatus),
+  };
+  state.opvolging = map;
+}
+function vandaagIso() { return new Date().toISOString().slice(0, 10); }
+
+// De markering zoals die er NU voor staat, afgezet tegen de werkelijkheid.
+// Geeft terug of 'ie nog geldt, en zo nee waarom niet — dat laatste is wat de
+// gebruiker moet zien.
+function opvolgingStand(s, peilDag) {
+  const m = opvolgingVan(s.order);
+  if (!m || !OPVOLGING_SOORTEN[m.soort]) return null;
+  const vandaag = peilDag || vandaagIso();
+  const verlopen = m.soort === 'geparkeerd' && m.tot && m.tot <= vandaag;
+  // Alleen een échte statuswissel telt als verandering. Een storing zonder
+  // status aan beide kanten, of een markering van voor we de status
+  // meeschreven, is geen signaal.
+  const verschoven = !!m.bijStatus && !!s.ovStatus && m.bijStatus !== s.ovStatus;
+  return {
+    soort: m.soort,
+    label: OPVOLGING_SOORTEN[m.soort].label,
+    icon: OPVOLGING_SOORTEN[m.soort].icon,
+    sinds: m.sinds || null,
+    tot: m.tot || null,
+    notitie: m.notitie || '',
+    bijStatus: m.bijStatus || null,
+    verlopen,
+    verschoven,
+    // Verbergen mag alleen zolang de markering nog ergens op slaat.
+    actief: !verlopen && !verschoven,
+    dagenTot: m.tot ? dagenTussen(vandaag, m.tot) : null,
+  };
+}
+// Eén regel onder een lijst die korter is geworden doordat jij er al iets mee
+// hebt gedaan. Een lijst die stilletjes inkrimpt is niet te vertrouwen; deze
+// regel maakt het verschil tussen "er is niets" en "ik heb het weggezet".
+function opvolgingVerborgenHtml(aantal) {
+  if (!aantal) return '';
+  return `<p class="muted small">${aantal === 1 ? '1 storing is' : `${aantal} storingen zijn`} hier weggelaten omdat ${aantal === 1 ? 'die' : 'die'} als gezien, opgepakt of geparkeerd ${aantal === 1 ? 'staat' : 'staan'}. ${aantal === 1 ? 'Die komt' : 'Die komen'} vanzelf terug zodra de parkeertijd om is of de status verandert.${isStaticExport ? '' : ' Je ziet en wijzigt de markering in de volledige lijst, kolom Opvolging.'}</p>`;
+}
+// Mag deze storing uit een "hier moet iets gebeuren"-lijst worden gelaten?
+function opvolgingVerbergt(s, peilDag) {
+  const st = opvolgingStand(s, peilDag);
+  return !!st && st.actief;
+}
+
 const OV_BLOCK_STATUS_KEY = 'nusdash_ov_block_status_v1';
 async function loadOvBlockStatusMap() {
   try { return (await idbGet(OV_BLOCK_STATUS_KEY)) || {}; }
@@ -562,6 +662,7 @@ async function exportBackup() {
     statusStreef: await loadStatusStreef(),
     doorlooptijdNorm: await loadDoorlooptijdNorm(),
     blokkadeUitsluiten: await loadBlokkadeUitsluiten(),
+    opvolging: await loadOpvolging(),
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -602,6 +703,7 @@ function buildStandaloneExport() {
     statusStreef: state.statusStreef,
     doorlooptijdNorm: state.doorlooptijdNorm,
     blokkadeUitsluiten: state.blokkadeUitsluiten,
+    opvolging: state.opvolging,
     exportedAt: new Date().toISOString(),
   };
   const dataScript = escapeForInlineTag('window.__DASHBOARD_DATA__ = ' + JSON.stringify(data) + ';', 'script');
@@ -641,6 +743,7 @@ async function importBackup(file) {
   if (backup.statusStreef && typeof backup.statusStreef === 'object') await saveStatusStreef(schoonStatusStreef(backup.statusStreef));
   if (Number.isFinite(backup.doorlooptijdNorm) && backup.doorlooptijdNorm > 0) await saveDoorlooptijdNorm(backup.doorlooptijdNorm);
   if (Array.isArray(backup.blokkadeUitsluiten)) await saveBlokkadeUitsluiten(backup.blokkadeUitsluiten.filter(r => r in OV_BLOCK_REASON_LABELS));
+  if (backup.opvolging && typeof backup.opvolging === 'object') await saveOpvolging(backup.opvolging);
 }
 
 // Bouwt, in één keer over alle bestaande OV-snapshots (nieuwste eerst), een
@@ -850,6 +953,7 @@ const state = {
   statusStreef: {},
   doorlooptijdNorm: DEFAULT_DOORLOOPTIJD_NORM,
   blokkadeUitsluiten: DEFAULT_BLOKKADE_UITSLUITEN.slice(),
+  opvolging: {},
   stagnatieFilter: null,
   boxplotSchaal: 'whisker',
   boxplotViewMode: 'chart',
@@ -1045,6 +1149,13 @@ function statTileFilters() {
     bijnaVerlopen: { title: 'Bijna verlopen', test: s => statusOf(s) === 'serious' && !isOvBlocked(s) },
     geblokkeerd: { title: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt)', test: s => isOvBlocked(s) },
     mastGeenSpanning: { title: 'Mast geen spanning', test: s => isMastGeenSpanning(s) },
+    // Markeringen die hun geldigheid hebben verloren: de parkeertijd is om, of
+    // de storing is sindsdien van status veranderd. Zonder deze tegel komen ze
+    // wel terug in de lijsten maar merk je niet dát ze terug zijn.
+    opvolgingVervallen: {
+      title: 'Markering vervallen (parkeertijd om of status veranderd)',
+      test: s => { const st = opvolgingStand(s); return !!st && !st.actief; },
+    },
   };
   OV_STATUS_ORDER.forEach(status => {
     filters[OV_STATUS_FILTER_KEYS[status]] = { title: `Status: ${status}`, test: s => s.ovStatus === status && !isOvBlocked(s) };
@@ -1080,13 +1191,14 @@ const OV_STATUS_ICONS = { 'Nieuw': '🆕', 'In onderzoek': '🔍', 'Onderzoek co
 // momenten heen — inclusief meerdere updates op één dag. Alleen deze
 // tegels hebben er daarnaast ook een rij-per-storing-tabel bij (de rest
 // duplicerde toch al wat "Aandacht deze week"/"Volledige lijst" al tonen).
-const OV_DETAIL_LIST_KEYS = new Set([...Object.values(OV_STATUS_FILTER_KEYS), 'nieuwGezien', 'geblokkeerd', 'mastGeenSpanning']);
+const OV_DETAIL_LIST_KEYS = new Set([...Object.values(OV_STATUS_FILTER_KEYS), 'nieuwGezien', 'geblokkeerd', 'mastGeenSpanning', 'opvolgingVervallen']);
 const OV_TILE_TITLES = {
   totaal: 'Totaal open',
   verlopenDatum: 'Uitvoeringsdatum verstreken',
   unknown: 'Verlopen — uitvoering onbekend',
   afgesloten: 'Afgesloten / uitgegaan',
   geblokkeerd: 'Geblokkeerd (Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt)',
+  opvolgingVervallen: 'Markering vervallen (parkeertijd om of status veranderd)',
   mastGeenSpanning: 'Mast geen spanning',
 };
 OV_STATUS_ORDER.forEach(status => { OV_TILE_TITLES[OV_STATUS_FILTER_KEYS[status]] = `Status: ${status}`; });
@@ -1205,6 +1317,7 @@ function renderStatTiles(current, mutations) {
   const expiredDateCount = current.filter(filters.verlopenDatum.test).length;
   const overdueUnknown = current.filter(filters.unknown.test).length;
   const geblokkeerdCount = current.filter(filters.geblokkeerd.test).length;
+  const vervallenCount = current.filter(filters.opvolgingVervallen.test).length;
   const mioCount = current.filter(filters.mastGeenSpanning.test).length;
   // Drie soorten getallen die er eerder als één uniforme rij uitzagen, terwijl
   // ze niet bij elkaar optellen en niet hetzelfde betekenen:
@@ -1233,6 +1346,10 @@ function renderStatTiles(current, mutations) {
     { groep: 'inzet', key: 'mastGeenSpanning', icon: '🗼', label: 'Mast geen spanning', value: mioCount,
       note: total > 0 ? `${Math.round((mioCount / total) * 100)}% van alle open storingen` : 'geen open storingen', scrollTarget: 'cluster-card' },
     { groep: 'signaal', key: 'geblokkeerd', icon: '🔒', label: 'Geblokkeerd', value: geblokkeerdCount, note: 'Aannemerij / Naar Aanleg / Uitvoerder / Onderzoek loopt', filterKey: 'geblokkeerd' },
+    { groep: 'signaal', key: 'opvolgingVervallen', icon: '⏳', label: 'Markering vervallen', value: vervallenCount,
+      deltaClass: vervallenCount > 0 ? 'bad' : 'good',
+      note: vervallenCount > 0 ? 'parkeertijd om of status veranderd — staan weer in de lijsten' : 'geen',
+      alert: vervallenCount > 0, filterKey: 'opvolgingVervallen' },
   );
   // Elke tegel is nu klikbaar: altijd voor het verloop-grafiekje in het
   // paneel hieronder, en (waar van toepassing) óók voor de rij-per-storing-
@@ -1608,7 +1725,8 @@ function renderAttentionList(current, allVisible) {
   // meteen zodra je iets blokkeert), maar welke rijen getoond worden ligt
   // vast (zie state.attentionOrders hierboven) zodat een rij niet middenin
   // het bewerken van de blokkade-reden ineens verdwijnt.
-  const liveCount = current.filter(s => ATTENTION_CATEGORIES.some(cat => filters[cat.key].test(s))).length;
+  const liveCount = current.filter(s =>
+    ATTENTION_CATEGORIES.some(cat => filters[cat.key].test(s)) && !opvolgingVerbergt(s)).length;
   countEl.textContent = liveCount ? String(liveCount) : '';
 
   if (!state.attentionOrders) {
@@ -1628,9 +1746,14 @@ function renderAttentionList(current, allVisible) {
   // nog te vinden via de "Geblokkeerd"-tegel. Wordt de blokkade weer
   // opgeheven, dan duikt hij hier vanzelf weer op (nog steeds bevroren op
   // dezelfde categorie van deze week).
-  const items = state.attentionOrders
+  const alleItems = state.attentionOrders
     .map(({ order, catKey }) => ({ s: orderMap.get(order), cat: ATTENTION_CATEGORIES.find(c => c.key === catKey) }))
     .filter(it => it.s && !isOvBlocked(it.s));
+  // Wat je al hebt afgehandeld hoort hier niet meer te staan. Zodra de
+  // parkeertijd om is of de storing van status verandert, vervalt de
+  // markering en staat 'ie er vanzelf weer bij (zie opvolgingStand).
+  const items = alleItems.filter(it => !opvolgingVerbergt(it.s));
+  const verborgen = alleItems.length - items.length;
   items.sort((a, b) => a.cat.prio - b.cat.prio || a.s.daysLeft - b.s.daysLeft);
 
   // Voor het "Kopieer order + categorie"-knopje — precies de rijen die nu op
@@ -1639,12 +1762,14 @@ function renderAttentionList(current, allVisible) {
   container.dataset.copyText = items.map(({ s, cat }) => `${s.order}\t${cat.label}`).join('\n');
 
   if (items.length === 0) {
-    container.innerHTML = '<p class="all-clear"><span class="all-clear-icon" aria-hidden="true">🎉</span>Niets dat om actie vraagt — goed bezig!</p>';
+    container.innerHTML = verborgen > 0
+      ? `<p class="all-clear"><span class="all-clear-icon" aria-hidden="true">🎉</span>Niets dat nu om actie vraagt — ${verborgen === 1 ? 'de enige die er stond is' : `alle ${verborgen} die er stonden zijn`} door jou afgehandeld of geparkeerd.</p>${opvolgingVerborgenHtml(verborgen)}`
+      : '<p class="all-clear"><span class="all-clear-icon" aria-hidden="true">🎉</span>Niets dat om actie vraagt — goed bezig!</p>';
     return;
   }
 
   container.innerHTML = `<table><thead><tr>
-      <th>Categorie</th><th>Order</th><th>Regio</th><th>Gebied</th><th>Status</th><th>Adres</th><th class="num">Dagen</th><th>Open sinds</th><th>Type</th><th>Uitvoering</th>${isStaticExport ? '' : '<th>Blokkade</th>'}
+      <th>Categorie</th><th>Order</th><th>Regio</th><th>Gebied</th><th>Status</th><th>Adres</th><th class="num">Dagen</th><th>Open sinds</th><th>Type</th><th>Uitvoering</th>${isStaticExport ? '' : '<th>Blokkade</th>'}<th>Opvolging</th>
     </tr></thead><tbody>${items.map(({ s, cat }) => {
       const block = ovBlockStatusOf(s.order);
       const blockCell = isStaticExport ? '' : `<td class="ov-block-cell">
@@ -1670,8 +1795,9 @@ function renderAttentionList(current, allVisible) {
         <td>${esc(s.type)}</td>
         <td>${s.executionDate ? esc(fmtDate(s.executionDate)) : 'onbekend'}</td>
         ${blockCell}
+        <td class="opvolging-cel">${opvolgingCellHtml(s)}</td>
       </tr>`;
-    }).join('')}</tbody></table>`;
+    }).join('')}</tbody></table>` + opvolgingVerborgenHtml(verborgen);
 
   if (!isStaticExport) {
     const refresh = (order) => {
@@ -1689,6 +1815,36 @@ function renderAttentionList(current, allVisible) {
       inp.addEventListener('change', () => {
         setOvBlockNote(inp.dataset.order, inp.value);
         refresh(inp.dataset.order);
+      });
+    });
+
+    // Dezelfde bediening als in de volledige lijst, maar hier waar je 'm
+    // nodig hebt: dit is de lijst waarmee je werkt. De storing van de rij
+    // zelf gaat mee, zodat de status van dit moment wordt vastgelegd.
+    const bijOrder = new Map(items.map(({ s }) => [s.order, s]));
+    const bewaar = () => saveOpvolging(state.opvolging).then(() => renderDashboardFromState());
+    container.querySelectorAll('.opvolging-select').forEach(sel => {
+      sel.addEventListener('change', () => {
+        setOpvolging(sel.dataset.order, sel.value, { storing: bijOrder.get(sel.dataset.order) });
+        bewaar();
+      });
+    });
+    container.querySelectorAll('.opvolging-tot').forEach(inp => {
+      inp.addEventListener('change', () => {
+        const huidig = opvolgingVan(inp.dataset.order);
+        if (!huidig) return;
+        setOpvolging(inp.dataset.order, huidig.soort, { tot: inp.value || undefined, bijStatus: huidig.bijStatus });
+        bewaar();
+      });
+    });
+    container.querySelectorAll('.opvolging-notitie').forEach(inp => {
+      inp.addEventListener('change', () => {
+        const huidig = opvolgingVan(inp.dataset.order);
+        if (!huidig) return;
+        const map = Object.assign({}, state.opvolging);
+        map[inp.dataset.order] = Object.assign({}, huidig, { notitie: inp.value });
+        state.opvolging = map;
+        saveOpvolging(state.opvolging);
       });
     });
   }
@@ -4102,7 +4258,7 @@ const LIGGEN_MIN_VOORBIJ = 3;
 function buildLiggenblijvers() {
   const leeg = {
     gemeten: false, rijen: [], lichtingen: [], fifo: null, oudste: null,
-    geblokkeerdOvergeslagen: 0, peilDag: null,
+    geblokkeerdOvergeslagen: 0, opvolgingVerborgen: 0, peilDag: null,
   };
   const snaps = chronoSnapshots();
   if (snaps.length < 2) return leeg;
@@ -4141,6 +4297,7 @@ function buildLiggenblijvers() {
 
   const open = visibleOf(laatste.storingen);
   let geblokkeerdOvergeslagen = 0;
+  let opvolgingVerborgen = 0;
   const rijen = [];
   open.forEach(s => {
     const eerste = eerstGezien[s.order];
@@ -4148,6 +4305,7 @@ function buildLiggenblijvers() {
     // Een geblokkeerde storing wordt met goede reden overgeslagen; die hier
     // tonen zou de lijst vullen met werk waar niemand iets aan kan doen.
     if (meetBlokkadeUit(s, false)) { geblokkeerdOvergeslagen++; return; }
+    if (opvolgingVerbergt(s)) { opvolgingVerborgen++; return; }
     const voorbij = aantalJongerAfgesloten(eerste);
     if (voorbij < LIGGEN_MIN_VOORBIJ) return;
     rijen.push({
@@ -4249,7 +4407,7 @@ function buildLiggenblijvers() {
 
   return {
     gemeten: true, rijen, lichtingen, fifo, oudste,
-    geblokkeerdOvergeslagen, peilDag: vandaag, totaalOpen: open.length,
+    geblokkeerdOvergeslagen, opvolgingVerborgen, peilDag: vandaag, totaalOpen: open.length,
   };
 }
 
@@ -4336,7 +4494,8 @@ function renderLiggenblijversCard() {
   let lijstBlok;
   if (o.rijen.length === 0) {
     lijstBlok = `<h3 class="kaart-kop">Links en rechts ingehaald</h3>
-      <p class="empty-note">Geen storing is door ${LIGGEN_MIN_VOORBIJ} of meer jongere afsluitingen voorbijgestreefd. De wachtrij wordt op volgorde geholpen.</p>`;
+      <p class="empty-note">Geen storing is door ${LIGGEN_MIN_VOORBIJ} of meer jongere afsluitingen voorbijgestreefd. De wachtrij wordt op volgorde geholpen.</p>`
+      + opvolgingVerborgenHtml(o.opvolgingVerborgen);
   } else {
     const sorted = sortByState(o.rijen, state.liggenSortState);
     const tabel = document.createElement('div');
@@ -4348,7 +4507,8 @@ function renderLiggenblijversCard() {
       <p class="prognose-headline"><strong>${o.rijen.length}</strong> ${o.rijen.length === 1 ? 'storing is' : 'storingen zijn'} door ${LIGGEN_MIN_VOORBIJ} of meer jongere afsluitingen voorbijgestreefd. De ergste is ${orderLinkHtml(zwaarste.order)} in ${esc(zwaarste.plaats)}: <strong class="prognose-bad">${zwaarste.voorbij}</strong> storingen die later binnenkwamen zijn al weg, deze staat er ${zwaarste.leeftijd} dagen.</p>
       <div id="liggen-tabel">${tabel.innerHTML}</div>
       <p class="muted small">"Jongere afgesloten" is hoeveel storingen die ná deze binnenkwamen inmiddels zijn afgesloten. Dat is geen norm maar een vergelijking met de buren: een oude storing die als enige over is van haar lichting staat hier niet in, een storing met twintig jongere afsluiters erlangs wel. Vanaf ${LIGGEN_MIN_VOORBIJ}, want precies op volgorde werken hoeft niet en gebeurt nooit.</p>`
-      + blokkadeOvergeslagenHtml(o.geblokkeerdOvergeslagen);
+      + blokkadeOvergeslagenHtml(o.geblokkeerdOvergeslagen)
+      + opvolgingVerborgenHtml(o.opvolgingVerborgen);
   }
 
   container.innerHTML = oordeel + lichtingBlok + lijstBlok;
@@ -4497,7 +4657,7 @@ function statusNormVan(status, medianen) {
 // al stonden toen je begon met meten is dat te kort; die tellen dus mild.
 function buildTeLangInStatus() {
   const snaps = chronoSnapshots();
-  const leeg = { rijen: [], perStatus: [], traject: null, gemeten: false, geblokkeerdOvergeslagen: 0 };
+  const leeg = { rijen: [], perStatus: [], traject: null, gemeten: false, geblokkeerdOvergeslagen: 0, opvolgingVerborgen: 0 };
   if (snaps.length < 2) return leeg;
   const latest = snaps[snaps.length - 1];
   const { lopend, medianen, metingen } = buildStatusDuurStats();
@@ -4521,10 +4681,12 @@ function buildTeLangInStatus() {
   // helemaal niet mee te tellen in de norm-vakken erboven: dan lijkt een stap
   // uit de pas te lopen terwijl de aannemerij aan zet is.
   let geblokkeerdOvergeslagen = 0;
+  let opvolgingVerborgen = 0;
   filterByActive(typeFiltered(latest.storingen)).forEach(s => {
     const cur = lopend[s.order];
     if (!cur || !s.ovStatus) return;
     if (meetBlokkadeUit(s, false)) { geblokkeerdOvergeslagen++; return; }
+    if (opvolgingVerbergt(s)) { opvolgingVerborgen++; return; }
     const dagen = dagenTussen(cur.sinds, latest.week);
     if (dagen < 0) return;
     const vak = bijStatus.get(s.ovStatus);
@@ -4564,7 +4726,7 @@ function buildTeLangInStatus() {
     });
   });
 
-  return { rijen, perStatus, traject, gemeten: true, geblokkeerdOvergeslagen };
+  return { rijen, perStatus, traject, gemeten: true, geblokkeerdOvergeslagen, opvolgingVerborgen };
 }
 
 // "Norm" toont er meteen bij wáár die vandaan komt. Zonder dat verschil kun je
@@ -4746,7 +4908,7 @@ function stagnatieGefilterd(rijen) {
 function renderStagnatieCard() {
   const container = document.getElementById('stagnatie-body');
   if (!container) return;
-  const { rijen, perStatus, traject, gemeten, geblokkeerdOvergeslagen } = buildTeLangInStatus();
+  const { rijen, perStatus, traject, gemeten, geblokkeerdOvergeslagen, opvolgingVerborgen } = buildTeLangInStatus();
   if (!gemeten) {
     container.innerHTML = '<p class="empty-note">Er zijn minstens twee meetdagen nodig om te kunnen zien hoe lang iets ergens staat. Plak de lijst een tweede dag; daarna vult dit zich vanzelf.</p>';
     return;
@@ -4763,7 +4925,8 @@ function renderStagnatieCard() {
       : (isStaticExport
           ? 'Alles blijft binnen de norm — zowel per status als over het hele traject.'
           : 'Alles blijft binnen de norm — zowel per status als over het hele traject. Klopt dat niet met wat je ziet? Stel de normen bij in Instellingen.');
-    container.innerHTML = balk + `<p class="empty-note">${esc(uitleg)}</p>` + blokkadeOvergeslagenHtml(geblokkeerdOvergeslagen);
+    container.innerHTML = balk + `<p class="empty-note">${esc(uitleg)}</p>`
+      + blokkadeOvergeslagenHtml(geblokkeerdOvergeslagen) + opvolgingVerborgenHtml(opvolgingVerborgen);
     return;
   }
 
@@ -4771,7 +4934,8 @@ function renderStagnatieCard() {
   const overStatus = zichtbaar.filter(r => r.teLangStatus).length;
   const kop = state.stagnatieFilter
     ? `<p class="prognose-headline">Gefilterd op <strong>${esc(state.stagnatieFilter === 'traject' ? 'Hele traject' : state.stagnatieFilter)}</strong>: ${zichtbaar.length} storing${zichtbaar.length === 1 ? '' : 'en'}. <button type="button" class="btn-link" data-stagnatie-filter="">Toon alles</button></p>`
-    : `<p class="prognose-headline"><strong>${zichtbaar.length}</strong> ${zichtbaar.length === 1 ? 'storing zit' : 'storingen zitten'} boven een norm: <strong class="prognose-bad">${overTraject}</strong> langer dan ${traject.norm} dagen onderweg, <strong>${overStatus}</strong> te lang in hun huidige status.</p>` + blokkadeOvergeslagenHtml(geblokkeerdOvergeslagen);
+    : `<p class="prognose-headline"><strong>${zichtbaar.length}</strong> ${zichtbaar.length === 1 ? 'storing zit' : 'storingen zitten'} boven een norm: <strong class="prognose-bad">${overTraject}</strong> langer dan ${traject.norm} dagen onderweg, <strong>${overStatus}</strong> te lang in hun huidige status.</p>`
+      + blokkadeOvergeslagenHtml(geblokkeerdOvergeslagen) + opvolgingVerborgenHtml(opvolgingVerborgen);
 
   const sorted = sortByState(zichtbaar, state.stagnatieSortState);
   const tabel = document.createElement('div');
@@ -5830,6 +5994,47 @@ function firstSeenWeekMapFor(snapshots) {
 }
 function firstSeenWeekMap() { return firstSeenWeekMapFor(state.snapshots); }
 
+// De bedieningscel: kiezen wat je ermee doet, en bij parkeren tot wanneer.
+// In de gedeelde export alleen tonen, niet bedienen — daar is het informatie
+// ("Joep heeft dit opgepakt") en geen knop.
+function opvolgingCellHtml(s) {
+  const st = opvolgingStand(s);
+  if (isStaticExport) {
+    if (!st) return '<span class="muted small">—</span>';
+    return `<span class="status-pill">${st.icon} ${esc(st.label)}</span>`
+      + (st.soort === 'geparkeerd' && st.tot ? `<div class="muted small">tot ${esc(fmtDag(st.tot, true))}</div>` : '')
+      + (st.notitie ? `<div class="muted small">${esc(st.notitie)}</div>` : '')
+      + opvolgingWaarschuwingHtml(st);
+  }
+  const opties = ['<option value="">— Niets —</option>']
+    .concat(Object.keys(OPVOLGING_SOORTEN).map(k =>
+      `<option value="${k}" ${st && st.soort === k ? 'selected' : ''}>${esc(OPVOLGING_SOORTEN[k].label)}</option>`));
+  const m = opvolgingVan(s.order);
+  return `
+      <select class="opvolging-select" data-order="${esc(s.order)}">${opties.join('')}</select>
+      ${st && st.soort === 'geparkeerd'
+        ? `<input type="date" class="opvolging-tot" data-order="${esc(s.order)}" value="${esc((m && m.tot) || '')}" title="Terug in de lijsten vanaf deze datum">`
+        : ''}
+      ${st ? `<input type="text" class="opvolging-notitie" data-order="${esc(s.order)}" placeholder="Notitie (optioneel)" value="${esc((m && m.notitie) || '')}">` : ''}
+      ${opvolgingWaarschuwingHtml(st)}`;
+}
+
+// Waarom een markering niet meer geldt. Dit is het hart van de zaak: zonder
+// deze regel is parkeren hetzelfde als weggooien.
+function opvolgingWaarschuwingHtml(st) {
+  if (!st) return '';
+  if (st.verschoven) {
+    return `<div class="opvolging-wissel">status is sindsdien ${esc(st.bijStatus)} → ${esc('nu anders')} — markering vervallen</div>`;
+  }
+  if (st.verlopen) {
+    return `<div class="opvolging-wissel">parkeertijd verlopen${st.tot ? ` op ${esc(fmtDag(st.tot, true))}` : ''}</div>`;
+  }
+  if (st.soort === 'geparkeerd' && st.dagenTot !== null) {
+    return `<div class="muted small">nog ${st.dagenTot} dag${st.dagenTot === 1 ? '' : 'en'} geparkeerd</div>`;
+  }
+  return '';
+}
+
 function ovBlockCellHtml(s) {
   const block = ovBlockStatusOf(s.order);
   if (isStaticExport) {
@@ -5871,6 +6076,7 @@ function buildOvColumns() {
     { key: 'flags', label: 'Aanvragen', cell: s => `<td>${s.flags.length ? s.flags.map(f => `<span class="badge" title="${esc(FLAG_LABELS[f])}">${esc(f)}</span>`).join(' ') : '—'}</td>` },
     { key: 'type', label: 'Type', cell: s => `<td>${esc(s.type)}</td>` },
     { key: 'blockReasonLabel', label: 'Blokkade', cell: s => `<td class="ov-block-cell">${ovBlockCellHtml(s)}</td>` },
+    { key: 'opvolgingLabel', label: 'Opvolging', cell: s => `<td class="opvolging-cel">${opvolgingCellHtml(s)}</td>` },
   ];
 }
 
@@ -5883,6 +6089,7 @@ function renderTableAll(current) {
   const annotated = current.map(s => Object.assign({}, s, {
     regioGroup: regioGroupOf(s),
     blockReasonLabel: OV_BLOCK_REASON_LABELS[ovBlockStatusOf(s.order).reason] || '',
+    opvolgingLabel: (opvolgingStand(s) || {}).label || '',
     firstSeenWeek: firstSeenMap[s.order] || '',
   }));
   const rows = sortByState(annotated, state.sortState);
@@ -5906,6 +6113,40 @@ function renderTableAll(current) {
     });
   });
 
+  // De huidige status gaat mee bij het zetten: daarmee is later te zien of de
+  // storing sindsdien is opgeschoven en de beslissing dus is ingehaald.
+  const bijOrder = {};
+  rows.forEach(r => { bijOrder[r.order] = r; });
+  container.querySelectorAll('.opvolging-select').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const order = sel.dataset.order;
+      setOpvolging(order, sel.value, { storing: bijOrder[order] });
+      await saveOpvolging(state.opvolging);
+      renderDashboardFromState();
+    });
+  });
+  container.querySelectorAll('.opvolging-tot').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      const order = inp.dataset.order;
+      const huidig = opvolgingVan(order);
+      if (!huidig) return;
+      setOpvolging(order, huidig.soort, { tot: inp.value || undefined, bijStatus: huidig.bijStatus });
+      await saveOpvolging(state.opvolging);
+      renderDashboardFromState();
+    });
+  });
+  container.querySelectorAll('.opvolging-notitie').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      const order = inp.dataset.order;
+      const huidig = opvolgingVan(order);
+      if (!huidig) return;
+      // Alleen de notitie bijwerken: soort, datum en bijStatus blijven staan.
+      const map = Object.assign({}, state.opvolging);
+      map[order] = Object.assign({}, huidig, { notitie: inp.value });
+      state.opvolging = map;
+      await saveOpvolging(state.opvolging);
+    });
+  });
 }
 
 /* ---------- Rendering: weeks list ---------- */
@@ -6223,6 +6464,7 @@ async function reloadAllStateAndRender() {
   state.statusStreef = await loadStatusStreef();
   state.doorlooptijdNorm = await loadDoorlooptijdNorm();
   state.blokkadeUitsluiten = await loadBlokkadeUitsluiten();
+  state.opvolging = await loadOpvolging();
   if (state.snapshots.length > 0) renderDashboardFromState();
   else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderStatusStreefCard(); renderBlokkadeUitsluitenCard(); renderBackupReminder(); renderBackupStatus(); }
 }
@@ -6844,6 +7086,7 @@ function applyStaticExportData() {
   state.blokkadeUitsluiten = Array.isArray(STATIC_DATA.blokkadeUitsluiten)
     ? STATIC_DATA.blokkadeUitsluiten.filter(r => r in OV_BLOCK_REASON_LABELS)
     : DEFAULT_BLOKKADE_UITSLUITEN.slice();
+  state.opvolging = STATIC_DATA.opvolging || {};
 
   if (state.snapshots.length > 0) renderDashboardFromState();
   else setDashboardEmpty('dashboard', 'dashboard-empty', true);
