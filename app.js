@@ -854,6 +854,7 @@ const state = {
   boxplotSchaal: 'whisker',
   boxplotViewMode: 'chart',
   stagnatieSortState: { key: 'traject', dir: -1 },
+  liggenSortState: { key: 'voorbij', dir: -1 },
   historieQuery: '',
   historieSortState: { key: 'eerst', dir: -1 },
   recidiveMode: 'straat',
@@ -3699,6 +3700,11 @@ const DAG_MS = 86400000;
 function dagenTussen(vanIso, totIso) {
   return Math.round((new Date(totIso) - new Date(vanIso)) / DAG_MS);
 }
+// Een kalenderdag opschuiven, terug als YYYY-MM-DD. Via UTC-millisecondes en
+// niet via setDate, zodat een zomertijdovergang er geen dag naast gaat zitten.
+function dagPlus(iso, dagen) {
+  return new Date(new Date(iso).getTime() + dagen * DAG_MS).toISOString().slice(0, 10);
+}
 
 /* ---------- Prognose: benodigd tempo ---------- */
 
@@ -4057,6 +4063,307 @@ function renderMaandTempoCard() {
       </table>
     </div>
     <p class="muted small">Alles per week, zodat maanden van verschillende lengte en met verschillende meetdekking vergelijkbaar blijven. "Gemeten" is het deel van de maand waarover meetdagen beschikbaar zijn; onder de ${Math.round(MAAND_MIN_DEKKING * 100)}% telt een maand niet mee in de vergelijking hierboven, want dan zegt het gemiddelde te weinig. "waarvan nieuw" laat ordernummers weg die eerder al eens in de lijst stonden.</p>`;
+}
+
+/* ---------- Prognose: blijft liggen (wachtrij-discipline) ---------- */
+
+// Het dashboard meet tempo (hoeveel erbij, hoeveel eraf) en normen (wat gaat
+// er over de streef heen). Beide kunnen er goed uitzien terwijl de bak van
+// eind september onaangeroerd blijft staan: als je elke week genoeg afsluit,
+// maakt geen enkel bestaand cijfer onderscheid tussen tien nieuwe storingen
+// wegzetten en tien oude. Dat is een blinde vlek, en het is precies de klacht
+// van de werkvoorbereiders.
+//
+// Daarom drie dingen die niets met normen te maken hebben:
+//
+//  1. VOORBIJGESTREEFD. Per openstaande storing: hoeveel storingen die LATER
+//     binnenkwamen zijn inmiddels afgesloten terwijl deze bleef staan. Dat is
+//     geen norm maar een vergelijking met de buren, en het staat los van
+//     leeftijd: een oude storing die als enige nog over is van haar lichting
+//     is niet voorbijgestreefd, een maand-oude met twintig jongere afsluiters
+//     erlangs wel.
+//  2. LICHTINGEN. Per maand van binnenkomst hoeveel er nog openstaan. Dat
+//     beantwoordt "staat er nog iets van september?" in één oogopslag, en
+//     splitst het geblokkeerde deel eruit zodat je weet wat er nog te doen is.
+//  3. WORDT DE OUDSTE BAK GEHOLPEN. Van alles wat recent is afgesloten: kwam
+//     dat uit de oudere of de jongere helft van wat op dat moment openstond?
+//     Bij een eerlijke wachtrij is dat ongeveer de helft. Veel lager, en er
+//     wordt gekozen voor het makkelijkste werk.
+
+const LIGGEN_VENSTER_DAGEN = 30;
+// Minder dan dit aan afsluitingen in het venster en het aandeel zegt niets:
+// bij vier afsluitingen scheelt één geval al 25 procentpunt.
+const LIGGEN_MIN_AFSLUITINGEN = 8;
+// Vanaf hoeveel jongere afsluiters is "voorbijgestreefd" een signaal in plaats
+// van ruis. Onder de drie is het toeval: er wordt nooit precies op volgorde
+// gewerkt, en dat hoeft ook niet.
+const LIGGEN_MIN_VOORBIJ = 3;
+
+function buildLiggenblijvers() {
+  const leeg = {
+    gemeten: false, rijen: [], lichtingen: [], fifo: null, oudste: null,
+    geblokkeerdOvergeslagen: 0, peilDag: null,
+  };
+  const snaps = chronoSnapshots();
+  if (snaps.length < 2) return leeg;
+  const visibleOf = (list) => filterByActive(typeFiltered(list));
+  const laatste = snaps[snaps.length - 1];
+  const vandaag = laatste.week;
+
+  // Wie kwam wanneer voor het eerst binnen, en wat is er wanneer afgesloten.
+  // Beide uit dezelfde bron, zodat ze per definitie bij elkaar passen.
+  const eerstGezien = {};
+  const afsluitingen = [];   // { order, eerstGezien, dag }
+  snaps.forEach((sn, i) => {
+    const nu = new Set(visibleOf(sn.storingen).map(s => s.order));
+    if (i > 0) {
+      visibleOf(snaps[i - 1].storingen).forEach(s => {
+        if (nu.has(s.order) || !eerstGezien[s.order]) return;
+        afsluitingen.push({ order: s.order, eerstGezien: eerstGezien[s.order], dag: sn.week });
+      });
+    }
+    visibleOf(sn.storingen).forEach(s => { if (!(s.order in eerstGezien)) eerstGezien[s.order] = sn.week; });
+  });
+
+  // 1. Voorbijgestreefd. De eerst-gezien-datums van alle afsluitingen op een
+  // rij; dan is "hoeveel jongere zijn er afgesloten" een kwestie van tellen
+  // hoeveel daarvan ná deze storing binnenkwamen.
+  const afsluitEerst = afsluitingen.map(a => a.eerstGezien).sort((a, b) => a.localeCompare(b));
+  const aantalJongerAfgesloten = (dag) => {
+    // Eerste index met een eerst-gezien-datum strikt later dan dag.
+    let laag = 0, hoog = afsluitEerst.length;
+    while (laag < hoog) {
+      const mid = (laag + hoog) >> 1;
+      if (afsluitEerst[mid] <= dag) laag = mid + 1; else hoog = mid;
+    }
+    return afsluitEerst.length - laag;
+  };
+
+  const open = visibleOf(laatste.storingen);
+  let geblokkeerdOvergeslagen = 0;
+  const rijen = [];
+  open.forEach(s => {
+    const eerste = eerstGezien[s.order];
+    if (!eerste) return;
+    // Een geblokkeerde storing wordt met goede reden overgeslagen; die hier
+    // tonen zou de lijst vullen met werk waar niemand iets aan kan doen.
+    if (meetBlokkadeUit(s, false)) { geblokkeerdOvergeslagen++; return; }
+    const voorbij = aantalJongerAfgesloten(eerste);
+    if (voorbij < LIGGEN_MIN_VOORBIJ) return;
+    rijen.push({
+      order: s.order,
+      plaats: s.city || 'Onbekend',
+      gebiedscode: s.gebiedscode || '—',
+      ovStatus: s.ovStatus || '—',
+      eerstGezien: eerste,
+      leeftijd: Math.max(0, dagenTussen(eerste, vandaag)),
+      voorbij,
+      daysLeft: typeof s.daysLeft === 'number' ? s.daysLeft : null,
+      storing: s,
+    });
+  });
+
+  // 2. Lichtingen: per maand van binnenkomst wat er nog van over is.
+  const openSet = new Map(open.map(s => [s.order, s]));
+  const perMaand = {};
+  Object.keys(eerstGezien).forEach(order => {
+    const sleutel = eerstGezien[order].slice(0, 7);
+    const vak = perMaand[sleutel] = perMaand[sleutel] || {
+      sleutel, ingestroomd: 0, nogOpen: 0, geblokkeerd: 0, leeftijden: [],
+    };
+    vak.ingestroomd++;
+    const s = openSet.get(order);
+    if (!s) return;
+    vak.nogOpen++;
+    if (meetBlokkadeUit(s, false)) vak.geblokkeerd++;
+    vak.leeftijden.push(Math.max(0, dagenTussen(eerstGezien[order], vandaag)));
+  });
+  const lichtingen = Object.values(perMaand)
+    .sort((a, b) => a.sleutel.localeCompare(b.sleutel))
+    .map(v => {
+      const gesorteerd = v.leeftijden.slice().sort((a, b) => a - b);
+      return {
+        sleutel: v.sleutel,
+        label: maandLabel(v.sleutel),
+        ingestroomd: v.ingestroomd,
+        nogOpen: v.nogOpen,
+        geblokkeerd: v.geblokkeerd,
+        aandeelOpen: v.ingestroomd > 0 ? v.nogOpen / v.ingestroomd : 0,
+        p50Leeftijd: gesorteerd.length ? percentiel(gesorteerd, 0.5) : null,
+        oudste: gesorteerd.length ? gesorteerd[gesorteerd.length - 1] : null,
+      };
+    });
+
+  // 3. Wordt de oudste bak geholpen? Per afsluiting in het venster: was deze
+  // storing ouder of jonger dan de mediaan van wat er op dát moment openstond?
+  // De mediaan van de stand van toen, niet van nu — anders vergelijk je een
+  // afsluiting van drie weken terug met een bak die inmiddels is doorgeschoven.
+  const vanaf = dagPlus(vandaag, -LIGGEN_VENSTER_DAGEN);
+  const standPerDag = {};
+  snaps.forEach((sn, i) => {
+    if (i === 0) return;
+    const vorige = visibleOf(snaps[i - 1].storingen)
+      .map(s => eerstGezien[s.order])
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+    standPerDag[sn.week] = vorige;
+  });
+  const inVenster = afsluitingen.filter(a => a.dag > vanaf);
+  let uitOudsteHelft = 0;
+  inVenster.forEach(a => {
+    const stand = standPerDag[a.dag] || [];
+    if (stand.length === 0) return;
+    // Niet vergelijken met de mediaan zelf: alles wat op één dag is geplakt
+    // heeft dezelfde eerst-gezien-datum, dus de mediaan is vaak precies die
+    // datum en dan zou de hele lichting als "oudste helft" tellen. In plaats
+    // daarvan de MIDDENRANG: hoeveel staat er strikt ouder open, plus de helft
+    // van wat even oud is, gedeeld door de hele bak. Onder 0,5 zit deze
+    // afsluiting in de oudere helft van de wachtrij.
+    let ouder = 0, gelijk = 0;
+    stand.forEach(d => {
+      if (d < a.eerstGezien) ouder++;
+      else if (d === a.eerstGezien) gelijk++;
+    });
+    if ((ouder + gelijk / 2) / stand.length < 0.5) uitOudsteHelft++;
+  });
+  const fifo = inVenster.length >= LIGGEN_MIN_AFSLUITINGEN
+    ? {
+        venster: LIGGEN_VENSTER_DAGEN,
+        afgesloten: inVenster.length,
+        uitOudsteHelft,
+        aandeel: uitOudsteHelft / inVenster.length,
+      }
+    : { venster: LIGGEN_VENSTER_DAGEN, afgesloten: inVenster.length, uitOudsteHelft, aandeel: null };
+
+  // De oudste die nog openstaat, geblokkeerd of niet: dat is het getal waar in
+  // een overleg naar gevraagd wordt.
+  let oudste = null;
+  open.forEach(s => {
+    const eerste = eerstGezien[s.order];
+    if (!eerste) return;
+    const leeftijd = Math.max(0, dagenTussen(eerste, vandaag));
+    if (!oudste || leeftijd > oudste.leeftijd) {
+      oudste = { order: s.order, leeftijd, eerstGezien: eerste, geblokkeerd: meetBlokkadeUit(s, false) };
+    }
+  });
+
+  return {
+    gemeten: true, rijen, lichtingen, fifo, oudste,
+    geblokkeerdOvergeslagen, peilDag: vandaag, totaalOpen: open.length,
+  };
+}
+
+const LIGGEN_COLUMNS = [
+  { key: 'order', label: 'Order', cell: r => `<td>${orderLinkHtml(r.order)}</td>` },
+  { key: 'plaats', label: 'Plaats', cell: r => `<td>${esc(r.plaats)}</td>` },
+  { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
+  { key: 'ovStatus', label: 'Status', cell: r => `<td>${esc(r.ovStatus)}</td>` },
+  { key: 'eerstGezien', label: 'Binnen sinds', cell: r => `<td>${esc(fmtDag(r.eerstGezien, true))}</td>` },
+  { key: 'leeftijd', label: 'Dagen open', num: true, cell: r => `<td class="num"><strong>${r.leeftijd}</strong></td>` },
+  { key: 'voorbij', label: 'Jongere afgesloten', num: true, cell: r => `<td class="num"><strong class="prognose-bad">${r.voorbij}</strong></td>` },
+  { key: 'daysLeft', label: 'Deadline', num: true, cell: r => `<td class="num">${r.daysLeft == null ? '—' : renderDaysPill(r.storing)}</td>` },
+];
+
+// Een staafje per lichting: welk deel van die maand staat nog open. Geen
+// grafiek met assen — het gaat om één verhouding per regel, en die is als
+// balkje sneller te lezen dan als percentage in een kolom.
+function lichtingBalkHtml(l) {
+  const pct = Math.round(l.aandeelOpen * 100);
+  const klasse = l.aandeelOpen >= 0.5 ? ' lichting-hoog' : (l.aandeelOpen >= 0.25 ? ' lichting-midden' : '');
+  return `<div class="lichting-balk" title="${l.nogOpen} van ${l.ingestroomd} nog open">
+      <span class="lichting-vulling${klasse}" style="width:${Math.max(pct, l.nogOpen > 0 ? 2 : 0)}%"></span>
+      <span class="lichting-label">${pct}%</span>
+    </div>`;
+}
+
+function renderLiggenblijversCard() {
+  const container = document.getElementById('liggen-body');
+  if (!container) return;
+  const o = buildLiggenblijvers();
+  if (!o.gemeten) {
+    container.innerHTML = '<p class="empty-note">Hiervoor zijn minstens twee meetdagen nodig: zonder een eerdere stand is niet te zien wat er is afgesloten terwijl iets anders bleef staan.</p>';
+    return;
+  }
+
+  // Het oordeel eerst. Een tabel laat je zelf uitzoeken of het goed of slecht
+  // gaat; dit zegt het.
+  const f = o.fifo;
+  let oordeel;
+  if (f.aandeel === null) {
+    oordeel = `<p class="prognose-headline">Nog te weinig afgesloten in de laatste ${f.venster} dagen (${f.afgesloten} van de ${LIGGEN_MIN_AFSLUITINGEN} die nodig zijn) om te zeggen of de oudste bak wordt geholpen.</p>`;
+  } else {
+    const pct = Math.round(f.aandeel * 100);
+    // Bij een eerlijke wachtrij komt ongeveer de helft uit de oudste helft.
+    // Ver daaronder betekent dat er voor het makkelijkste werk wordt gekozen.
+    const slecht = f.aandeel < 0.35;
+    const matig = !slecht && f.aandeel < 0.45;
+    oordeel = `<p class="prognose-headline">Van de ${f.afgesloten} storingen die je de laatste ${f.venster} dagen hebt afgesloten ${f.uitOudsteHelft === 1 ? 'kwam er <strong>1</strong>' : `kwamen er <strong>${f.uitOudsteHelft}</strong>`} uit de oudste helft van de bak: <strong class="${slecht ? 'prognose-bad' : ''}">${pct}%</strong>. `
+      + (slecht
+          ? `Bij een eerlijke wachtrij is dat rond de 50%, dus de oude bak blijft structureel liggen terwijl nieuw werk wordt weggezet.</p>`
+          : matig
+            ? `Dat is iets onder de 50% die je bij een eerlijke wachtrij verwacht — de oude bak komt wel aan de beurt, maar als laatste.</p>`
+            : `Dat is rond de 50% die je bij een eerlijke wachtrij verwacht: oud en nieuw komen even hard aan de beurt.</p>`);
+  }
+  if (o.oudste) {
+    oordeel += `<p class="muted small">De oudste storing die nog openstaat is ${orderLinkHtml(o.oudste.order)}: <strong>${o.oudste.leeftijd} dagen</strong>, binnen sinds ${esc(fmtDag(o.oudste.eerstGezien, true))}${o.oudste.geblokkeerd ? ' (geblokkeerd)' : ''}.</p>`;
+  }
+
+  // Lichtingen: "staat er nog iets van september?" in één tabel.
+  const lichtingRijen = o.lichtingen.map(l => `<tr>
+      <td>${esc(l.label)}</td>
+      <td class="num">${l.ingestroomd}</td>
+      <td class="num${l.nogOpen > 0 && l.aandeelOpen >= 0.5 ? ' prognose-bad' : ''}">${l.nogOpen || '—'}</td>
+      <td>${lichtingBalkHtml(l)}</td>
+      <td class="num${l.geblokkeerd > 0 ? ' geblokkeerd-cel' : ''}">${l.geblokkeerd || '—'}</td>
+      <td class="num">${l.p50Leeftijd == null ? '—' : dagenAfgerond(l.p50Leeftijd)}</td>
+      <td class="num">${l.oudste == null ? '—' : l.oudste}</td>
+    </tr>`).join('');
+
+  const lichtingBlok = `<h3 class="kaart-kop">Per lichting: wat staat er nog van toen?</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Binnengekomen in</th><th class="num">Ingestroomd</th><th class="num">Nog open</th>
+          <th>Deel nog open</th><th class="num">Waarvan geblokkeerd</th>
+          <th class="num">Mediane leeftijd</th><th class="num">Oudste</th>
+        </tr></thead>
+        <tbody>${lichtingRijen}</tbody>
+      </table>
+    </div>
+    <p class="muted small">Per maand waarin storingen voor het eerst in de lijst stonden. Een lichting die voor meer dan de helft nog openstaat is rood: daar is sinds die maand weinig gebeurd. Van de recentste maand is nog niets te verwachten — die moet nog door het traject heen.</p>`;
+
+  // De werklijst: de storingen die links en rechts worden ingehaald.
+  let lijstBlok;
+  if (o.rijen.length === 0) {
+    lijstBlok = `<h3 class="kaart-kop">Links en rechts ingehaald</h3>
+      <p class="empty-note">Geen storing is door ${LIGGEN_MIN_VOORBIJ} of meer jongere afsluitingen voorbijgestreefd. De wachtrij wordt op volgorde geholpen.</p>`;
+  } else {
+    const sorted = sortByState(o.rijen, state.liggenSortState);
+    const tabel = document.createElement('div');
+    renderFullTable(tabel, sorted, LIGGEN_COLUMNS, state.liggenSortState, {
+      rowClass: r => r.voorbij >= LIGGEN_MIN_VOORBIJ * 3 ? 'row-alert' : '',
+    });
+    const zwaarste = o.rijen.slice().sort((a, b) => b.voorbij - a.voorbij)[0];
+    lijstBlok = `<h3 class="kaart-kop">Links en rechts ingehaald</h3>
+      <p class="prognose-headline"><strong>${o.rijen.length}</strong> ${o.rijen.length === 1 ? 'storing is' : 'storingen zijn'} door ${LIGGEN_MIN_VOORBIJ} of meer jongere afsluitingen voorbijgestreefd. De ergste is ${orderLinkHtml(zwaarste.order)} in ${esc(zwaarste.plaats)}: <strong class="prognose-bad">${zwaarste.voorbij}</strong> storingen die later binnenkwamen zijn al weg, deze staat er ${zwaarste.leeftijd} dagen.</p>
+      <div id="liggen-tabel">${tabel.innerHTML}</div>
+      <p class="muted small">"Jongere afgesloten" is hoeveel storingen die ná deze binnenkwamen inmiddels zijn afgesloten. Dat is geen norm maar een vergelijking met de buren: een oude storing die als enige over is van haar lichting staat hier niet in, een storing met twintig jongere afsluiters erlangs wel. Vanaf ${LIGGEN_MIN_VOORBIJ}, want precies op volgorde werken hoeft niet en gebeurt nooit.</p>`
+      + blokkadeOvergeslagenHtml(o.geblokkeerdOvergeslagen);
+  }
+
+  container.innerHTML = oordeel + lichtingBlok + lijstBlok;
+
+  const tabelEl = container.querySelector('#liggen-tabel table');
+  if (tabelEl) {
+    tabelEl.querySelectorAll('th[data-key]').forEach(th => {
+      th.addEventListener('click', () => {
+        const key = th.dataset.key;
+        const cur = state.liggenSortState;
+        state.liggenSortState = { key, dir: cur.key === key ? -cur.dir : -1 };
+        renderLiggenblijversCard();
+      });
+    });
+  }
 }
 
 /* ---------- Prognose: stagnatiesignaal ---------- */
@@ -4735,6 +5042,7 @@ function renderPrognose(current) {
   renderDoorstroomCard();
   renderBoxplotCard();
   renderStagnatieCard();
+  renderLiggenblijversCard();
 }
 
 /* ---------- Historie: tijdlijn van één storing ---------- */

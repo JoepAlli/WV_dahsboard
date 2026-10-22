@@ -21,3 +21,4 @@ IndexedDB en sluit af met `ALLES GOED` of het aantal mislukte controles.
 | `zelfde_adres_en_ritlijst.js` | De melding bij meerdere orders op één adres, en de printklare ritlijst |
 | `boxplot_staart.js` | Dat de staart-conclusie boven de boxplot de juiste status kiest en zwijgt bij te weinig of vlakke metingen |
 | `blokkade_uitsluiten.js` | Dat geblokkeerde storingen buiten de gemeten doorlooptijd blijven, dat weggelaten metingen gemeld worden, en dat de periodekaart ook blokkades meeneemt die inmiddels zijn opgeheven |
+| `liggenblijvers.js` | Dat voorbijgestreefde storingen, de lichtingen per instroommaand en de wachtrij-discipline kloppen — inclusief gelijke instroomdatums, waar een mediaanvergelijking de mist in gaat |

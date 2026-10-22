@@ -1292,6 +1292,44 @@ tr.detail-row > td {
    zien dat er iets staat, niet zo rood dat het op een fout lijkt — een blokkade
    is geen storing in het dashboard maar een feit over de buitenwereld. */
 .geblokkeerd-cel { color: var(--status-warning, var(--text-primary)); font-weight: 600; }
+
+/* Een tussenkop binnen een kaart: de kaart "Blijft liggen" beantwoordt drie
+   vragen achter elkaar (oordeel, lichtingen, werklijst) en zonder kopjes loopt
+   dat in elkaar over. Kleiner dan de kaarttitel, want het is een onderdeel. */
+.kaart-kop {
+  margin: 1.4rem 0 0.4rem;
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.kaart-kop:first-child { margin-top: 0; }
+
+/* Het aandeel van een lichting dat nog openstaat, als balkje in de tabelcel.
+   De kleur loopt mee met de ernst: onder een kwart is normaal doorstromen,
+   boven de helft is er sinds die maand weinig gebeurd. */
+.lichting-balk {
+  position: relative;
+  min-width: 110px;
+  height: 16px;
+  background: var(--gridline);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.lichting-vulling {
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  background: color-mix(in srgb, var(--series-1) 55%, transparent);
+}
+.lichting-vulling.lichting-midden { background: color-mix(in srgb, var(--status-warning) 55%, transparent); }
+.lichting-vulling.lichting-hoog { background: color-mix(in srgb, var(--status-critical) 55%, transparent); }
+.lichting-label {
+  position: relative;
+  display: block;
+  text-align: center;
+  font-size: 0.75rem;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
 .prognose-good { color: var(--status-good); }
 
 .tempo-grid {
