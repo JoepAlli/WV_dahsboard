@@ -10,7 +10,7 @@
 //      het markeren, dan klopt de beslissing niet meer en komt 'ie terug.
 //
 // De opzet: vier storingen die allemaal om actie vragen (verlopen zonder
-// uitvoeringsdatum), zodat ze gegarandeerd in "Vraagt om actie" staan.
+// uitvoeringsdatum), zodat ze gegarandeerd in de werklijst staan.
 const { chromium } = require('playwright');
 
 const OV = 'Stra[a]t[en] zonder OV Infra';
@@ -57,7 +57,7 @@ const lijst = (orders, dagen) => orders.map(o => blok(o, dagen)).join('\n');
   const actieRijen = async () => {
     await page.click('.tab-btn[data-tab="data"]');
     await page.waitForTimeout(500);
-    return page.$$eval('#attention-list tbody tr', trs => trs.length);
+    return page.$$eval('#werklijst-body tbody tr', trs => trs.length);
   };
   // De markering zetten gaat via de echte bediening. Standaard via de
   // volledige lijst; met bron 'actie' via de lijst Vraagt om actie, want dat
@@ -65,7 +65,7 @@ const lijst = (orders, dagen) => orders.map(o => blok(o, dagen)).join('\n');
   const markeer = async (order, soort, bron) => {
     await page.click('.tab-btn[data-tab="data"]');
     await page.waitForTimeout(400);
-    const sel = `${bron === 'actie' ? '#attention-list' : '#table-all'} .opvolging-select[data-order="${order}"]`;
+    const sel = `${bron === 'actie' ? '#werklijst-body' : '#table-all'} .opvolging-select[data-order="${order}"]`;
     await page.waitForSelector(sel);
     await page.selectOption(sel, soort);
     await page.waitForTimeout(450);
@@ -85,13 +85,13 @@ const lijst = (orders, dagen) => orders.map(o => blok(o, dagen)).join('\n');
   check('vier storingen vragen om actie', await actieRijen(), 4);
 
   console.log('\n--- markeren maakt de lijst korter ---');
-  // De eerste via Vraagt om actie, want daar hoort het te kunnen.
+  // De eerste via de werklijst zelf, want daar werk je.
   await markeer(ORDERS[0], 'gezien', 'actie');
   await markeer(ORDERS[1], 'opgepakt');
   check('nog twee in de lijst', await actieRijen(), 2);
   check('en de teller op de kaart zegt hetzelfde',
-    await page.$eval('#attention-count', e => e.textContent.trim()), 2);
-  const na = await page.$eval('#attention-list', e => e.textContent.replace(/\s+/g, ' ').trim());
+    await page.$eval('#werklijst-count', e => e.textContent.trim()), 2);
+  const na = await page.$eval('#werklijst-body', e => e.textContent.replace(/\s+/g, ' ').trim());
   check('en de lijst meldt wat is weggelaten', /2 storingen zijn hier weggelaten omdat die als gezien, opgepakt of geparkeerd staan/.test(na), true);
   check('met de belofte dat ze terugkomen', /komen vanzelf terug zodra de parkeertijd om is of de status verandert/.test(na), true);
 

@@ -104,22 +104,13 @@
 
         <section class="card hidden" id="overdue-detail"></section>
 
-        <section class="card" id="attention-card">
+        <section class="card" id="werklijst-card">
           <div class="card-header">
-            <h2>⚡ Vraagt om actie <span id="attention-count" class="badge"></span></h2>
-            <button id="copy-attention-btn" class="btn-link">📋 Kopieer order + categorie</button>
+            <h2>🎯 Werklijst — wat moet er gebeuren <span id="werklijst-count" class="badge"></span></h2>
+            <button id="copy-werklijst-btn" class="btn-link">📋 Kopieer order + reden</button>
           </div>
-          <p class="muted small">Alle openstaande storingen die om actie vragen — bijna verlopen, verlopen zonder plan, of met een verstreken uitvoeringsdatum — op één plek, gesorteerd op urgentie. Heb je er iets mee gedaan, markeer het dan in de volledige lijst (kolom Opvolging) als gezien, opgepakt of geparkeerd; dan verdwijnt het hier. Het komt vanzelf terug zodra de parkeertijd om is of de status verandert, dus je raakt niets kwijt.</p>
-          <div id="attention-list" class="table-scroll"></div>
-        </section>
-
-        <section class="card hidden" id="zelfde-adres-card">
-          <div class="card-header">
-            <h2>📌 Meerdere orders op één adres <span id="zelfde-adres-count" class="badge"></span></h2>
-            <button id="copy-zelfde-adres-btn" class="btn-link">📋 Kopieer lijst</button>
-          </div>
-          <p class="muted small">Adressen waar meer dan één storing openstaat. Staan ze op dezelfde asset, dan is het waarschijnlijk twee keer dezelfde melding — los je er dan één op, dan blijft de andere in elk cijfer meetellen. Staan ze op verschillende assets, dan is er niets dubbel maar scheelt het wel een rit om ze samen in te plannen.</p>
-          <div id="zelfde-adres-body"></div>
+          <p class="muted small">Alles wat om actie vraagt, op één plek: verlopen termijnen, storingen die over een norm heen gaan, storingen die worden ingehaald door jongere, en meerdere orders op hetzelfde adres. Eén regel per storing met alle redenen erbij, gesorteerd op de zwaarste. Klik een reden hierboven om de lijst daarop te beperken. Markeer rechts wat je hebt gedaan — dan verdwijnt de regel, en komt 'ie vanzelf terug zodra de parkeertijd om is of de status verandert.</p>
+          <div id="werklijst-body"></div>
         </section>
 
         <section class="card hidden" id="blokkade-overzicht-card">
@@ -330,10 +321,10 @@
 
     <section class="card">
       <div class="card-header">
-        <h2>🐢 Te lang onderweg</h2>
+        <h2>🎯 Hoe staan we tegen de normen?</h2>
         <button type="button" class="btn-link norm-instel-knop" data-goto-instelling="status-streef-card" data-goto-veld="doorlooptijd-norm-input">🎯 Normen aanpassen</button>
       </div>
-      <p class="muted small">Twee normen naast elkaar: het hele traject (van melding tot afsluiting) en de stap waar een storing nu in zit. Alles wat over een van beide heen gaat staat hieronder. Deze storingen vallen vaak buiten "Vraagt om actie" omdat ze formeel nog op tijd zijn — terwijl ze in de praktijk stilstaan. <strong>Klik op een vak om de lijst daarop te filteren.</strong> De normen zet je zelf: via de knop hierboven. Heeft een status er geen, dan wordt er afgemeten tegen de gemeten P50 en pas gemeld vanaf het dubbele daarvan.</p>
+      <p class="muted small">Twee normen naast elkaar: het hele traject (van melding tot afsluiting) en de stap waar een storing nu in zit. Per norm hoeveel er binnen vallen en hoeveel eroverheen gaan. De storingen zelf staan niet meer hier maar in de <strong>Werklijst</strong> op Data, samen met al het andere dat om actie vraagt — dit is de stand, daar is het werk. De normen zet je zelf via de knop hierboven.</p>
       <div id="stagnatie-body"></div>
     </section>
 

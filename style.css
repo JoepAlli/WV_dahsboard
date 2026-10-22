@@ -1307,6 +1307,20 @@ tr.detail-row > td {
 /* Opvolging: de markering van je eigen beslissingen. Bewust rustig vormgegeven
    — dit is geen alarm maar een aantekening. De vervalmelding eronder is dat
    wél, want een markering die niet meer klopt moet opvallen. */
+/* De werklijst is de voordeur: één regel per storing met alle redenen ernaast.
+   De redenkolom mag breed zijn — daar lees je op, niet op het ordernummer. */
+.werklijst-chips { margin-bottom: 0.75rem; }
+/* De redenkolom mag breed zijn maar niet onbeperkt: labels horen te stapelen
+   in plaats van de tabel zo ver uit te rekken dat de opvolgingknop rechts
+   buiten beeld valt. Dat is juist de knop die je het vaakst nodig hebt. */
+.werklijst-tabel td:first-child { min-width: 200px; max-width: 250px; }
+.werklijst-tabel td, .werklijst-tabel th { padding-left: 0.5rem; padding-right: 0.5rem; }
+.werklijst-tabel td:first-child .status-pill { margin: 0 0.2rem 0.2rem 0; }
+.status-pill.info {
+  background: color-mix(in srgb, var(--series-1) 14%, var(--surface-1));
+  color: var(--text-primary);
+}
+
 .opvolging-cel { min-width: 170px; }
 .opvolging-cel select,
 .opvolging-cel input { width: 100%; margin-bottom: 0.25rem; font-size: 0.8rem; }

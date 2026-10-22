@@ -135,16 +135,27 @@ const VERWACHT = {
   const body = await page.$eval('#liggen-body', e => e.textContent.replace(/\s+/g, ' ').trim());
   check('noemt de oudste storing', new RegExp(`${o.oudste.order}: 49 dagen`).test(body), true);
   check('noemt de lichting september', /sep\.? 2026|september 2026/i.test(body), true);
-  check('en de ergst ingehaalde storing', /storingen die later binnenkwamen zijn al weg/.test(body), true);
+  check('en meldt hoeveel er worden ingehaald', /5 storingen worden links en rechts ingehaald/.test(body), true);
 
-  const rijenOpScherm = await page.$$eval('#liggen-tabel tbody tr', trs => trs.length);
-  check('vijf rijen in de werklijst', rijenOpScherm, VERWACHT.rijen);
-  const voorbijKolom = await page.$$eval('#liggen-tabel tbody tr', trs =>
-    trs.map(t => t.querySelectorAll('td')[6].textContent.trim()));
-  console.log('    kolom "jongere afgesloten":', voorbijKolom.join(', '));
-  check('gesorteerd op meest ingehaald, aflopend',
-    voorbijKolom.every((v, i, a) => i === 0 || +a[i - 1] >= +v), true);
-  check('en de waarde is de verwachte 8', voorbijKolom[0], VERWACHT.voorbij);
+  console.log('\n--- de storingen zelf staan in de werklijst, niet hier ---');
+  // De kaart is de stand van de wachtrij; het werk staat op één plek bij alle
+  // andere redenen. Hier wordt gecontroleerd dat de overdracht klopt.
+  check('geen eigen werklijst meer op deze kaart', await page.$$eval('#liggen-tabel', e => e.length), 0);
+  check('maar de lichtingentabel staat er nog wel', await page.$$eval('#liggen-body tbody tr', e => e.length > 0), true);
+  const inWerklijst = await page.evaluate(() =>
+    buildWerklijst().rijen.filter(r => r.redenen.includes('voorbijgestreefd')));
+  check('vijf storingen met deze reden in de werklijst', inWerklijst.length, VERWACHT.rijen);
+  check('met het aantal inhalers erbij', inWerklijst.every(r => r.details.voorbijgestreefd.voorbij === VERWACHT.voorbij), true);
+
+  console.log('\n--- en de knop springt erheen, meteen gefilterd ---');
+  await page.click('#liggen-body [data-goto-werklijst="voorbijgestreefd"]');
+  await page.waitForTimeout(600);
+  check('opent Data', await page.$eval('#section-data', e => !e.classList.contains('hidden')), true);
+  check('met het filter aan', await page.evaluate(() => state.werklijstFilter), 'voorbijgestreefd');
+  check('en precies die vijf in beeld', await page.$$eval('#werklijst-body tbody tr', e => e.length), VERWACHT.rijen);
+  await page.evaluate(() => { state.werklijstFilter = null; renderWerklijstCard(); });
+  await page.click('.tab-btn[data-tab="prognose"]');
+  await page.waitForTimeout(500);
 
   console.log('\n--- een eerlijke wachtrij geeft een ander oordeel ---');
   // Nu de oudste drie afsluiten: dan komt alles wat weggaat juist uit de

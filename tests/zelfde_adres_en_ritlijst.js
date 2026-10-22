@@ -1,9 +1,9 @@
 // Twee dingen die bij elkaar horen maar iets anders doen:
 //
-//  - "Meerdere orders op één adres": een melding zodra er meer dan één storing
-//    op exact hetzelfde adres openstaat, met onderscheid tussen dezelfde asset
-//    (mogelijk twee keer dezelfde melding) en verschillende assets (twee masten
-//    op één adres).
+//  - Meerdere orders op één adres: twee redenen in de werklijst, met
+//    onderscheid tussen dezelfde asset (mogelijk twee keer dezelfde melding,
+//    de zwaarste reden die er is) en verschillende assets (twee masten op één
+//    adres, alleen handig om samen in te plannen).
 //  - De ritlijst: dezelfde clusters als op het scherm, maar als printklaar
 //    bestand zodat er niet handmatig doorheen gelopen hoeft te worden.
 //
@@ -74,39 +74,37 @@ const STORINGEN = [
   await page.click('#process-btn');
   await page.waitForTimeout(400);
 
-  console.log('--- melding: meerdere orders op één adres ---');
+  console.log('--- meerdere orders op één adres, nu als reden in de werklijst ---');
   await page.click('.tab-btn[data-tab="data"]');
-  await page.waitForTimeout(600);
-  check('kaart is zichtbaar', await page.$eval('#zelfde-adres-card', e => !e.classList.contains('hidden')), true);
-  check('twee adressen gemeld', await page.$eval('#zelfde-adres-count', e => e.textContent.trim()), 2);
+  await page.waitForTimeout(700);
 
-  const kop = await page.$eval('#zelfde-adres-body .prognose-headline', e => e.textContent.replace(/\s+/g, ' ').trim());
-  console.log('   ', kop);
-  check('noemt het aantal storingen', /4 openstaande storingen staan op 2 adressen/.test(kop), true);
-  check('noemt de verdachte groep apart', /1 op dezelfde asset/.test(kop), true);
-
-  const groepen = await page.$$eval('#zelfde-adres-body .adres-groep', els => els.map(e => ({
-    kop: e.querySelector('.adres-kop').textContent.replace(/\s+/g, ' ').trim(),
-    zelfdeAsset: e.classList.contains('adres-groep-asset'),
-    orders: Array.from(e.querySelectorAll('tbody tr td:first-child')).map(t => t.textContent.trim()),
-  })));
-  groepen.forEach(g => console.log('   ', g.kop));
-  check('de groep met dezelfde asset staat vooraan', groepen[0].zelfdeAsset, true);
-  check('en dat is Hooigracht 12', /Hooigracht 12/.test(groepen[0].kop), true);
-  check('met het assetnummer erbij', /zelfde asset 3000001-EL/.test(groepen[0].kop), true);
-  check('met beide orders', groepen[0].orders.sort().join(','), '9910000001,9910000002');
-  check('de tweede groep heeft verschillende assets', groepen[1].zelfdeAsset, false);
-  check('en meldt er twee', /2 verschillende assets/.test(groepen[1].kop), true);
+  // De adresmelding is geen eigen kaart meer: het is een reden in de
+  // werklijst. Dezelfde asset is een ander signaal dan hetzelfde adres —
+  // het eerste kan een dubbele melding zijn, het tweede scheelt alleen een rit.
+  const w = await page.evaluate(() => buildWerklijst());
+  const metReden = (key) => w.rijen.filter(r => r.redenen.includes(key)).map(r => r.order).sort();
+  const dubbel = metReden('dubbeleMelding');
+  const zelfde = metReden('zelfdeAdres');
+  console.log('    mogelijk dubbele melding:', dubbel.join(', '));
+  console.log('    zelfde adres, andere asset:', zelfde.join(', '));
+  check('de twee orders op dezelfde asset zijn gemeld', dubbel.join(','), '9910000001,9910000002');
+  check('en die op verschillende assets apart', zelfde.join(','), '9910000003,9910000004');
 
   // Zijlweg 3 en 9 zijn dezelfde straat maar niet hetzelfde adres: die horen
   // hier juist NIET in te staan.
-  const alleOrders = groepen.flatMap(g => g.orders);
-  check('zelfde straat maar ander huisnummer telt niet mee', alleOrders.includes('9910000005'), false);
-  check('en de losse storing ook niet', alleOrders.includes('9910000007'), false);
+  const alle = dubbel.concat(zelfde);
+  check('zelfde straat maar ander huisnummer telt niet mee', alle.includes('9910000005'), false);
+  check('en de losse storing ook niet', alle.includes('9910000007'), false);
 
-  const tekst = await page.evaluate(() => buildZelfdeAdresText());
-  check('kopieertekst noemt beide adressen', /Hooigracht 12/.test(tekst) && /Breestraat 40/.test(tekst), true);
-  check('kopieertekst noemt de assets', /zelfde asset 3000001-EL/.test(tekst), true);
+  // De dubbele melding is het dringendst van alle redenen: als twee orders
+  // hetzelfde object beschrijven, vervuilt dat elk cijfer in het dashboard.
+  const eerste = w.rijen[0];
+  check('een mogelijk dubbele melding staat bovenaan', eerste.redenen.includes('dubbeleMelding'), true);
+  check('het label noemt de andere order',
+    /met 991000000[12]/.test(await page.$eval('#werklijst-body tbody tr', e => e.textContent)), true);
+
+  const kopieer = await page.$eval('#werklijst-body', e => e.dataset.copyText);
+  check('kopieertekst noemt order en reden', /9910000001\tMogelijk dubbele melding/.test(kopieer), true);
 
   console.log('\n--- ritlijst downloaden ---');
   await page.click('.tab-btn[data-tab="gebieden"]');
@@ -157,7 +155,8 @@ const STORINGEN = [
   exp2.on('console', m => { if (m.type() === 'error') errsExp.push('console: ' + m.text()); });
   await exp2.goto('file://' + expPad);
   await exp2.waitForTimeout(500);
-  check('export: adresmelding staat erin', await exp2.$eval('#zelfde-adres-count', e => e.textContent.trim()), 2);
+  check('export: de adresredenen staan erin',
+    await exp2.evaluate(() => buildWerklijst().rijen.filter(r => r.redenen.includes('dubbeleMelding')).length), 2);
   await exp2.click('.tab-btn[data-tab="gebieden"]');
   await exp2.waitForTimeout(400);
   const [dl3] = await Promise.all([exp2.waitForEvent('download'), exp2.click('#ritlijst-btn')]);
