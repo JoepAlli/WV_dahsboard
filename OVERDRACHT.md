@@ -73,9 +73,41 @@ gefilterd deel.
 
 ### Waar het staat
 
-In de IndexedDB van je browser, onder de naam `nusdash`. Dat is lokale opslag
-die bij jouw browserprofiel op deze computer hoort. Het staat **niet** in de
-map, **niet** op een netwerkschijf en **niet** in de cloud.
+Altijd in de IndexedDB van je browser, onder de naam `nusdash`. Dat is lokale
+opslag die bij jouw browserprofiel op deze computer hoort.
+
+**Daarnaast kun je een datamap koppelen** (Instellingen → *Datamap*). Dan
+schrijft het dashboard zijn data óók naar een gewone map op schijf. Staat die
+map in OneDrive, Teams of SharePoint, dan wordt je historie door Alliander
+geback-upt en is overdragen een kwestie van je opvolger diezelfde map laten
+kiezen. **Dit is sterk aan te raden.**
+
+In de map komen twee bestanden:
+
+| Bestand | Inhoud | Verandert |
+|---|---|---|
+| `nusdash-data.json` | de momentopnamen | bij elke plakactie (2× per dag) |
+| `nusdash-instellingen.json` | normen, markeringen, blokkades, type-filter | bij elke wijziging |
+
+Ze staan apart omdat het databestand met ongeveer 28 MB per jaar groeit; zou
+alles in één bestand staan, dan zou elke markering tientallen MB's
+herschrijven en opnieuw laten uploaden door OneDrive.
+
+De browser blijft altijd meeschrijven. Is de map even niet bereikbaar, dan
+werkt alles gewoon door en krijg je dat te zien op de kaart — een dashboard dat
+stukgaat omdat OneDrive hapert is onbruikbaar.
+
+**Bij het openen wint de kant met de nieuwste momentopname,** en de instellingen
+reizen mee met de data waar ze bij horen. Wat er gekozen is, staat op de kaart.
+Werk je op twee plekken tegelijk, dan kan er dus iets verloren gaan — spreek af
+dat één iemand plakt.
+
+> Na het opstarten van de browser kan het zijn dat je de map opnieuw moet
+> vrijgeven. Dat is één klik op de knop die dan op de kaart verschijnt. Tot die
+> tijd schrijft het dashboard alleen naar de browser; er gaat niets verloren.
+
+**Zonder gekoppelde map** staat alles alleen in je browserprofiel. Het staat dan
+niet in de projectmap, niet op een netwerkschijf en niet in de cloud.
 
 Dat betekent dat de volledige historie verdwijnt bij:
 
@@ -115,13 +147,25 @@ historie ís de waarde.
 
 ## 5. De overdracht zelf
 
+**Als er een datamap gekoppeld is** (de makkelijke weg):
+
+1. Geef de projectmap door, of wijs de opvolger de map in Git aan.
+2. Zorg dat de opvolger bij dezelfde datamap kan (OneDrive/Teams-rechten).
+3. Laat de opvolger `index.html` openen, naar Instellingen → *Datamap* gaan en
+   diezelfde map kiezen. De hele historie en alle instellingen komen mee.
+4. Loop samen één keer de dagelijkse routine door.
+
+**Zonder datamap:**
+
 1. Maak een verse back-up (`Exporteer back-up`).
 2. Zet die in de gedeelde map van het team, met de datum in de naam.
-3. Geef de hele projectmap door (of wijs de opvolger de map in Git aan).
+3. Geef de hele projectmap door.
 4. Laat de opvolger `index.html` openen en de back-up importeren via
    Instellingen → Back-up.
-5. Loop samen één keer de dagelijkse routine door. Dat is belangrijker dan dit
-   document: de valkuil zit in het plakken, niet in de techniek.
+5. Loop samen één keer de dagelijkse routine door.
+
+Dat laatste punt is in beide gevallen het belangrijkste, en belangrijker dan dit
+document: de valkuil zit in het plakken, niet in de techniek.
 
 > **Privacy:** de data bevat namen van collega's en adressen van klanten. Die
 > hoort binnen Alliander te blijven. OneDrive, Teams en SharePoint zijn prima;
@@ -200,10 +244,11 @@ Dingen die bekend zijn en nog niet opgelost:
 - **De team-export groeit mee met de historie.** Het gedeelde HTML-bestand bakt
   alle momentopnamen in. Na een jaar is dat tientallen MB's. Op termijn moet de
   export beperkt worden tot een recent venster.
-- **De data hangt nog aan de browser.** Er ligt een testpagina klaar
-  (`tools/maptest.html`) die uitzoekt of deze computer het dashboard toestaat
-  rechtstreeks naar een map te schrijven. Lukt dat, dan kan de data naar een
-  OneDrive-map en vervalt het grootste deel van dit hoofdstuk 4.
+- **Of de maptoegang een herstart van de browser overleeft is nog niet
+  vastgesteld.** Zo niet, dan kost het één klik per keer dat je de browser
+  opstart. `tools/maptest.html` is de losse testpagina waarmee je dat op een
+  werkplek kunt nagaan: doe stap 2, sluit de browser helemaal af (alle
+  vensters), open opnieuw en doe stap 3.
 ---
 
 ## 9. Wat er eerder is geprobeerd

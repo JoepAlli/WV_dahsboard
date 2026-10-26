@@ -333,6 +333,7 @@ async function loadSnapshots() {
   catch (e) { console.error(e); return []; }
 }
 async function saveSnapshots(snaps) {
+  planMapSchrijf('data');
   snaps.sort((a, b) => a.week.localeCompare(b.week));
   try { await idbSet(STORAGE_KEY, snaps); }
   catch (e) { showErrorToast('Opslaan is mislukt: ' + e.message); throw new Error('Opslaan is mislukt: ' + e.message); }
@@ -349,6 +350,7 @@ async function loadTypeWhitelist() {
   catch (e) { console.error(e); return DEFAULT_TYPE_WHITELIST.slice(); }
 }
 async function saveTypeWhitelist(list) {
+  planMapSchrijf('instellingen');
   try { await idbSet(TYPE_WHITELIST_KEY, list); }
   catch (e) { showErrorToast('Opslaan van het type-filter is mislukt: ' + e.message); throw e; }
 }
@@ -360,6 +362,7 @@ async function loadBijnaVerlopenThreshold() {
   catch (e) { console.error(e); return DEFAULT_BIJNA_VERLOPEN_THRESHOLD; }
 }
 async function saveBijnaVerlopenThreshold(n) {
+  planMapSchrijf('instellingen');
   try { await idbSet(BIJNA_VERLOPEN_THRESHOLD_KEY, n); }
   catch (e) { showErrorToast('Opslaan van de drempel is mislukt: ' + e.message); throw e; }
 }
@@ -389,6 +392,7 @@ async function loadCapaciteit() {
   } catch (e) { console.error(e); return Object.assign({}, LEGE_CAPACITEIT); }
 }
 async function saveCapaciteit(cap) {
+  planMapSchrijf('instellingen');
   try { await idbSet(CAPACITEIT_KEY, cap); }
   catch (e) { showErrorToast('Opslaan van de capaciteit is mislukt: ' + e.message); }
 }
@@ -418,6 +422,7 @@ async function loadDoorlooptijdNorm() {
   catch (e) { console.error(e); return DEFAULT_DOORLOOPTIJD_NORM; }
 }
 async function saveDoorlooptijdNorm(n) {
+  planMapSchrijf('instellingen');
   try { await idbSet(DOORLOOPTIJD_NORM_KEY, n); }
   catch (e) { showErrorToast('Opslaan van de doorlooptijd-norm is mislukt: ' + e.message); }
 }
@@ -448,6 +453,7 @@ async function loadBlokkadeUitsluiten() {
   } catch (e) { console.error(e); return DEFAULT_BLOKKADE_UITSLUITEN.slice(); }
 }
 async function saveBlokkadeUitsluiten(lijst) {
+  planMapSchrijf('instellingen');
   try { await idbSet(BLOKKADE_UITSLUITEN_KEY, lijst); }
   catch (e) { showErrorToast('Opslaan van de blokkade-instelling is mislukt: ' + e.message); }
 }
@@ -515,6 +521,7 @@ async function loadStatusStreef() {
   } catch (e) { console.error(e); return Object.assign({}, DEFAULT_STATUS_STREEF); }
 }
 async function saveStatusStreef(streef) {
+  planMapSchrijf('instellingen');
   try { await idbSet(STATUS_STREEF_KEY, streef); }
   catch (e) { showErrorToast('Opslaan van de streefwaarden is mislukt: ' + e.message); }
 }
@@ -540,6 +547,320 @@ async function loadLastBackupAt() {
 async function saveLastBackupAt(iso) {
   try { await idbSet(LAST_BACKUP_KEY, iso); }
   catch (e) { console.error(e); }
+}
+
+// ---------- Datamap: de data los van dit browserprofiel ----------
+//
+// Alle data stond in IndexedDB, en dus in één browserprofiel op één laptop.
+// Eén keer "browsergegevens wissen" of een herinstallatie door IT en de hele
+// meethistorie is weg — precies de data die nergens anders wordt verzameld.
+// En overdragen aan een opvolger kon alleen via een los back-upbestand dat
+// iemand moest onthouden te maken.
+//
+// Met een gekoppelde map schrijft het dashboard zijn data ook naar een gewone
+// map op schijf. Staat die map in OneDrive, Teams of SharePoint, dan wordt de
+// data door Alliander geback-upt en is overdragen een kwestie van je opvolger
+// diezelfde map laten kiezen.
+//
+// Twee bestanden in plaats van één, met opzet:
+//   nusdash-data.json         de momentopnamen. Groeit met ~28 MB per jaar en
+//                             verandert alleen bij het plakken (2x per dag).
+//   nusdash-instellingen.json normen, markeringen, blokkades. Klein, maar
+//                             verandert bij elke muisklik.
+// Eén bestand zou betekenen dat elke markering tientallen MB's herschrijft, en
+// bij OneDrive ook opnieuw uploadt.
+//
+// IndexedDB blijft altijd meeschrijven. De map is de bron bij het opstarten,
+// maar als 'ie onbereikbaar is werkt alles gewoon door op de lokale kopie —
+// een dashboard dat stukgaat omdat OneDrive even hapert is onbruikbaar.
+const MAP_HANDLE_KEY = 'nusdash_datamap_handle_v1';
+const MAP_DATA_BESTAND = 'nusdash-data.json';
+const MAP_INSTELLINGEN_BESTAND = 'nusdash-instellingen.json';
+
+// De mapverwijzing is geen pad maar een object dat de browser beheert; het mag
+// rechtstreeks in IndexedDB en is niet als tekst op te slaan.
+async function loadMapHandle() {
+  try { return (await idbGet(MAP_HANDLE_KEY)) || null; }
+  catch (e) { console.error(e); return null; }
+}
+async function saveMapHandle(handle) {
+  try { await idbSet(MAP_HANDLE_KEY, handle); }
+  catch (e) { showErrorToast('Onthouden van de datamap is mislukt: ' + e.message); }
+}
+async function vergeetMapHandle() {
+  try { await idbDelete(MAP_HANDLE_KEY); } catch (e) { console.error(e); }
+}
+
+function mapOndersteund() { return typeof window.showDirectoryPicker === 'function' && !isStaticExport; }
+function mapGekoppeld() { return !!state.dataMap.handle; }
+
+// Mag er nu geschreven worden? Zonder vragen, zodat dit bij elke opslag
+// gecontroleerd kan worden zonder de gebruiker lastig te vallen.
+async function mapToegangStand() {
+  if (!state.dataMap.handle) return 'geen';
+  try { return await state.dataMap.handle.queryPermission({ mode: 'readwrite' }); }
+  catch (e) { return 'fout'; }
+}
+
+async function mapLeesBestand(naam) {
+  const handle = state.dataMap.handle;
+  if (!handle) return null;
+  try {
+    const bestand = await handle.getFileHandle(naam);
+    const tekst = await (await bestand.getFile()).text();
+    return JSON.parse(tekst);
+  } catch (e) {
+    // Een bestand dat er nog niet is, is geen fout: zo begint een lege map.
+    if (e && (e.name === 'NotFoundError' || e.name === 'TypeMismatchError')) return null;
+    throw e;
+  }
+}
+
+async function mapSchrijfBestand(naam, inhoud) {
+  const handle = state.dataMap.handle;
+  if (!handle) return;
+  const bestand = await handle.getFileHandle(naam, { create: true });
+  const schrijver = await bestand.createWritable();
+  await schrijver.write(JSON.stringify(inhoud));
+  await schrijver.close();
+}
+
+// De twee bestanden samenstellen uit de huidige stand. Dezelfde velden als de
+// back-up, zodat een datamapbestand en een back-upbestand uitwisselbaar zijn.
+function mapDataPayload() {
+  return { versie: 1, geschrevenOp: new Date().toISOString(), ovSnapshots: state.snapshots };
+}
+function mapInstellingenPayload() {
+  return {
+    versie: 1,
+    geschrevenOp: new Date().toISOString(),
+    typeWhitelist: state.typeWhitelist,
+    ovBlockStatus: state.ovBlockStatus,
+    bijnaVerlopenThreshold: state.bijnaVerlopenThreshold,
+    capaciteit: state.capaciteit,
+    statusStreef: state.statusStreef,
+    doorlooptijdNorm: state.doorlooptijdNorm,
+    blokkadeUitsluiten: state.blokkadeUitsluiten,
+    opvolging: state.opvolging,
+  };
+}
+
+// Wegschrijven naar de map. Faalt dit, dan is dat géén reden om de bewerking
+// te laten mislukken: lokaal is het al opgeslagen. Wel zichtbaar melden, want
+// stil falen zou betekenen dat je denkt dat je een kopie hebt terwijl dat niet
+// zo is — en dat is erger dan geen kopie.
+async function mapSchrijf(wat) {
+  if (!mapGekoppeld()) return;
+  if ((await mapToegangStand()) !== 'granted') {
+    state.dataMap.fout = 'geen toegang';
+    renderDataMapCard();
+    return;
+  }
+  try {
+    if (wat === 'data' || wat === 'alles') await mapSchrijfBestand(MAP_DATA_BESTAND, mapDataPayload());
+    if (wat === 'instellingen' || wat === 'alles') await mapSchrijfBestand(MAP_INSTELLINGEN_BESTAND, mapInstellingenPayload());
+    state.dataMap.fout = null;
+    state.dataMap.laatstGeschreven = new Date().toISOString();
+  } catch (e) {
+    state.dataMap.fout = e.message || String(e);
+  }
+  renderDataMapCard();
+}
+
+// Niet bij elke toetsaanslag wegschrijven. Een notitie typen is tien keer
+// opslaan; die vallen zo samen tot één schrijfactie. De momentopnamen krijgen
+// een kortere vertraging: dat is een bewuste handeling (plakken) en daar wil
+// je snel bevestigd zien dat het veilig staat.
+let mapSchrijfTimer = { data: null, instellingen: null };
+function planMapSchrijf(wat) {
+  if (!mapGekoppeld()) return;
+  // Tijdens het overnemen van een nieuwere stand schrijft pasBackupToe naar
+  // IndexedDB, wat hier een schrijfactie zou inplannen. Die zou de net
+  // overgenomen inhoud overschrijven met de state van vóór de overname.
+  if (state.dataMap.bezig) return;
+  const vertraging = wat === 'data' ? 200 : 800;
+  clearTimeout(mapSchrijfTimer[wat]);
+  mapSchrijfTimer[wat] = setTimeout(() => { mapSchrijf(wat); }, vertraging);
+}
+
+// Bij het opstarten: welke kant is de nieuwste? De map of deze browser?
+//
+// De regel is bewust simpel en in één zin uit te leggen: DE NIEUWSTE
+// MOMENTOPNAME WINT, en de instellingen reizen mee met de data waar ze bij
+// horen. Een slimmere regel (per onderdeel kijken wat het nieuwst is) zou in
+// de randgevallen onvoorspelbaar worden, en dit is de plek waar je je historie
+// kunt kwijtraken — daar hoort geen slimmigheid maar voorspelbaarheid.
+//
+// De drie gevallen die er in de praktijk zijn:
+//   - zelfde laptop, alles in sync      -> gelijkspel, niets te doen
+//   - nieuwe laptop of opvolger         -> map is voller, map wint
+//   - net gekoppeld, map nog leeg       -> lokaal wint, map wordt gevuld
+function nieuwsteSavedAt(snaps) {
+  return (snaps || []).reduce((max, sn) => (sn.savedAt && sn.savedAt > max ? sn.savedAt : max), '');
+}
+
+async function mapSynchroniseerBijStart() {
+  if (!mapGekoppeld()) return null;
+  const stand = await mapToegangStand();
+  if (stand !== 'granted') {
+    state.dataMap.fout = 'geen toegang';
+    return { uitkomst: 'geen-toegang' };
+  }
+  let mapData, mapInstellingen;
+  try {
+    mapData = await mapLeesBestand(MAP_DATA_BESTAND);
+    mapInstellingen = await mapLeesBestand(MAP_INSTELLINGEN_BESTAND);
+  } catch (e) {
+    state.dataMap.fout = e.message || String(e);
+    return { uitkomst: 'leesfout' };
+  }
+
+  const mapSnaps = (mapData && Array.isArray(mapData.ovSnapshots)) ? mapData.ovSnapshots : null;
+  const lokaalNieuwste = nieuwsteSavedAt(state.snapshots);
+  const mapNieuwste = nieuwsteSavedAt(mapSnaps);
+
+  // Map is leeg of ouder: de lokale stand is de waarheid en vult de map.
+  if (!mapSnaps || mapNieuwste < lokaalNieuwste) {
+    await mapSchrijf('alles');
+    return { uitkomst: mapSnaps ? 'lokaal-nieuwer' : 'map-gevuld', lokaal: state.snapshots.length, map: mapSnaps ? mapSnaps.length : 0 };
+  }
+  // Gelijk: niets doen, maar wel de instellingen gelijktrekken als de map die
+  // nog niet heeft (bijvoorbeeld vlak na het koppelen).
+  if (mapNieuwste === lokaalNieuwste) {
+    if (!mapInstellingen) await mapSchrijf('instellingen');
+    return { uitkomst: 'gelijk', lokaal: state.snapshots.length, map: mapSnaps.length };
+  }
+
+  // Map is nieuwer: overnemen, en meteen lokaal vastleggen zodat deze browser
+  // weer een volwaardige reservekopie heeft als de map straks wegvalt.
+  const vorigAantal = state.snapshots.length;
+  state.dataMap.bezig = true;
+  try {
+    state.snapshots = mapSnaps;
+    await idbSet(STORAGE_KEY, mapSnaps);
+    if (mapInstellingen) {
+      await pasBackupToe(Object.assign({ ovSnapshots: mapSnaps }, mapInstellingen));
+      await laadInstellingenInState();
+    }
+  } finally {
+    state.dataMap.bezig = false;
+  }
+  return { uitkomst: 'map-nieuwer', lokaal: vorigAantal, map: mapSnaps.length };
+}
+
+function renderDataMapCard() {
+  const kaart = document.getElementById('datamap-card');
+  const el = document.getElementById('datamap-body');
+  if (!kaart || !el) return;
+  // In de gedeelde export heeft de lezer niets te koppelen.
+  if (isStaticExport) { kaart.classList.add('hidden'); return; }
+  if (!mapOndersteund()) {
+    el.innerHTML = `<p class="empty-note">Deze browser kan geen map koppelen. Het werkt in Chrome en Edge; in Firefox en Safari niet. Zolang dat zo is blijft de back-upknop hierboven je enige kopie.</p>`;
+    return;
+  }
+
+  if (!mapGekoppeld()) {
+    el.innerHTML = `<div class="input-row">
+        <button id="datamap-koppel-btn" class="btn-primary">Map kiezen…</button>
+        <span class="muted small">Nog geen map gekoppeld — je data staat alleen in deze browser.</span>
+      </div>`;
+    bindDataMapKnoppen();
+    return;
+  }
+
+  const m = state.dataMap;
+  const regels = [];
+  if (m.fout === 'geen toegang') {
+    // Dit is het dagelijkse geval: de browser is opnieuw opgestart en vraagt
+    // opnieuw toestemming. Eén knop, bovenaan, zonder omhaal.
+    regels.push(`<p class="warning-box"><strong>De map is nog niet vrijgegeven.</strong> Je browser vraagt na het opstarten opnieuw om toestemming. Tot die tijd schrijft het dashboard alleen naar deze browser.
+      <button type="button" id="datamap-herstel-btn" class="btn-primary btn-inline">Map weer vrijgeven</button></p>`);
+  } else if (m.fout) {
+    regels.push(`<p class="warning-box"><strong>Schrijven naar de map is mislukt.</strong> ${esc(m.fout)} Je data is wél lokaal opgeslagen, dus er is niets kwijt — maar er staat even geen kopie in de map.
+      <button type="button" id="datamap-herstel-btn" class="btn-primary btn-inline">Opnieuw proberen</button></p>`);
+  }
+  const bron = {
+    'map-nieuwer': 'De map was nieuwer dan deze browser; die versie is overgenomen.',
+    'lokaal-nieuwer': 'Deze browser was nieuwer dan de map; de map is bijgewerkt.',
+    'map-gevuld': 'De map was nog leeg en is gevuld met wat er in deze browser stond.',
+    'gelijk': 'Map en browser waren gelijk.',
+    'geen-toegang': 'Bij het openen was de map nog niet vrijgegeven.',
+    'leesfout': 'De map kon bij het openen niet gelezen worden.',
+  }[m.bronBijStart] || null;
+
+  el.innerHTML = regels.join('') + `
+    <div class="input-row">
+      <span class="status-pill ${m.fout ? 'warning' : 'good'}">📁 ${esc(m.naam || 'gekoppeld')}</span>
+      <button id="datamap-ontkoppel-btn" class="btn-link">Ontkoppelen</button>
+    </div>
+    <div class="muted small">
+      ${m.laatstGeschreven ? `Laatst weggeschreven: ${esc(fmtDate(m.laatstGeschreven))}.` : 'Nog niets weggeschreven sinds het openen.'}
+      ${bron ? ' ' + esc(bron) : ''}
+    </div>
+    <div class="muted small">Bestanden in de map: <code>${MAP_DATA_BESTAND}</code> (de momentopnamen) en <code>${MAP_INSTELLINGEN_BESTAND}</code> (normen, markeringen, blokkades).</div>`;
+  bindDataMapKnoppen();
+}
+
+function bindDataMapKnoppen() {
+  const koppel = document.getElementById('datamap-koppel-btn');
+  if (koppel) koppel.addEventListener('click', koppelDataMap);
+  const herstel = document.getElementById('datamap-herstel-btn');
+  if (herstel) herstel.addEventListener('click', herstelDataMapToegang);
+  const ontkoppel = document.getElementById('datamap-ontkoppel-btn');
+  if (ontkoppel) ontkoppel.addEventListener('click', ontkoppelDataMap);
+}
+
+async function koppelDataMap() {
+  let handle;
+  try {
+    handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+    showErrorToast('Een map kiezen lukte niet: ' + (e.message || e.name));
+    return;
+  }
+  try {
+    if ((await handle.requestPermission({ mode: 'readwrite' })) !== 'granted') {
+      showErrorToast('Zonder schrijfrechten op de map kan het dashboard er niets in kwijt.');
+      return;
+    }
+  } catch (e) {
+    showErrorToast('Toestemming vragen lukte niet: ' + (e.message || e.name));
+    return;
+  }
+  state.dataMap.handle = handle;
+  state.dataMap.naam = handle.name;
+  state.dataMap.fout = null;
+  await saveMapHandle(handle);
+  // Meteen synchroniseren: staat er al data van een voorganger in die map, dan
+  // wil je die nú zien en niet pas na een herstart.
+  const uitkomst = await mapSynchroniseerBijStart();
+  state.dataMap.bronBijStart = uitkomst ? uitkomst.uitkomst : null;
+  renderDashboardFromState();
+  renderDataMapCard();
+}
+
+async function herstelDataMapToegang() {
+  if (!state.dataMap.handle) return;
+  try {
+    const stand = await state.dataMap.handle.requestPermission({ mode: 'readwrite' });
+    if (stand !== 'granted') { showErrorToast('De map is niet vrijgegeven.'); return; }
+  } catch (e) {
+    showErrorToast('Vrijgeven lukte niet: ' + (e.message || e.name));
+    return;
+  }
+  state.dataMap.fout = null;
+  const uitkomst = await mapSynchroniseerBijStart();
+  state.dataMap.bronBijStart = uitkomst ? uitkomst.uitkomst : null;
+  renderDashboardFromState();
+  renderDataMapCard();
+}
+
+async function ontkoppelDataMap() {
+  if (!confirm('De koppeling met de map wordt verbroken. De bestanden in de map blijven staan en je data blijft in deze browser. Doorgaan?')) return;
+  state.dataMap = { handle: null, naam: '', fout: null, laatstGeschreven: null, bronBijStart: null, bezig: false };
+  await vergeetMapHandle();
+  renderDataMapCard();
 }
 
 // ---------- Opvolging: het geheugen van je eigen beslissingen ----------
@@ -579,6 +900,7 @@ async function loadOpvolging() {
   catch (e) { console.error(e); return {}; }
 }
 async function saveOpvolging(map) {
+  planMapSchrijf('instellingen');
   try { await idbSet(OPVOLGING_KEY, map); }
   catch (e) { showErrorToast('Opslaan van de markering is mislukt: ' + e.message); throw e; }
 }
@@ -648,6 +970,7 @@ async function loadOvBlockStatusMap() {
   catch (e) { console.error(e); return {}; }
 }
 async function saveOvBlockStatusMap(map) {
+  planMapSchrijf('instellingen');
   try { await idbSet(OV_BLOCK_STATUS_KEY, map); }
   catch (e) { showErrorToast('Opslaan van de blokkade-reden is mislukt: ' + e.message); throw e; }
 }
@@ -997,6 +1320,8 @@ const state = {
   doorlooptijdNorm: DEFAULT_DOORLOOPTIJD_NORM,
   blokkadeUitsluiten: DEFAULT_BLOKKADE_UITSLUITEN.slice(),
   opvolging: {},
+  // handle: de gekoppelde map; de rest is zichtbare stand voor de kaart.
+  dataMap: { handle: null, naam: '', fout: null, laatstGeschreven: null, bronBijStart: null, bezig: false },
   stagnatieFilter: null,
   boxplotSchaal: 'whisker',
   boxplotViewMode: 'chart',
@@ -6465,6 +6790,7 @@ function renderDashboardFromState() {
   renderTypeWhitelist();
   renderStatusStreefCard();
   renderBlokkadeUitsluitenCard();
+  renderDataMapCard();
   renderFilterTabs(latestVisible);
 
   const latestFiltered = filterByActive(latestVisible);
@@ -6560,19 +6886,43 @@ function showParseWarning(errors, okCount) {
     </details>`;
 }
 
-async function reloadAllStateAndRender() {
-  state.snapshots = await loadSnapshots();
+// Alle instellingen uit de opslag in de state. Apart van het opstarten, omdat
+// het óók nodig is nadat de datamap een nieuwere stand heeft overgenomen: die
+// schrijft naar IndexedDB, en zonder deze stap blijft de state de oude waarden
+// houden — dan staat de norm van je voorganger wel in de opslag maar rekent
+// het dashboard nog met die van jou.
+async function laadInstellingenInState() {
   state.typeWhitelist = await loadTypeWhitelist();
   state.ovBlockStatus = await loadOvBlockStatusMap();
   state.bijnaVerlopenThreshold = await loadBijnaVerlopenThreshold();
-  state.lastBackupAt = await loadLastBackupAt();
   state.capaciteit = await loadCapaciteit();
   state.statusStreef = await loadStatusStreef();
   state.doorlooptijdNorm = await loadDoorlooptijdNorm();
   state.blokkadeUitsluiten = await loadBlokkadeUitsluiten();
   state.opvolging = await loadOpvolging();
+}
+
+async function reloadAllStateAndRender() {
+  state.snapshots = await loadSnapshots();
+  state.lastBackupAt = await loadLastBackupAt();
+  await laadInstellingenInState();
+
+  // De map als laatste, want die kan de hele stand overnemen van een
+  // voorganger. Mislukt dit, dan werkt het dashboard gewoon lokaal door.
+  state.dataMap.handle = await loadMapHandle();
+  if (state.dataMap.handle) {
+    state.dataMap.naam = state.dataMap.handle.name || '';
+    try {
+      const uitkomst = await mapSynchroniseerBijStart();
+      state.dataMap.bronBijStart = uitkomst ? uitkomst.uitkomst : null;
+    } catch (e) {
+      state.dataMap.fout = e.message || String(e);
+    }
+  }
+  renderDataMapCard();
+
   if (state.snapshots.length > 0) renderDashboardFromState();
-  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderStatusStreefCard(); renderBlokkadeUitsluitenCard(); renderBackupReminder(); renderBackupStatus(); }
+  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderStatusStreefCard(); renderBlokkadeUitsluitenCard(); renderDataMapCard(); renderBackupReminder(); renderBackupStatus(); }
 }
 
 function wireEvents() {

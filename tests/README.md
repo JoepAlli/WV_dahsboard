@@ -25,3 +25,4 @@ IndexedDB en sluit af met `ALLES GOED` of het aantal mislukte controles.
 | `opvolging.js` | Dat markeringen de werklijsten korter maken, en vooral dat ze vanzelf vervallen bij een verlopen parkeertijd of een statuswissel |
 | `werklijst.js` | Dat de vier samengevoegde bronnen één regel per storing opleveren, met alle redenen erbij en gesorteerd op de zwaarste |
 | `backup_vangnet.js` | Dat de back-upherinnering onbewaarde plakacties telt, en dat het terugzetten van een oudere back-up vooraf zegt hoeveel historie je kwijtraakt |
+| `datamap.js` | Dat bij het koppelen van een datamap altijd de nieuwste kant wint, dat een opvolger met een lege browser alles uit de map overneemt, en dat zonder toestemming niets kapotgaat |
