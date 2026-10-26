@@ -204,7 +204,32 @@ Dingen die bekend zijn en nog niet opgelost:
   (`tools/maptest.html`) die uitzoekt of deze computer het dashboard toestaat
   rechtstreeks naar een map te schrijven. Lukt dat, dan kan de data naar een
   OneDrive-map en vervalt het grootste deel van dit hoofdstuk 4.
-- **Er staan verouderde kopieën in de projectmap**: `app.backup.js`,
-  `index.backup.html`, `style.backup.css` en `export-template.backup.js`. Die
-  horen bij een veel oudere versie en zijn alleen maar verwarrend. Ze kunnen
-  weg; de geschiedenis staat in Git.
+---
+
+## 9. Wat er eerder is geprobeerd
+
+**SharePoint-synchronisatie heeft bestaan en is verwijderd.** Een eerdere versie
+kon blokkade-redenen delen via een JSON-bestand in een SharePoint-bibliotheek:
+lezen en schrijven via de REST API met `credentials: 'same-origin'`, inclusief
+het form digest-token dat SharePoint bij schrijfacties eist, en per order
+bijwerken zodat twee mensen elkaar niet overschreven.
+
+Het is er in augustus 2026 uitgehaald (commit `5473995`), en de reden is
+belangrijk als je ooit over delen nadenkt: **het kon niet werken zolang het
+dashboard via `file://` wordt geopend.** Een `fetch()` naar een https-site
+vanaf een lokaal bestand wordt door de browser geblokkeerd. De code zette
+zichzelf daarom uit, en stond dus altijd uit.
+
+Dat is iets anders dan "het werkte niet". Het is nooit geprobeerd. Wordt het
+dashboard ooit *vanaf* de SharePoint-site geopend in plaats van als lokaal
+bestand, dan vervalt dat bezwaar: dan klopt de oorsprong, stuurt de browser de
+bestaande Alliander-aanmelding mee, en is er geen enkele inlogcode nodig.
+
+De oude code is terug te vinden met:
+
+```
+git show 5473995^:app.js
+```
+
+Daar zitten de functies `spGetDigest`, `spGetFileContent`, `spUpdateSharedFile`
+en de instellingenkaart die erbij hoorde.
