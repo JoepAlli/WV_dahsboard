@@ -4167,6 +4167,41 @@ function werkRedenBadge(r, key) {
   return `<span class="status-pill ${rd.klasse}" title="${esc(rd.uitleg)}">${esc(rd.label)}${esc(extra)}</span>`;
 }
 
+// De kopieertekst: tab-gescheiden zodat het als kolommen in Excel of Sheets
+// plakt, met een koprij zodat de kolommen zichzelf uitleggen. Alle redenen
+// gaan mee, niet alleen de zwaarste — op het scherm staan ze ook allemaal, en
+// juist de combinatie ("oud én wordt ingehaald") is wat je wilt doorgeven.
+function werklijstKopieerTekst(rijen) {
+  const kop = ['Order', 'Type', 'Plaats', 'Adres', 'Postcode', 'Status', 'Dagen open', 'Reden'];
+  const regels = rijen.map(r => {
+    const s = r.storing;
+    return [
+      r.order,
+      s.type || '',
+      s.city || '',
+      s.street || '',
+      s.postcode || '',
+      r.ovStatus,
+      r.leeftijd == null ? '' : r.leeftijd,
+      r.redenen.map(k => werkRedenTekst(r, k)).join('; '),
+    ].join('\t');
+  });
+  return [kop.join('\t')].concat(regels).join('\n');
+}
+
+// Dezelfde tekst als op het label, maar zonder opmaak. Eén bron, zodat het
+// gekopieerde bestand niet iets anders zegt dan het scherm.
+function werkRedenTekst(r, key) {
+  const rd = WERK_REDEN_BIJ_KEY[key];
+  const d = r.details[key] || {};
+  if ((key === 'teLangStatus' || key === 'teLangTraject') && d.over > 0) return `${rd.label} +${d.over}d`;
+  if (key === 'voorbijgestreefd' && d.voorbij) return `${rd.label} ${d.voorbij}x`;
+  if ((key === 'zelfdeAdres' || key === 'dubbeleMelding') && d.anderen && d.anderen.length) {
+    return `${rd.label} met ${d.anderen.join(', ')}`;
+  }
+  return rd.label;
+}
+
 function renderWerklijstCard() {
   const kaart = document.getElementById('werklijst-card');
   const container = document.getElementById('werklijst-body');
@@ -4214,7 +4249,7 @@ function renderWerklijstCard() {
   // Voor de kopieerknop: precies de rijen die nu op het scherm staan, met de
   // zwaarste reden erachter — tab-gescheiden zodat het als twee kolommen in
   // Excel plakt. Dit is de knop die je expliciet wilde houden.
-  container.dataset.copyText = zichtbaar.map(r => `${r.order}\t${r.zwaarste.label}`).join('\n');
+  container.dataset.copyText = werklijstKopieerTekst(zichtbaar);
 
   const rijen = zichtbaar.map(r => `<tr class="${r.prio <= 2 ? 'row-alert' : ''}">
       <td>${r.redenen.map(k => werkRedenBadge(r, k)).join(' ')}</td>

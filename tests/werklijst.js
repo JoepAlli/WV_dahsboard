@@ -135,11 +135,32 @@ const dubbelBlok = (o) => blok(o, 60, '3000999-EL', 'Hooigracht 12');
   const gefilterd = await page.$$eval('#werklijst-body tbody tr', trs => trs.length);
   check('alleen de ingehaalde storingen', gefilterd, w.tellingen.voorbijgestreefd);
   const kopieer = await page.$eval('#werklijst-body', e => e.dataset.copyText);
-  check('de kopieerknop volgt het filter', kopieer.split('\n').length, gefilterd);
-  check('en bevat order plus reden', /^\d{10}\t\S/.test(kopieer), true);
+  const regels = kopieer.split('\n');
+  console.log('    koprij :', regels[0]);
+  console.log('    regel 1:', regels[1]);
+  check('de kopieerknop volgt het filter', regels.length - 1, gefilterd);
+  check('met een koprij erboven', regels[0].split('\t')[0], 'Order');
+  check('en acht kolommen', regels[0].split('\t').length, 8);
+  // Dit is wat er miste: type, plaats en adres stonden niet in de kopie.
+  const kolom = (naam) => regels[0].split('\t').indexOf(naam);
+  const cel = (regel, naam) => regel.split('\t')[kolom(naam)];
+  check('type storing gaat mee', cel(regels[1], 'Type'), 'Stra[a]t[en] zonder OV Infra');
+  check('plaats gaat mee', cel(regels[1], 'Plaats'), 'Leiden');
+  check('adres gaat mee', /Teststraat|Hooigracht/.test(cel(regels[1], 'Adres')), true);
+  check('postcode gaat mee', cel(regels[1], 'Postcode'), '2312 KR');
+  check('en de reden staat er nog steeds in', /Wordt ingehaald/.test(cel(regels[1], 'Reden')), true);
   await page.click('#werklijst-body [data-werk-reden=""]');
   await page.waitForTimeout(400);
   check('filter weghalen toont alles weer', await page.$$eval('#werklijst-body tbody tr', e => e.length), w.rijen.length);
+
+  // Een storing met drie redenen hoort ze alle drie in de kopie te hebben,
+  // niet alleen de zwaarste — juist de combinatie is wat je doorgeeft.
+  const alleRegels = (await page.$eval('#werklijst-body', e => e.dataset.copyText)).split('\n');
+  const regelOud = alleRegels.find(r => r.startsWith(OUD));
+  console.log('    de oude storing:', regelOud);
+  const redenCel = regelOud.split('\t')[7];
+  check('alle redenen staan in één cel', redenCel.split('; ').length, regel(OUD).redenen.length);
+  check('met het detail erbij', /\+\d+d/.test(redenCel) && /\dx/.test(redenCel), true);
 
   console.log('\n--- markeren haalt de regel weg, met alle redenen tegelijk ---');
   await page.selectOption(`#werklijst-body .opvolging-select[data-order="${OUD}"]`, 'opgepakt');

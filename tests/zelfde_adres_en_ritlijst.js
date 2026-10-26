@@ -104,7 +104,11 @@ const STORINGEN = [
     /met 991000000[12]/.test(await page.$eval('#werklijst-body tbody tr', e => e.textContent)), true);
 
   const kopieer = await page.$eval('#werklijst-body', e => e.dataset.copyText);
-  check('kopieertekst noemt order en reden', /9910000001\tMogelijk dubbele melding/.test(kopieer), true);
+  const regel = kopieer.split('\n').find(r => r.startsWith('9910000001')).split('\t');
+  console.log('    kopieerregel:', regel.join(' | '));
+  check('kopieertekst noemt het type', /zonder OV Infra/.test(regel[1]), true);
+  check('en plaats en adres', regel[2] + ' ' + regel[3], 'Leiden Hooigracht 12');
+  check('en de reden met de andere order erbij', /Mogelijk dubbele melding met 9910000002/.test(regel[7]), true);
 
   console.log('\n--- ritlijst downloaden ---');
   await page.click('.tab-btn[data-tab="gebieden"]');
