@@ -109,7 +109,7 @@ const STORINGEN = [
   check('kopieertekst noemt het type', /zonder OV Infra/.test(regel[1]), true);
   check('en de regio', regel[2], 'Regio Leiden');
   check('en de plaats', regel[3], 'Leiden');
-  check('en de reden met de andere order erbij', /Mogelijk dubbele melding met 9910000002/.test(regel[6]), true);
+  check('de adresreden staat bewust niet in de kopie', /Mogelijk dubbele melding/.test(kopieer), false);
 
   console.log('\n--- ritlijst downloaden ---');
   await page.click('.tab-btn[data-tab="gebieden"]');

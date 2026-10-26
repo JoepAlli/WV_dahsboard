@@ -4549,7 +4549,7 @@ function werkRedenBadge(r, key) {
 // gaan mee, niet alleen de zwaarste — op het scherm staan ze ook allemaal, en
 // juist de combinatie ("oud én wordt ingehaald") is wat je wilt doorgeven.
 function werklijstKopieerTekst(rijen) {
-  const kop = ['Order', 'Type', 'Regio', 'Plaats', 'Status', 'Dagen open', 'Reden'];
+  const kop = ['Order', 'Type', 'Regio', 'Plaats', 'Status', 'Dagen open', 'Dagen verlopen', 'Verlopen'];
   const regels = rijen.map(r => {
     const s = r.storing;
     return [
@@ -4559,10 +4559,24 @@ function werklijstKopieerTekst(rijen) {
       s.city || '',
       r.ovStatus,
       r.leeftijd == null ? '' : r.leeftijd,
-      r.redenen.map(k => werkRedenTekst(r, k)).join('; '),
+      // Alleen een getal als 'ie ook echt verlopen is; daysLeft is dan negatief.
+      s.overdue && typeof s.daysLeft === 'number' ? Math.abs(s.daysLeft) : '',
+      werklijstVerloopTekst(r),
     ].join('\t');
   });
   return [kop.join('\t')].concat(regels).join('\n');
+}
+
+// De kopieerlijst gaat naar de werkvoorbereiders, en voor hen is maar één
+// ding relevant: is de termijn voorbij, en is er al een uitvoeringsdatum. De
+// rest van de redenen — te lang onderweg, wordt ingehaald, zelfde adres — is
+// stuurinformatie voor het eigen overzicht en zou in hun lijst alleen maar
+// ruis zijn, zeker met de getallen erachter.
+const WERK_VERLOOP_REDENEN = ['unknown', 'verlopenDatum'];
+function werklijstVerloopTekst(r) {
+  const verloop = r.redenen.filter(k => WERK_VERLOOP_REDENEN.includes(k));
+  if (verloop.length === 0) return '';
+  return verloop.map(k => WERK_REDEN_BIJ_KEY[k].label).join('; ');
 }
 
 // Dezelfde tekst als op het label, maar zonder opmaak. Eén bron, zodat het

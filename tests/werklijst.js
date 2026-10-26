@@ -140,7 +140,7 @@ const dubbelBlok = (o) => blok(o, 60, '3000999-EL', 'Hooigracht 12');
   console.log('    regel 1:', regels[1]);
   check('de kopieerknop volgt het filter', regels.length - 1, gefilterd);
   check('met een koprij erboven', regels[0].split('\t')[0], 'Order');
-  check('en zeven kolommen', regels[0].split('\t').length, 7);
+  check('en acht kolommen', regels[0].split('\t').length, 8);
   const kolom = (naam) => regels[0].split('\t').indexOf(naam);
   const cel = (regel, naam) => regel.split('\t')[kolom(naam)];
   check('type storing gaat mee', cel(regels[1], 'Type'), 'Stra[a]t[en] zonder OV Infra');
@@ -151,19 +151,30 @@ const dubbelBlok = (o) => blok(o, 60, '3000999-EL', 'Hooigracht 12');
   // en plaats en zoekt het adres er zelf bij op ordernummer.
   check('straat staat er niet meer in', regels[0].includes('Adres'), false);
   check('postcode ook niet', regels[0].includes('Postcode'), false);
-  check('en de reden staat er nog steeds in', /Wordt ingehaald/.test(cel(regels[1], 'Reden')), true);
+  // De lijst gaat naar de werkvoorbereiders: daar telt alleen of de termijn
+  // voorbij is en of er al een uitvoeringsdatum ligt. De stuurredenen horen er
+  // niet in, en zeker niet met hun getallen.
+  check('alleen de verloopstatus in de redenkolom', /Wordt ingehaald|Te lang/.test(cel(regels[1], 'Verlopen')), false);
   await page.click('#werklijst-body [data-werk-reden=""]');
   await page.waitForTimeout(400);
   check('filter weghalen toont alles weer', await page.$$eval('#werklijst-body tbody tr', e => e.length), w.rijen.length);
 
-  // Een storing met drie redenen hoort ze alle drie in de kopie te hebben,
-  // niet alleen de zwaarste — juist de combinatie is wat je doorgeeft.
+  // Op het scherm staan alle redenen met hun getallen; in de kopie alleen de
+  // verloopstatus. De storing OUD is te lang onderweg en wordt ingehaald maar
+  // is niet verlopen — die hoort dus een lege redenkolom te krijgen.
   const alleRegels = (await page.$eval('#werklijst-body', e => e.dataset.copyText)).split('\n');
-  const regelOud = alleRegels.find(r => r.startsWith(OUD));
-  console.log('    de oude storing:', regelOud);
-  const redenCel = regelOud.split('\t')[6];
-  check('alle redenen staan in één cel', redenCel.split('; ').length, regel(OUD).redenen.length);
-  check('met het detail erbij', /\+\d+d/.test(redenCel) && /\dx/.test(redenCel), true);
+  const regelOud = alleRegels.find(r => r.startsWith(OUD)).split('\t');
+  console.log('    de oude storing:', regelOud.join(' | '));
+  console.log('    op het scherm  :', regel(OUD).redenen.join(' + '));
+  check('op het scherm heeft deze meerdere redenen', regel(OUD).redenen.length > 1, true);
+  check('maar in de kopie staat er geen verloopstatus', regelOud[7], '');
+  check('en geen getallen zoals "8x" of "+18d"', /\d+x|\+\d+d/.test(regelOud.join(' ')), false);
+
+  // De verlopen storing krijgt die kolom wél, met het aantal dagen erbij.
+  const regelVerlopen = alleRegels.find(r => r.startsWith(VERLOPEN)).split('\t');
+  console.log('    de verlopen storing:', regelVerlopen.join(' | '));
+  check('de verlopen storing noemt de reden', regelVerlopen[7], 'Verlopen, geen uitvoeringsdatum');
+  check('en het aantal dagen dat de termijn voorbij is', +regelVerlopen[6] > 0, true);
 
   console.log('\n--- markeren haalt de regel weg, met alle redenen tegelijk ---');
   await page.selectOption(`#werklijst-body .opvolging-select[data-order="${OUD}"]`, 'opgepakt');
