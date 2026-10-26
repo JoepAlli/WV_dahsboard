@@ -1316,6 +1316,33 @@ tr.detail-row > td {
   background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-1));
 }
 
+/* Het "i"-knopje naast een kaarttitel. Klein en rustig: het is een aanbod om
+   iets te lezen, geen signaal dat er iets aan de hand is. Open krijgt het de
+   accentkleur, zodat zichtbaar blijft welke kaart je hebt opengeklapt. */
+.uitleg-knop {
+  margin-left: 0.5rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--gridline);
+  background: transparent;
+  color: var(--text-secondary);
+  font: 600 0.72rem/1 Georgia, "Times New Roman", serif;
+  font-style: italic;
+  cursor: pointer;
+  vertical-align: middle;
+  opacity: 0.65;
+}
+.uitleg-knop:hover { opacity: 1; }
+.uitleg-knop-open {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--surface-1);
+  opacity: 1;
+}
+.kaart-uitleg { margin-bottom: 0.6rem; }
+
 .werklijst-chips { margin-bottom: 0.75rem; }
 /* De redenkolom mag breed zijn maar niet onbeperkt: labels horen te stapelen
    in plaats van de tabel zo ver uit te rekken dat de opvolgingknop rechts

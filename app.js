@@ -4549,15 +4549,14 @@ function werkRedenBadge(r, key) {
 // gaan mee, niet alleen de zwaarste — op het scherm staan ze ook allemaal, en
 // juist de combinatie ("oud én wordt ingehaald") is wat je wilt doorgeven.
 function werklijstKopieerTekst(rijen) {
-  const kop = ['Order', 'Type', 'Plaats', 'Adres', 'Postcode', 'Status', 'Dagen open', 'Reden'];
+  const kop = ['Order', 'Type', 'Regio', 'Plaats', 'Status', 'Dagen open', 'Reden'];
   const regels = rijen.map(r => {
     const s = r.storing;
     return [
       r.order,
       s.type || '',
+      regioGroupLabel(regioGroupOf(s)),
       s.city || '',
-      s.street || '',
-      s.postcode || '',
       r.ovStatus,
       r.leeftijd == null ? '' : r.leeftijd,
       r.redenen.map(k => werkRedenTekst(r, k)).join('; '),
@@ -7578,6 +7577,56 @@ function applyStaticExportData() {
   if (invoerBtn) invoerBtn.classList.add('hidden');
 }
 
+// De uitleg onder elke kaarttitel achter een "i" zetten.
+//
+// Elke kaart heeft een alinea die uitlegt wat er staat en waarom. Dat is waar
+// bij de eerste keer lezen, en daarna is het ruis: je weet het al, en samen
+// vullen ze een halve pagina voordat de eerste cijfers in beeld komen.
+//
+// Dit gebeurt hier in plaats van in de HTML, zodat er niet op 23 plekken
+// hetzelfde knopje hoeft te staan en een nieuwe kaart het vanzelf krijgt. De
+// tekst blijft gewoon in de HTML staan — hij wordt alleen ingeklapt — dus voor
+// een schermlezer en voor zoeken in de pagina verandert er niets wezenlijks.
+function verbergKaartUitleg() {
+  document.querySelectorAll('section.card').forEach(kaart => {
+    const kop = kaart.querySelector(':scope > .card-header') || kaart.querySelector(':scope > h2');
+    if (!kop) return;
+    const titel = kop.matches('h2') ? kop : kop.querySelector('h2');
+    if (!titel || titel.querySelector('.uitleg-knop')) return;
+
+    // Alle alinea's die direct op de titel volgen horen bij de uitleg. Eentje
+    // is de regel, maar sommige kaarten hebben er twee — en dan moet het niet
+    // zo zijn dat de eerste verdwijnt en de tweede blijft staan.
+    const alineas = [];
+    let volgende = kop.nextElementSibling;
+    while (volgende && volgende.matches('p.muted.small')) {
+      alineas.push(volgende);
+      volgende = volgende.nextElementSibling;
+    }
+    if (alineas.length === 0) return;
+
+    const vak = document.createElement('div');
+    vak.className = 'kaart-uitleg hidden';
+    alineas[0].before(vak);
+    alineas.forEach(p => vak.appendChild(p));
+
+    const knop = document.createElement('button');
+    knop.type = 'button';
+    knop.className = 'uitleg-knop';
+    knop.textContent = 'i';
+    knop.setAttribute('aria-expanded', 'false');
+    knop.setAttribute('aria-label', 'Uitleg tonen');
+    knop.title = 'Wat staat hier, en waarom?';
+    knop.addEventListener('click', () => {
+      const open = vak.classList.toggle('hidden') === false;
+      knop.setAttribute('aria-expanded', String(open));
+      knop.setAttribute('aria-label', open ? 'Uitleg verbergen' : 'Uitleg tonen');
+      knop.classList.toggle('uitleg-knop-open', open);
+    });
+    titel.appendChild(knop);
+  });
+}
+
 async function init() {
   document.getElementById('week-date').value = new Date().toISOString().slice(0, 10);
   wireEvents();
@@ -7588,6 +7637,7 @@ async function init() {
   document.getElementById('cap-meetdienst').value = state.capaciteit.meetdienst;
   document.getElementById('cap-mio').value = state.capaciteit.mio;
   setupTabNav();
+  verbergKaartUitleg();
 }
 
 document.addEventListener('DOMContentLoaded', init);

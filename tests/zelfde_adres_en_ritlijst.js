@@ -107,8 +107,9 @@ const STORINGEN = [
   const regel = kopieer.split('\n').find(r => r.startsWith('9910000001')).split('\t');
   console.log('    kopieerregel:', regel.join(' | '));
   check('kopieertekst noemt het type', /zonder OV Infra/.test(regel[1]), true);
-  check('en plaats en adres', regel[2] + ' ' + regel[3], 'Leiden Hooigracht 12');
-  check('en de reden met de andere order erbij', /Mogelijk dubbele melding met 9910000002/.test(regel[7]), true);
+  check('en de regio', regel[2], 'Regio Leiden');
+  check('en de plaats', regel[3], 'Leiden');
+  check('en de reden met de andere order erbij', /Mogelijk dubbele melding met 9910000002/.test(regel[6]), true);
 
   console.log('\n--- ritlijst downloaden ---');
   await page.click('.tab-btn[data-tab="gebieden"]');

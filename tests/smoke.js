@@ -132,6 +132,32 @@ const klantLijst = () => `${KLANT.length} Nieuwe klantaanvragen\n` + KLANT.map((
   await page.waitForTimeout(400);
   check('een opgeloste storing is terug te vinden', await page.$$eval('#historie-body tbody tr', e => e.length), 1);
 
+  console.log('\n--- uitleg achter de "i" ---');
+  // Elke kaart met een inleiding krijgt er één, en standaard staat alles dicht
+  // zodat de cijfers bovenaan beginnen in plaats van een halve pagina tekst.
+  await page.click('.tab-btn[data-tab="data"]');
+  await page.waitForTimeout(400);
+  const knoppen = await page.$$eval('.uitleg-knop', e => e.length);
+  const vakken = await page.$$eval('.kaart-uitleg', e => e.length);
+  console.log(`    ${knoppen} knoppen, ${vakken} uitlegvakken`);
+  check('elke uitleg heeft een knop', knoppen, vakken);
+  check('er zijn er meer dan een handvol', knoppen > 10, true);
+  check('en alles staat standaard dicht',
+    await page.$$eval('.kaart-uitleg', e => e.every(x => x.classList.contains('hidden'))), true);
+  check('geen enkele kaart krijgt er twee', await page.$$eval('section.card', secs =>
+    secs.every(s => s.querySelectorAll(':scope > .card-header .uitleg-knop, :scope > h2 .uitleg-knop').length <= 1)), true);
+
+  await page.click('#werklijst-card .uitleg-knop');
+  await page.waitForTimeout(250);
+  check('klikken opent de uitleg',
+    await page.$eval('#werklijst-card .kaart-uitleg', e => !e.classList.contains('hidden')), true);
+  check('en meldt dat aan een schermlezer',
+    await page.$eval('#werklijst-card .uitleg-knop', e => e.getAttribute('aria-expanded')), 'true');
+  await page.click('#werklijst-card .uitleg-knop');
+  await page.waitForTimeout(250);
+  check('nogmaals klikken sluit het weer',
+    await page.$eval('#werklijst-card .kaart-uitleg', e => e.classList.contains('hidden')), true);
+
   console.log('\n--- Instellingen en export ---');
   await page.click('.tab-btn[data-tab="settings"]');
   await page.waitForTimeout(400);
@@ -150,6 +176,7 @@ const klantLijst = () => `${KLANT.length} Nieuwe klantaanvragen\n` + KLANT.map((
     await exp.waitForTimeout(350);
   }
   check('export: totaal gelijk aan het origineel', await exp.$eval('[data-stat-key="totaal"] .value', e => +e.textContent.trim()), totaal);
+  check('export: de uitleg zit daar ook achter een "i"', await exp.$$eval('.uitleg-knop', e => e.length > 10), true);
   check('export: geen paginafouten', errsExp.join(' ') || 'geen', 'geen');
   if (errsExp.length) fouten++;
   await exp.close();

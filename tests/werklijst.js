@@ -140,14 +140,17 @@ const dubbelBlok = (o) => blok(o, 60, '3000999-EL', 'Hooigracht 12');
   console.log('    regel 1:', regels[1]);
   check('de kopieerknop volgt het filter', regels.length - 1, gefilterd);
   check('met een koprij erboven', regels[0].split('\t')[0], 'Order');
-  check('en acht kolommen', regels[0].split('\t').length, 8);
-  // Dit is wat er miste: type, plaats en adres stonden niet in de kopie.
+  check('en zeven kolommen', regels[0].split('\t').length, 7);
   const kolom = (naam) => regels[0].split('\t').indexOf(naam);
   const cel = (regel, naam) => regel.split('\t')[kolom(naam)];
   check('type storing gaat mee', cel(regels[1], 'Type'), 'Stra[a]t[en] zonder OV Infra');
+  // De regio is waar de verantwoordelijke op filtert; die moet erin.
+  check('regio gaat mee', cel(regels[1], 'Regio'), 'Regio Leiden');
   check('plaats gaat mee', cel(regels[1], 'Plaats'), 'Leiden');
-  check('adres gaat mee', /Teststraat|Hooigracht/.test(cel(regels[1], 'Adres')), true);
-  check('postcode gaat mee', cel(regels[1], 'Postcode'), '2312 KR');
+  // Straat en postcode zijn er bewust uit: wie de lijst krijgt werkt op regio
+  // en plaats en zoekt het adres er zelf bij op ordernummer.
+  check('straat staat er niet meer in', regels[0].includes('Adres'), false);
+  check('postcode ook niet', regels[0].includes('Postcode'), false);
   check('en de reden staat er nog steeds in', /Wordt ingehaald/.test(cel(regels[1], 'Reden')), true);
   await page.click('#werklijst-body [data-werk-reden=""]');
   await page.waitForTimeout(400);
@@ -158,7 +161,7 @@ const dubbelBlok = (o) => blok(o, 60, '3000999-EL', 'Hooigracht 12');
   const alleRegels = (await page.$eval('#werklijst-body', e => e.dataset.copyText)).split('\n');
   const regelOud = alleRegels.find(r => r.startsWith(OUD));
   console.log('    de oude storing:', regelOud);
-  const redenCel = regelOud.split('\t')[7];
+  const redenCel = regelOud.split('\t')[6];
   check('alle redenen staan in één cel', redenCel.split('; ').length, regel(OUD).redenen.length);
   check('met het detail erbij', /\+\d+d/.test(redenCel) && /\dx/.test(redenCel), true);
 
