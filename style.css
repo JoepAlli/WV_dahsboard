@@ -1309,6 +1309,13 @@ tr.detail-row > td {
    wél, want een markering die niet meer klopt moet opvallen. */
 /* De werklijst is de voordeur: één regel per storing met alle redenen ernaast.
    De redenkolom mag breed zijn — daar lees je op, niet op het ordernummer. */
+/* Een back-upherinnering die twee weken genegeerd is, is geen herinnering
+   meer. Vanaf dan dezelfde opmaak als een echte waarschuwing. */
+.reminder-dringend {
+  border-color: var(--status-critical);
+  background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-1));
+}
+
 .werklijst-chips { margin-bottom: 0.75rem; }
 /* De redenkolom mag breed zijn maar niet onbeperkt: labels horen te stapelen
    in plaats van de tabel zo ver uit te rekken dat de opvolgingknop rechts

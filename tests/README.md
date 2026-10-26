@@ -24,3 +24,4 @@ IndexedDB en sluit af met `ALLES GOED` of het aantal mislukte controles.
 | `liggenblijvers.js` | Dat voorbijgestreefde storingen, de lichtingen per instroommaand en de wachtrij-discipline kloppen — inclusief gelijke instroomdatums, waar een mediaanvergelijking de mist in gaat |
 | `opvolging.js` | Dat markeringen de werklijsten korter maken, en vooral dat ze vanzelf vervallen bij een verlopen parkeertijd of een statuswissel |
 | `werklijst.js` | Dat de vier samengevoegde bronnen één regel per storing opleveren, met alle redenen erbij en gesorteerd op de zwaarste |
+| `backup_vangnet.js` | Dat de back-upherinnering onbewaarde plakacties telt, en dat het terugzetten van een oudere back-up vooraf zegt hoeveel historie je kwijtraakt |

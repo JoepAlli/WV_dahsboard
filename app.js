@@ -520,7 +520,19 @@ async function saveStatusStreef(streef) {
 }
 
 const LAST_BACKUP_KEY = 'nusdash_last_backup_at_v1';
-const BACKUP_HERINNERING_DAGEN = 7;
+// Niet in dagen maar in plakacties: twee per werkdag, dus vier is ongeveer
+// twee dagen werk dat nergens anders staat. Vanaf twintig (twee weken) is het
+// geen herinnering meer maar een waarschuwing.
+const BACKUP_HERINNERING_UPDATES = 4;
+const BACKUP_DRINGEND_UPDATES = 20;
+// Hoeveel opgeslagen updates zijn er bijgekomen ná de laatste back-up? Elke
+// momentopname draagt zijn eigen savedAt, dus daar is geen extra administratie
+// voor nodig.
+function onbewaardeUpdates() {
+  const snaps = state.snapshots || [];
+  if (!state.lastBackupAt) return snaps.length;
+  return snaps.filter(sn => sn.savedAt && sn.savedAt > state.lastBackupAt).length;
+}
 async function loadLastBackupAt() {
   try { return (await idbGet(LAST_BACKUP_KEY)) || null; }
   catch (e) { console.error(e); return null; }
@@ -727,7 +739,11 @@ ${window.__EXPORT_HTML_SHELL__}
 </html>`;
 }
 
-async function importBackup(file) {
+// Het bestand inlezen en controleren, zonder er iets mee te doen. Gescheiden
+// van het toepassen, zodat er eerst verteld kan worden wát er zou veranderen.
+// Bij een overdracht is dit het gevaarlijkste moment van de hele tool: één
+// verkeerd bestand en er verdwijnt stilletjes maanden historie.
+async function leesBackup(file) {
   let backup;
   try {
     backup = JSON.parse(await file.text());
@@ -735,6 +751,33 @@ async function importBackup(file) {
     throw new Error('bestand is geen geldig back-upbestand (JSON kon niet worden gelezen)');
   }
   if (!backup || typeof backup !== 'object') throw new Error('bestand is geen geldig back-upbestand');
+  if (!Array.isArray(backup.ovSnapshots)) throw new Error('bestand bevat geen opgeslagen updates — dit lijkt geen back-up van dit dashboard');
+  return backup;
+}
+
+// Wat verandert er als je dit bestand terugzet? In updates en in historie,
+// want dat zijn de twee dingen die je kwijt kunt raken.
+function backupVergelijking(backup) {
+  const nu = state.snapshots || [];
+  const straks = backup.ovSnapshots || [];
+  const laatsteDag = (lijst) => lijst.length
+    ? lijst.map(sn => sn.week).sort().slice(-1)[0] : null;
+  return {
+    nuAantal: nu.length,
+    straksAantal: straks.length,
+    nuTot: laatsteDag(nu),
+    straksTot: laatsteDag(straks),
+    verliesUpdates: Math.max(0, nu.length - straks.length),
+    gemaaktOp: backup.exportedAt || null,
+  };
+}
+
+async function importBackup(file) {
+  const backup = await leesBackup(file);
+  await pasBackupToe(backup);
+}
+
+async function pasBackupToe(backup) {
   if (Array.isArray(backup.ovSnapshots)) await saveSnapshots(backup.ovSnapshots);
   if (Array.isArray(backup.typeWhitelist)) await saveTypeWhitelist(backup.typeWhitelist);
   if (backup.ovBlockStatus && typeof backup.ovBlockStatus === 'object') await saveOvBlockStatusMap(backup.ovBlockStatus);
@@ -3440,16 +3483,21 @@ function renderBackupReminder() {
   if (!el) return;
   if (isStaticExport || state.snapshots.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
 
-  const laatste = state.lastBackupAt ? new Date(state.lastBackupAt) : null;
-  const dagen = laatste ? Math.floor((Date.now() - laatste.getTime()) / DAG_MS) : null;
-  if (dagen !== null && dagen < BACKUP_HERINNERING_DAGEN) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  // Dagen sinds de laatste back-up zegt weinig: in een rustige week verlies je
+  // niets, in een drukke week twintig updates. Wat telt is hoeveel plakacties
+  // er NIET in een back-up zitten — dat is precies wat je kwijt zou raken.
+  const onbewaard = onbewaardeUpdates();
+  if (onbewaard < BACKUP_HERINNERING_UPDATES) { el.classList.add('hidden'); el.innerHTML = ''; return; }
 
-  const tekst = laatste
-    ? `De laatste back-up is van ${fmtDate(state.lastBackupAt)} — ${dagenTekst(dagen)} geleden.`
+  const dringend = onbewaard >= BACKUP_DRINGEND_UPDATES;
+  const laatste = state.lastBackupAt
+    ? `De laatste back-up is van ${fmtDate(state.lastBackupAt)}.`
     : 'Er is nog nooit een back-up gedownload.';
   el.classList.remove('hidden');
-  el.innerHTML = `<strong>Back-up maken?</strong> ${esc(tekst)} Alle ${state.snapshots.length} opgeslagen updates staan alleen in deze browser; `
-    + `raakt dit profiel kwijt, dan is die historie weg. `
+  el.classList.toggle('reminder-dringend', dringend);
+  el.innerHTML = `<strong>${dringend ? 'Maak een back-up.' : 'Back-up maken?'}</strong> `
+    + `${esc(laatste)} Er ${onbewaard === 1 ? 'is 1 update' : `zijn ${onbewaard} updates`} verwerkt die in geen enkele back-up ${onbewaard === 1 ? 'staat' : 'staan'}. `
+    + `Die staan alleen in deze browser: raakt dit profiel kwijt, dan is die historie weg en is er geen kopie. `
     + `<button type="button" id="backup-reminder-btn" class="btn-primary btn-inline">Download back-up</button>`;
   const btn = document.getElementById('backup-reminder-btn');
   if (btn) btn.addEventListener('click', async () => {
@@ -3463,9 +3511,13 @@ function renderBackupReminder() {
 function renderBackupStatus() {
   const el = document.getElementById('backup-last');
   if (!el) return;
-  el.textContent = state.lastBackupAt
+  const onbewaard = onbewaardeUpdates();
+  const stand = state.lastBackupAt
     ? `Laatste back-up: ${fmtDate(state.lastBackupAt)}.`
     : 'Nog geen back-up gedownload.';
+  el.textContent = onbewaard > 0
+    ? `${stand} ${onbewaard === 1 ? '1 update zit' : `${onbewaard} updates zitten`} daar niet in.`
+    : `${stand} Alles is veiliggesteld.`;
 }
 
 function renderWvGebiedCard() {
@@ -6622,10 +6674,34 @@ function wireEvents() {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    if (!confirm('Dit overschrijft alle huidige opgeslagen weken en instellingen (beide bakken) met de inhoud van dit back-upbestand. Doorgaan?')) return;
     const statusEl = document.getElementById('backup-status');
+    let backup;
     try {
-      await importBackup(file);
+      backup = await leesBackup(file);
+    } catch (err) {
+      statusEl.textContent = 'Importeren mislukt: ' + err.message;
+      return;
+    }
+    // Niet "dit overschrijft alles, doorgaan?" maar wát er dan weg zou gaan.
+    const vgl = backupVergelijking(backup);
+    const regels = [
+      'Dit vervangt alles wat er nu in dit dashboard staat.',
+      '',
+      `Nu in het dashboard: ${vgl.nuAantal} opgeslagen updates${vgl.nuTot ? ` (t/m ${fmtDag(vgl.nuTot, true)})` : ''}`,
+      `In dit bestand:      ${vgl.straksAantal} opgeslagen updates${vgl.straksTot ? ` (t/m ${fmtDag(vgl.straksTot, true)})` : ''}`,
+    ];
+    if (vgl.verliesUpdates > 0 || (vgl.nuTot && vgl.straksTot && vgl.straksTot < vgl.nuTot)) {
+      regels.push('', `LET OP: dit bestand is ouder of kleiner dan wat je nu hebt.`);
+      if (vgl.verliesUpdates > 0) regels.push(`Je raakt ${vgl.verliesUpdates} update(s) kwijt.`);
+      if (vgl.nuTot && vgl.straksTot && vgl.straksTot < vgl.nuTot) {
+        regels.push(`Historie na ${fmtDag(vgl.straksTot, true)} verdwijnt.`);
+      }
+      regels.push('Maak eerst een back-up van de huidige stand als je twijfelt.');
+    }
+    regels.push('', 'Doorgaan?');
+    if (!confirm(regels.join('\n'))) { statusEl.textContent = 'Importeren afgebroken.'; return; }
+    try {
+      await pasBackupToe(backup);
       await reloadAllStateAndRender();
       document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
   document.getElementById('cap-meetdienst').value = state.capaciteit.meetdienst;

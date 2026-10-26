@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maptest — kan het dashboard naar een map schrijven?</title>
+<style>
+  :root {
+    --tekst: #1a1a1a; --zacht: #5c5c5c; --rand: #d8d8d8; --vlak: #fff; --achtergrond: #f6f6f4;
+    --goed: #1f7a3d; --fout: #b3261e; --twijfel: #E66E00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --tekst: #ececec; --zacht: #a8a8a8; --rand: #3a3a3a; --vlak: #1e1e1e; --achtergrond: #141414;
+      --goed: #5dd48a; --fout: #ff8a80; --twijfel: #ffb366;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem; background: var(--achtergrond); color: var(--tekst);
+    font: 15px/1.6 -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.35rem; margin: 0 0 0.25rem; }
+  .intro { color: var(--zacht); margin: 0 0 1.5rem; }
+  section {
+    background: var(--vlak); border: 1px solid var(--rand); border-radius: 10px;
+    padding: 1.1rem 1.25rem; margin-bottom: 1rem;
+  }
+  h2 { font-size: 1rem; margin: 0 0 0.6rem; }
+  button {
+    font: inherit; padding: 0.5rem 0.9rem; border-radius: 7px; border: 1px solid var(--rand);
+    background: var(--vlak); color: var(--tekst); cursor: pointer;
+  }
+  button.primair { background: var(--tekst); color: var(--vlak); border-color: var(--tekst); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .regel { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.3rem 0; }
+  .merk { width: 1.4rem; flex: none; font-weight: 700; }
+  .goed { color: var(--goed); } .fout { color: var(--fout); } .twijfel { color: var(--twijfel); }
+  .detail { color: var(--zacht); font-size: 0.85rem; }
+  pre {
+    background: var(--achtergrond); border: 1px solid var(--rand); border-radius: 7px;
+    padding: 0.7rem; overflow-x: auto; font-size: 0.8rem; margin: 0.6rem 0 0;
+  }
+  .oordeel { font-weight: 650; margin-top: 0.8rem; }
+  ol { margin: 0.4rem 0 0; padding-left: 1.3rem; }
+  li { margin-bottom: 0.3rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kan het dashboard naar een map schrijven?</h1>
+  <p class="intro">
+    Deze pagina test één ding: mag een lokaal geopend bestand (<code>file://</code>) op dit
+    apparaat een map op schijf lezen en beschrijven? Zo ja, dan kan de data van het NUS-dashboard
+    uit de browser naar een gewone map — bijvoorbeeld een map die met OneDrive of SharePoint
+    synchroniseert. Dan is de data geback-upt door Alliander en is overdragen een kwestie van
+    iemand die map aanwijzen.
+  </p>
+  <p class="intro">
+    De test schrijft één klein bestand (<code>nusdash-maptest.json</code>) en leest dat weer terug.
+    Verder gebeurt er niets, en er gaat niets naar buiten.
+  </p>
+
+  <section>
+    <h2>1. Is de functie aanwezig?</h2>
+    <div id="stap1"></div>
+  </section>
+
+  <section>
+    <h2>2. Een map kiezen en beschrijven</h2>
+    <p class="detail">
+      Kies een map waar je dit mag — bij voorkeur een map die met OneDrive of Teams synchroniseert,
+      want dat is precies waar de data straks zou komen te staan.
+    </p>
+    <button id="kies" class="primair">Map kiezen en testen…</button>
+    <div id="stap2"></div>
+  </section>
+
+  <section>
+    <h2>3. Blijft de toegang na het sluiten van de browser?</h2>
+    <p class="detail">
+      Dit is de vraag die bepaalt hoe vervelend het in dagelijks gebruik is. De verwijzing naar de
+      map wordt bewaard. Sluit deze pagina, open 'm opnieuw en klik hieronder — dan zie je of je
+      de map opnieuw moet kiezen, of dat één keer "toestaan" genoeg is.
+    </p>
+    <button id="hervat">Opgeslagen map opnieuw proberen</button>
+    <div id="stap3"></div>
+  </section>
+
+  <section>
+    <h2>Uitkomst</h2>
+    <div id="oordeel" class="detail">Doorloop de stappen hierboven.</div>
+    <button id="kopieer" style="margin-top:0.8rem">Uitkomst kopiëren</button>
+  </section>
+</main>
+
+<script>
+// Bewust één bestand zonder afhankelijkheden: deze test moet te openen zijn op
+// een machine waar verder niets geïnstalleerd mag worden.
+const TESTBESTAND = 'nusdash-maptest.json';
+const DB = 'nusdash-maptest';
+const logboek = [];
+
+function meld(waar, soort, tekst, detail) {
+  const merk = soort === 'goed' ? '✓' : soort === 'fout' ? '✗' : '!';
+  logboek.push(`${merk} ${tekst}${detail ? ' — ' + detail : ''}`);
+  document.getElementById(waar).insertAdjacentHTML('beforeend',
+    `<div class="regel"><span class="merk ${soort}">${merk}</span><span>${tekst}` +
+    (detail ? `<div class="detail">${detail}</div>` : '') + `</span></div>`);
+}
+
+// De verwijzing naar de map bewaren we in IndexedDB. Een mapverwijzing is geen
+// pad maar een object dat de browser zelf beheert; vandaar deze omweg.
+function idb(actie) {
+  return new Promise((ok, fout) => {
+    const req = indexedDB.open(DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onerror = () => fout(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction('kv', actie.schrijf ? 'readwrite' : 'readonly');
+      const store = tx.objectStore('kv');
+      const r = actie.schrijf ? store.put(actie.waarde, 'map') : store.get('map');
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => fout(r.error);
+    };
+  });
+}
+
+// --- stap 1 ---
+const heeftApi = typeof window.showDirectoryPicker === 'function';
+meld('stap1', window.isSecureContext ? 'goed' : 'fout',
+  window.isSecureContext ? 'De pagina geldt als beveiligde context' : 'De pagina geldt NIET als beveiligde context',
+  `protocol: ${location.protocol}`);
+meld('stap1', heeftApi ? 'goed' : 'fout',
+  heeftApi ? 'De functie om een map te kiezen is beschikbaar' : 'De functie om een map te kiezen ontbreekt',
+  heeftApi ? '' : 'Dit lukt alleen in Chrome of Edge. Firefox en Safari ondersteunen het niet.');
+meld('stap1', 'goed', 'Browser', navigator.userAgent);
+if (!heeftApi) document.getElementById('kies').disabled = true;
+
+// --- stap 2 en 3: de echte proef ---
+async function proef(handle, waar) {
+  const toestemming = await handle.requestPermission({ mode: 'readwrite' });
+  if (toestemming !== 'granted') {
+    meld(waar, 'fout', 'Geen schrijfrechten gekregen op deze map', `antwoord: ${toestemming}`);
+    return false;
+  }
+  meld(waar, 'goed', 'Schrijfrechten gekregen');
+
+  const inhoud = JSON.stringify({ test: true, geschrevenOp: new Date().toISOString() });
+  const bestand = await handle.getFileHandle(TESTBESTAND, { create: true });
+  const schrijver = await bestand.createWritable();
+  await schrijver.write(inhoud);
+  await schrijver.close();
+  meld(waar, 'goed', `Bestand geschreven: ${TESTBESTAND}`);
+
+  const terug = await (await bestand.getFile()).text();
+  const gelijk = terug === inhoud;
+  meld(waar, gelijk ? 'goed' : 'fout',
+    gelijk ? 'Bestand teruggelezen en identiek' : 'Teruggelezen bestand wijkt af',
+    gelijk ? '' : `gelezen: ${terug.slice(0, 120)}`);
+  return gelijk;
+}
+
+document.getElementById('kies').addEventListener('click', async () => {
+  const waar = 'stap2';
+  document.getElementById(waar).innerHTML = '';
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    meld(waar, 'goed', `Map gekozen: ${handle.name}`);
+    const gelukt = await proef(handle, waar);
+    if (gelukt) {
+      await idb({ schrijf: true, waarde: handle });
+      meld(waar, 'goed', 'Verwijzing naar de map bewaard voor stap 3');
+      zetOordeel('werkt');
+    } else {
+      zetOordeel('deels');
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') {
+      meld(waar, 'twijfel', 'Je hebt het kiezen afgebroken', 'Klik opnieuw en kies wel een map.');
+      return;
+    }
+    meld(waar, 'fout', 'Het lukte niet', `${e.name}: ${e.message}`);
+    // Een blokkade via bedrijfsbeleid komt meestal als SecurityError of
+    // NotAllowedError binnen zonder dat de keuzelijst ooit verschijnt.
+    if (e && (e.name === 'SecurityError' || e.name === 'NotAllowedError')) {
+      meld(waar, 'twijfel', 'Dit lijkt op een blokkade vanuit het beheer van deze laptop',
+        'Kreeg je géén venster te zien om een map te kiezen? Dan staat het waarschijnlijk uit via groepsbeleid.');
+    }
+    zetOordeel('werkt-niet');
+  }
+});
+
+document.getElementById('hervat').addEventListener('click', async () => {
+  const waar = 'stap3';
+  document.getElementById(waar).innerHTML = '';
+  try {
+    const handle = await idb({ schrijf: false });
+    if (!handle) {
+      meld(waar, 'twijfel', 'Er is nog geen map bewaard', 'Doe eerst stap 2.');
+      return;
+    }
+    meld(waar, 'goed', `Bewaarde map teruggevonden: ${handle.name}`);
+    const stand = await handle.queryPermission({ mode: 'readwrite' });
+    meld(waar, stand === 'granted' ? 'goed' : 'twijfel',
+      stand === 'granted' ? 'De toegang gold nog zonder opnieuw te vragen' : 'De browser vraagt opnieuw om toestemming',
+      stand === 'granted' ? 'Dit is het beste geval: openen en klaar.' :
+        'Dat is één klik per keer dat je de browser opnieuw opent — vervelend maar werkbaar.');
+    await proef(handle, waar);
+    zetOordeel(stand === 'granted' ? 'werkt-prima' : 'werkt');
+  } catch (e) {
+    meld(waar, 'fout', 'Het lukte niet', `${e.name}: ${e.message}`);
+    zetOordeel('werkt-niet');
+  }
+});
+
+function zetOordeel(soort) {
+  const el = document.getElementById('oordeel');
+  const teksten = {
+    'werkt-prima': ['goed', 'Dit werkt, en de toegang blijft na het sluiten van de browser. De data van het dashboard kan naar een gewone map.'],
+    'werkt': ['goed', 'Dit werkt. Je moet waarschijnlijk één keer per browsersessie op "toestaan" klikken; dat is acceptabel. De data van het dashboard kan naar een gewone map.'],
+    'deels': ['twijfel', 'De map kon wel gekozen worden maar het schrijven of teruglezen ging mis. Stuur de uitkomst door, dan kijk ik waar het misgaat.'],
+    'werkt-niet': ['fout', 'Dit werkt niet op deze laptop. Dan houden we de data in de browser en lossen we de overdracht op met back-upbestanden in een gedeelde map.'],
+  };
+  const [klasse, tekst] = teksten[soort];
+  el.className = 'oordeel ' + klasse;
+  el.textContent = tekst;
+}
+
+document.getElementById('kopieer').addEventListener('click', async () => {
+  const knop = document.getElementById('kopieer');
+  const tekst = ['Maptest NUS-dashboard — ' + new Date().toLocaleString('nl-NL'), ''].concat(logboek).join('\n');
+  try { await navigator.clipboard.writeText(tekst); knop.textContent = 'Gekopieerd!'; }
+  catch (e) { knop.textContent = 'Kopiëren mislukt'; }
+  setTimeout(() => { knop.textContent = 'Uitkomst kopiëren'; }, 2000);
+});
+</script>
+</body>
+</html>
