@@ -5967,6 +5967,191 @@ function straatZonderHuisnummer(street) {
 // Gebaseerd op de straat-indeling, want dat is de plek waar een monteur naartoe
 // gaat; per asset zou dezelfde straat met twee verschillende masten niet als
 // herhaling tellen.
+/* ---------- Dubbele meldingen over de hele meetperiode ---------- */
+
+// "Hoe vaak komt het voor dat één storing twee keer wordt gemeld?" is een
+// vraag over de kwaliteit van de Instandhoudingsapp, en daar hoort een getal
+// bij dat je kunt terugkoppelen.
+//
+// Het onderscheid dat hier alles bepaalt, en dat je niet mag laten vervagen:
+//
+//   DUBBEL     twee orders op hetzelfde adres die TEGELIJK openstonden. Dan
+//              beschrijven ze vrijwel zeker hetzelfde kapotte ding, en is er
+//              dus twee keer werk aangemaakt voor één probleem.
+//   HERHALING  twee orders op hetzelfde adres ná elkaar. Dat is geen dubbele
+//              melding maar een plek die opnieuw stuk gaat — en dat staat al
+//              in Herhaallocaties.
+//
+// Als je die twee op één hoop gooit krijg je een getal dat veel te hoog is en
+// dat bij navraag niet standhoudt. Vandaar dat hier alleen overlappende
+// perioden tellen.
+//
+// Binnen een dubbele melding is er nog een gradatie die uitmaakt:
+//   - zelfde asset      -> zo goed als zeker twee keer hetzelfde object
+//   - andere asset      -> twee aparte objecten op één adres (twee masten),
+//                          dus geen fout maar wel samen in te plannen
+const DUBBEL_MIN_OVERLAP_DAGEN = 0;
+
+function buildDubbeleMeldingen() {
+  const alle = buildOrderIndex().filter(r => r.telt);
+  const perAdres = new Map();
+  alle.forEach(r => {
+    const sleutel = adresSleutel(r);
+    if (!sleutel) return;
+    let g = perAdres.get(sleutel);
+    if (!g) {
+      g = { sleutel, city: r.city, street: r.street, postcode: r.postcode, gebiedscode: r.gebiedscode || '', orders: [] };
+      perAdres.set(sleutel, g);
+    }
+    g.orders.push(r);
+    if (!g.gebiedscode && r.gebiedscode) g.gebiedscode = r.gebiedscode;
+  });
+
+  const groepen = [];
+  perAdres.forEach(g => {
+    if (g.orders.length < 2) return;
+    const orders = g.orders.slice().sort((a, b) => a.eerst.localeCompare(b.eerst));
+
+    // Alle paren die elkaar in de tijd overlappen. Bewust paren en niet
+    // "de hele groep", want op een adres met drie storingen over twee jaar
+    // kunnen er twee overlappen en de derde los staan.
+    const paren = [];
+    for (let i = 0; i < orders.length; i++) {
+      for (let j = i + 1; j < orders.length; j++) {
+        const a = orders[i], b = orders[j];
+        if (a.eerst > b.laatst || b.eerst > a.laatst) continue;
+        const start = a.eerst > b.eerst ? a.eerst : b.eerst;
+        const eind = a.laatst < b.laatst ? a.laatst : b.laatst;
+        const dagen = Math.max(0, dagenTussen(start, eind));
+        if (dagen < DUBBEL_MIN_OVERLAP_DAGEN) continue;
+        paren.push({ a, b, van: start, tot: eind, dagen, zelfdeAsset: !!a.asset && a.asset === b.asset });
+      }
+    }
+    if (paren.length === 0) return;
+
+    // De betrokken orders: alleen die daadwerkelijk in een overlappend paar
+    // zitten, niet alles wat ooit op dit adres stond.
+    const betrokken = new Map();
+    paren.forEach(p => { betrokken.set(p.a.order, p.a); betrokken.set(p.b.order, p.b); });
+    const lijst = Array.from(betrokken.values()).sort((a, b) => a.eerst.localeCompare(b.eerst));
+    const zelfdeAsset = paren.some(p => p.zelfdeAsset);
+
+    groepen.push({
+      sleutel: g.sleutel,
+      city: g.city,
+      street: g.street,
+      postcode: g.postcode,
+      gebiedscode: g.gebiedscode || '—',
+      regio: regioGroupLabel(regioGroupOf({ gebiedscode: g.gebiedscode })),
+      orders: lijst,
+      aantal: lijst.length,
+      paren,
+      zelfdeAsset,
+      langsteOverlap: Math.max(...paren.map(p => p.dagen)),
+      eerste: lijst[0].eerst,
+      laatste: lijst.reduce((m, o) => (o.laatst > m ? o.laatst : m), lijst[0].laatst),
+      nogOpen: lijst.filter(o => o.open).length,
+    });
+  });
+
+  groepen.sort((a, b) => (b.zelfdeAsset ? 1 : 0) - (a.zelfdeAsset ? 1 : 0)
+    || b.aantal - a.aantal
+    || b.laatste.localeCompare(a.laatste));
+
+  const totaalGezien = alle.length;
+  const betrokkenOrders = groepen.reduce((n, g) => n + g.aantal, 0);
+  return {
+    gemeten: totaalGezien > 0,
+    groepen,
+    totaalGezien,
+    adressen: groepen.length,
+    betrokkenOrders,
+    zelfdeAssetGroepen: groepen.filter(g => g.zelfdeAsset).length,
+    aandeel: totaalGezien > 0 ? betrokkenOrders / totaalGezien : 0,
+    periodeVan: alle.length ? alle.reduce((m, o) => (o.eerst < m ? o.eerst : m), alle[0].eerst) : null,
+    periodeTot: alle.length ? alle.reduce((m, o) => (o.laatst > m ? o.laatst : m), alle[0].laatst) : null,
+  };
+}
+
+function renderDubbeleMeldingenCard() {
+  const el = document.getElementById('dubbel-body');
+  if (!el) return;
+  const o = buildDubbeleMeldingen();
+  const teller = document.getElementById('dubbel-count');
+  if (teller) teller.textContent = o.adressen ? String(o.adressen) : '';
+
+  if (!o.gemeten) {
+    el.innerHTML = '<p class="empty-note">Nog niets gemeten — plak eerst een lijst op Invoer.</p>';
+    return;
+  }
+  if (o.adressen === 0) {
+    el.innerHTML = `<p class="all-clear"><span class="all-clear-icon" aria-hidden="true">🎉</span>Geen enkel adres had in deze periode twee storingen tegelijk openstaan, over ${o.totaalGezien} storingen.</p>`;
+    return;
+  }
+
+  const pct = Math.round(o.aandeel * 1000) / 10;
+  const kop = `<p class="prognose-headline">Sinds ${esc(fmtDag(o.periodeVan, true))} ${o.adressen === 1 ? 'is er <strong>1 adres</strong>' : `zijn er <strong>${o.adressen} adressen</strong>`} geweest waar twee of meer storingen <strong>tegelijk</strong> openstonden. Daar ${o.betrokkenOrders === 1 ? 'hoorde 1 storing' : `hoorden ${o.betrokkenOrders} storingen`} bij: <strong>${pct}%</strong> van alle ${o.totaalGezien} storingen die we in die tijd hebben gezien.</p>`
+    + (o.zelfdeAssetGroepen > 0
+        ? `<p class="prognose-headline">Bij <strong class="prognose-bad">${o.zelfdeAssetGroepen}</strong> daarvan ging het om <strong>hetzelfde assetnummer</strong> — dan beschrijven de orders vrijwel zeker hetzelfde kapotte object en is er twee keer werk aangemaakt voor één probleem.</p>`
+        : `<p class="muted small">Nergens ging het om hetzelfde assetnummer: steeds verschillende objecten op één adres. Dat is geen dubbele melding, maar wel werk dat je in één rit kunt meenemen.</p>`);
+
+  const rijen = o.groepen.map(g => {
+    const orders = g.orders.map(x => `${orderLinkHtml(x.order)}${x.open ? ' <span class="badge">nog open</span>' : ''}`).join(' ');
+    return `<tr${g.zelfdeAsset ? ' class="row-alert"' : ''}>
+      <td>${esc(g.street)}${g.postcode ? `, ${esc(g.postcode)}` : ''}</td>
+      <td>${esc(g.city)}</td>
+      <td>${esc(g.regio)}</td>
+      <td>${g.zelfdeAsset ? '<strong class="prognose-bad">zelfde asset</strong>' : '<span class="muted">andere assets</span>'}</td>
+      <td class="num">${g.aantal}</td>
+      <td class="num">${g.langsteOverlap}</td>
+      <td>${esc(fmtDag(g.eerste, true))}</td>
+      <td>${orders}</td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = kop + `
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Adres</th><th>Plaats</th><th>Regio</th><th>Asset</th>
+          <th class="num">Orders</th><th class="num">Dagen samen open</th><th>Eerst gezien</th><th>Ordernummers</th>
+        </tr></thead>
+        <tbody>${rijen}</tbody>
+      </table>
+    </div>
+    <p class="muted small">"Dagen samen open" is de langste periode waarin twee van deze orders tegelijk openstonden. Klik een ordernummer voor de volledige tijdlijn. Adressen worden vergeleken zoals ze in de Instandhoudingsapp staan, inclusief huisnummer en postcode — staat hetzelfde adres twee keer verschillend geschreven, dan ziet deze lijst dat niet.</p>`;
+}
+
+// Een bericht dat zonder bewerken door kan naar de bouwers van de applicatie.
+// Geen namen, wel adressen: zonder adres kunnen zij een dubbele melding niet
+// terugvinden, en het gaat hier juist om die adressen.
+function buildDubbeleMeldingenText() {
+  const o = buildDubbeleMeldingen();
+  if (!o.gemeten || o.adressen === 0) {
+    return 'In de gemeten periode zijn er geen adressen gevonden waar twee storingen tegelijk openstonden.';
+  }
+  const pct = Math.round(o.aandeel * 1000) / 10;
+  const regels = [
+    `Dubbele meldingen op hetzelfde adres — periode ${fmtDag(o.periodeVan, true)} t/m ${fmtDag(o.periodeTot, true)}`,
+    '',
+    `${o.adressen} adressen hadden twee of meer storingen tegelijk openstaan.`,
+    `Daar hoorden ${o.betrokkenOrders} storingen bij, oftewel ${pct}% van alle ${o.totaalGezien} storingen in die periode.`,
+    `Bij ${o.zelfdeAssetGroepen} daarvan ging het om hetzelfde assetnummer; dan is vrijwel zeker twee keer werk aangemaakt voor hetzelfde object.`,
+    '',
+    'Per adres:',
+  ];
+  o.groepen.forEach(g => {
+    regels.push(`- ${g.street}${g.postcode ? ', ' + g.postcode : ''} ${g.city} (${g.regio})`
+      + ` — ${g.aantal} orders, ${g.zelfdeAsset ? 'ZELFDE asset' : 'verschillende assets'},`
+      + ` langst ${g.langsteOverlap} dagen tegelijk open`);
+    g.orders.forEach(x => {
+      regels.push(`    ${x.order} | ${x.type} | asset ${x.asset || '—'} | ${fmtDag(x.eerst, true)} t/m ${x.open ? 'nu nog open' : fmtDag(x.laatst, true)}`);
+    });
+  });
+  regels.push('', 'Alleen orders die elkaar in de tijd overlappen tellen mee; twee storingen ná elkaar op hetzelfde adres zijn geen dubbele melding maar een herhaling.');
+  return regels.join('\n');
+}
+
 function buildRecidivePerPlaats() {
   const alle = buildOrderIndex();
   const totaalPerPlaats = {};
@@ -6168,6 +6353,7 @@ function renderRecidiveCard() {
 function renderHistorie() {
   renderDoorlooptijdCard();
   renderHistorieSearch();
+  renderDubbeleMeldingenCard();
   renderRecidiveCard();
 }
 
@@ -7394,6 +7580,18 @@ function wireEvents() {
     try {
       // Precies wat er nu op het scherm staat, inclusief het actieve filter.
       await navigator.clipboard.writeText(document.getElementById('werklijst-body').dataset.copyText || '');
+      btn.textContent = '✅ Gekopieerd!';
+    } catch (e) {
+      btn.textContent = '⚠️ Kopiëren mislukt';
+    }
+    setTimeout(() => { btn.textContent = origineel; }, 2000);
+  });
+
+  document.getElementById('copy-dubbel-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('copy-dubbel-btn');
+    const origineel = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(buildDubbeleMeldingenText());
       btn.textContent = '✅ Gekopieerd!';
     } catch (e) {
       btn.textContent = '⚠️ Kopiëren mislukt';
