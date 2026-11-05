@@ -4797,6 +4797,149 @@ function bindWerklijst(container) {
   });
 }
 
+/* ---------- Hoe loopt het proces werkelijk? ---------- */
+
+// De boxplot laat zien hoe lang elke stap duurt, maar niet of storingen die
+// stappen wel netjes op volgorde doorlopen. Dat verschil doet ertoe: een
+// storing die van Planning terug naar In onderzoek gaat, is werk dat opnieuw
+// gedaan wordt — en dat zie je in geen enkele duurmeting terug, want elke stap
+// op zich kan prima binnen de norm blijven.
+//
+// Deze meting leest het echte verloop uit de momentopnamen: welke overgangen
+// komen voor, hoe vaak, en welke gaan tegen de procesvolgorde in. Daarmee is
+// ook meteen te zien hoe de stappen in de Instandhoudingsapp werkelijk lopen,
+// zonder dat iemand dat hoeft uit te leggen.
+//
+// Een overgang is een TERUGSTAP als de nieuwe status eerder in
+// OV_STATUS_ORDER staat dan de oude. Een stap die er eentje overslaat
+// (Nieuw -> In voorbereiding) is geen terugstap maar wel het vermelden waard:
+// dat zegt iets over hoe het proces in de praktijk wordt gebruikt.
+//
+// Let op bij het lezen: een meetgat kan een heen-en-weer verbergen. Gaat een
+// storing tijdens je vakantie van In onderzoek naar Planning en weer terug,
+// dan zie je niets. Het getal hieronder is dus een ONDERGRENS.
+function buildStatusOvergangen() {
+  const snaps = chronoSnapshots();
+  const leeg = { gemeten: false, overgangen: [], terugTotaal: 0, ordersMetTerug: 0, ordersMetStatus: 0 };
+  if (snaps.length < 2) return leeg;
+  const visibleOf = (list) => filterByActive(typeFiltered(list));
+  const positie = (st) => OV_STATUS_ORDER.indexOf(st);
+
+  const vorige = {};            // order -> laatst geziene status
+  const paren = new Map();      // "van|||naar" -> { van, naar, aantal, orders:Set }
+  const terugPerOrder = {};     // order -> aantal terugstappen
+  const gezien = new Set();
+
+  snaps.forEach(sn => {
+    visibleOf(sn.storingen).forEach(s => {
+      if (!s.ovStatus || positie(s.ovStatus) < 0) return;
+      gezien.add(s.order);
+      const was = vorige[s.order];
+      vorige[s.order] = s.ovStatus;
+      if (!was || was === s.ovStatus) return;
+      const sleutel = `${was}|||${s.ovStatus}`;
+      let p = paren.get(sleutel);
+      if (!p) {
+        p = { van: was, naar: s.ovStatus, aantal: 0, orders: new Set() };
+        paren.set(sleutel, p);
+      }
+      p.aantal++;
+      p.orders.add(s.order);
+      if (positie(s.ovStatus) < positie(was)) {
+        terugPerOrder[s.order] = (terugPerOrder[s.order] || 0) + 1;
+      }
+    });
+  });
+
+  const overgangen = Array.from(paren.values()).map(p => {
+    const vanPos = positie(p.van), naarPos = positie(p.naar);
+    return {
+      van: p.van,
+      naar: p.naar,
+      aantal: p.aantal,
+      orders: p.orders.size,
+      terug: naarPos < vanPos,
+      stappen: naarPos - vanPos,
+      overgeslagen: naarPos - vanPos > 1,
+    };
+  }).sort((a, b) => (b.terug ? 1 : 0) - (a.terug ? 1 : 0) || b.aantal - a.aantal);
+
+  // Wat kost terugloop? De looptijd van storingen mét een terugstap naast die
+  // van de rest. Dat maakt van "het komt voor" een getal om op te sturen.
+  const index = buildOrderIndex().filter(r => r.telt);
+  const looptijdMet = [], looptijdZonder = [];
+  index.forEach(r => {
+    if (!gezien.has(r.order)) return;
+    (terugPerOrder[r.order] ? looptijdMet : looptijdZonder).push(r.looptijd);
+  });
+  const p50 = (a) => (a.length ? percentiel(a.slice().sort((x, y) => x - y), 0.5) : null);
+
+  const ordersMetTerug = Object.keys(terugPerOrder).length;
+  return {
+    gemeten: true,
+    overgangen,
+    terugTotaal: overgangen.filter(o => o.terug).reduce((n, o) => n + o.aantal, 0),
+    vooruitTotaal: overgangen.filter(o => !o.terug).reduce((n, o) => n + o.aantal, 0),
+    ordersMetTerug,
+    ordersMetStatus: gezien.size,
+    aandeel: gezien.size > 0 ? ordersMetTerug / gezien.size : 0,
+    p50Met: p50(looptijdMet),
+    p50Zonder: p50(looptijdZonder),
+    nMet: looptijdMet.length,
+    nZonder: looptijdZonder.length,
+  };
+}
+
+function renderOvergangenCard() {
+  const el = document.getElementById('overgangen-body');
+  if (!el) return;
+  const o = buildStatusOvergangen();
+  if (!o.gemeten) {
+    el.innerHTML = '<p class="empty-note">Er zijn minstens twee meetdagen nodig om overgangen te kunnen zien. Plak de lijst een tweede dag; daarna vult dit zich vanzelf.</p>';
+    return;
+  }
+  if (o.overgangen.length === 0) {
+    el.innerHTML = '<p class="empty-note">Nog geen enkele statuswissel gezien.</p>';
+    return;
+  }
+
+  const pct = Math.round(o.aandeel * 100);
+  let kop;
+  if (o.terugTotaal === 0) {
+    kop = `<p class="prognose-headline">Geen enkele storing is teruggegaan naar een eerdere status. Alle ${o.vooruitTotaal} overgangen gingen vooruit in het proces.</p>`;
+  } else {
+    kop = `<p class="prognose-headline"><strong>${o.ordersMetTerug}</strong> van de ${o.ordersMetStatus} storingen (<strong>${pct}%</strong>) ${o.ordersMetTerug === 1 ? 'is' : 'zijn'} minstens één keer teruggegaan naar een eerdere status. Samen <strong>${o.terugTotaal}</strong> terugstappen, tegen ${o.vooruitTotaal} stappen vooruit.</p>`;
+    // De prijs van terugloop. Pas melden als beide kanten genoeg metingen
+    // hebben, anders vergelijk je een handvol gevallen met de rest.
+    if (o.p50Met != null && o.p50Zonder != null && o.nMet >= 5 && o.nZonder >= 5) {
+      const verschil = o.p50Met - o.p50Zonder;
+      kop += `<p class="prognose-headline">Een storing die terugging staat mediaan <strong>${dagenAfgerond(o.p50Met)}</strong> open, tegen ${dagenAfgerond(o.p50Zonder)} voor een storing die in één keer doorloopt`
+        + (verschil > 0 ? `: <strong class="prognose-bad">${dagenAfgerond(verschil)}</strong> langer.` : '.')
+        + ` (kalenderdagen, van eerst gezien tot afgesloten)</p>`;
+    }
+  }
+
+  const rijen = o.overgangen.map(t => `<tr${t.terug ? ' class="row-alert"' : ''}>
+      <td>${esc(t.van)} <span class="muted">→</span> ${esc(t.naar)}</td>
+      <td>${t.terug
+            ? `<strong class="prognose-bad">terug (${Math.abs(t.stappen)} ${Math.abs(t.stappen) === 1 ? 'stap' : 'stappen'})</strong>`
+            : t.overgeslagen
+              ? `<span class="muted">vooruit, ${t.stappen - 1} overgeslagen</span>`
+              : '<span class="muted">vooruit</span>'}</td>
+      <td class="num">${t.aantal}</td>
+      <td class="num">${t.orders}</td>
+    </tr>`).join('');
+
+  el.innerHTML = kop + `
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Overgang</th><th>Richting</th><th class="num">Keer gezien</th><th class="num">Storingen</th></tr></thead>
+        <tbody>${rijen}</tbody>
+      </table>
+    </div>
+    <p class="muted small">Terugstappen eerst, daarna de rest op hoe vaak ze voorkomen. "Keer gezien" telt elke overgang; "storingen" telt hoeveel verschillende storingen die overgang maakten — staan die ver uit elkaar, dan gaat dezelfde storing meerdere keren heen en weer. Een overgang die een stap overslaat is geen fout, maar zegt wel iets over hoe het proces in de praktijk gebruikt wordt. Let op: een meetgat kan een heen-en-weer verbergen, dus dit is een ondergrens.</p>`;
+}
+
 /* ---------- Prognose: blijft liggen (wachtrij-discipline) ---------- */
 
 // Het dashboard meet tempo (hoeveel erbij, hoeveel eraf) en normen (wat gaat
@@ -5760,6 +5903,7 @@ function renderPrognose(current) {
   renderMaandTempoCard();
   renderDoorstroomCard();
   renderBoxplotCard();
+  renderOvergangenCard();
   renderStagnatieCard();
   renderLiggenblijversCard();
 }

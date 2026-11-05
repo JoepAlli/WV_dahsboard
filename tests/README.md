@@ -28,3 +28,4 @@ IndexedDB en sluit af met `ALLES GOED` of het aantal mislukte controles.
 | `datamap.js` | Dat bij het koppelen van een datamap altijd de nieuwste kant wint, dat een opvolger met een lege browser alles uit de map overneemt, en dat zonder toestemming niets kapotgaat |
 | `dubbele_meldingen.js` | Dat alleen storingen die tegelijk openstonden als dubbele melding tellen, en herhaling op dezelfde plek juist niet |
 | `meetgaten.js` | Dat de duur per processtap in werkdagen wordt gerekend (het weekend telt niet mee) en dat metingen over een meetgat worden weggelaten in plaats van als stagnatie te verschijnen |
+| `overgangen.js` | Dat terugstappen in het proces als zodanig worden herkend, inclusief overgangen die stappen overslaan, en dat de richting per overgang klopt |
