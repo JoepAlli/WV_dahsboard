@@ -476,6 +476,14 @@ function blokkadeOvergeslagenHtml(aantal) {
   if (!aantal) return '';
   return `<p class="muted small">${aantal === 1 ? '1 storing staat' : `${aantal} storingen staan`} geblokkeerd en ${aantal === 1 ? 'is' : 'zijn'} hier weggelaten — daar kan hier niemand iets aan doen, dus ${aantal === 1 ? 'die telt' : 'die tellen'} hier niet mee. ${blokkadeUitlegLink()}</p>`;
 }
+// Verwijzing naar de plek waar je de meetgaten kunt zien en de instelling
+// kunt omzetten. Een melding dat er metingen ontbreken zonder weg erheen is
+// een mededeling waar je niets mee kunt.
+function meetGatLink() {
+  if (isStaticExport) return 'Welke metingen meetellen is een instelling bij degene die dit gedeeld heeft.';
+  return `<button type="button" class="btn-link" data-goto-instelling="meetgaten-card">Bekijk de meetgaten</button>`;
+}
+
 // De redenen die nu uitgesloten zijn, als leesbare opsomming.
 function blokkadeUitgeslotenTekst() {
   const namen = (state.blokkadeUitsluiten || []).map(r => OV_BLOCK_REASON_LABELS[r]).filter(Boolean);
@@ -488,6 +496,48 @@ function blokkadeUitgeslotenTekst() {
 function meetBlokkadeUit(s, inMomentopname) {
   if (inMomentopname) return blokkadeSluitUit(s.blokkadeReden);
   return blokkadeSluitUit((ovBlockStatusOf(s.order) || {}).reason);
+}
+
+// Metingen die over een meetgat lopen standaard weglaten. Dat is de eerlijke
+// keuze: je wéét niet hoe lang die stap duurde, je weet alleen dat het hooguit
+// zoveel was. Zo'n bovengrens in een boxplot zetten maakt van een vakantie een
+// uitschieter die op stagnatie lijkt.
+//
+// Toch instelbaar, want bij weinig data kan het schelen of je er tien
+// metingen bij hebt of niet — als je maar weet wat je dan bekijkt.
+const GATEN_UITSLUITEN_KEY = 'nusdash_gaten_uitsluiten_v1';
+async function loadGatenUitsluiten() {
+  try {
+    const v = await idbGet(GATEN_UITSLUITEN_KEY);
+    return v === undefined || v === null ? true : !!v;
+  } catch (e) { console.error(e); return true; }
+}
+async function saveGatenUitsluiten(aan) {
+  try { await idbSet(GATEN_UITSLUITEN_KEY, !!aan); }
+  catch (e) { showErrorToast('Opslaan van de meetgat-instelling is mislukt: ' + e.message); }
+}
+
+// Alle meetgaten in de hele periode, zodat je ziet wanneer er niet gemeten is
+// en hoeveel dat er samen zijn. Zonder dit overzicht is "er zijn metingen
+// weggelaten" een mededeling waar je niets mee kunt.
+function buildMeetGaten() {
+  const snaps = chronoSnapshots();
+  if (snaps.length < 2) return { gemeten: false, gaten: [], meetdagen: snaps.length, werkdagenGemist: 0 };
+  const gaten = [];
+  for (let i = 1; i < snaps.length; i++) {
+    const van = snaps[i - 1].week, tot = snaps[i].week;
+    if (!isMeetGat(van, tot)) continue;
+    gaten.push({ van, tot, gemist: werkdagenTussen(van, tot) - 1, kalenderdagen: dagenTussen(van, tot) });
+  }
+  return {
+    gemeten: true,
+    gaten,
+    meetdagen: snaps.length,
+    van: snaps[0].week,
+    tot: snaps[snaps.length - 1].week,
+    werkdagenGemist: gaten.reduce((n, g) => n + g.gemist, 0),
+    werkdagenTotaal: werkdagenTussen(snaps[0].week, snaps[snaps.length - 1].week),
+  };
 }
 
 const STATUS_STREEF_KEY = 'nusdash_status_streef_v1';
@@ -641,6 +691,7 @@ function mapInstellingenPayload() {
     statusStreef: state.statusStreef,
     doorlooptijdNorm: state.doorlooptijdNorm,
     blokkadeUitsluiten: state.blokkadeUitsluiten,
+    gatenUitsluiten: state.gatenUitsluiten,
     opvolging: state.opvolging,
   };
 }
@@ -997,6 +1048,7 @@ async function exportBackup() {
     statusStreef: await loadStatusStreef(),
     doorlooptijdNorm: await loadDoorlooptijdNorm(),
     blokkadeUitsluiten: await loadBlokkadeUitsluiten(),
+    gatenUitsluiten: await loadGatenUitsluiten(),
     opvolging: await loadOpvolging(),
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
@@ -1038,6 +1090,7 @@ function buildStandaloneExport() {
     statusStreef: state.statusStreef,
     doorlooptijdNorm: state.doorlooptijdNorm,
     blokkadeUitsluiten: state.blokkadeUitsluiten,
+    gatenUitsluiten: state.gatenUitsluiten,
     opvolging: state.opvolging,
     exportedAt: new Date().toISOString(),
   };
@@ -1109,6 +1162,7 @@ async function pasBackupToe(backup) {
   if (backup.statusStreef && typeof backup.statusStreef === 'object') await saveStatusStreef(schoonStatusStreef(backup.statusStreef));
   if (Number.isFinite(backup.doorlooptijdNorm) && backup.doorlooptijdNorm > 0) await saveDoorlooptijdNorm(backup.doorlooptijdNorm);
   if (Array.isArray(backup.blokkadeUitsluiten)) await saveBlokkadeUitsluiten(backup.blokkadeUitsluiten.filter(r => r in OV_BLOCK_REASON_LABELS));
+  if (typeof backup.gatenUitsluiten === 'boolean') await saveGatenUitsluiten(backup.gatenUitsluiten);
   if (backup.opvolging && typeof backup.opvolging === 'object') await saveOpvolging(backup.opvolging);
 }
 
@@ -1319,6 +1373,7 @@ const state = {
   statusStreef: {},
   doorlooptijdNorm: DEFAULT_DOORLOOPTIJD_NORM,
   blokkadeUitsluiten: DEFAULT_BLOKKADE_UITSLUITEN.slice(),
+  gatenUitsluiten: true,
   opvolging: {},
   // handle: de gekoppelde map; de rest is zichtbare stand voor de kaart.
   dataMap: { handle: null, naam: '', fout: null, laatstGeschreven: null, bronBijStart: null, bezig: false },
@@ -4025,6 +4080,38 @@ const DAG_MS = 86400000;
 function dagenTussen(vanIso, totIso) {
   return Math.round((new Date(totIso) - new Date(vanIso)) / DAG_MS);
 }
+// Werkdagen tussen twee data: maandag t/m vrijdag die ná `van` liggen en
+// uiterlijk op `tot`. Vrijdag -> maandag is dus 1, niet 3.
+//
+// Waarom dit nodig is: de duur per processtap meet hoe snel dit team werkt, en
+// in het weekend werkt er niemand. Met kalenderdagen meet een stap die één
+// werkdag duurt als 3 zodra 'ie toevallig in het weekend valt — en juist de
+// korte stappen ("Nieuw", "Onderzoek controleren", norm 1 dag) worden daar het
+// hardst door geraakt. Ongeveer een vijfde van alle overgangen valt in een
+// weekend, dus dat is geen ruis maar een structurele vertekening.
+//
+// De duur van het héle traject blijft wél in kalenderdagen: daar gaat het om
+// hoe lang een klant in het donker staat, en die merkt het weekend gewoon.
+function werkdagenTussen(vanIso, totIso) {
+  const van = new Date(vanIso).getTime();
+  const tot = new Date(totIso).getTime();
+  if (!(tot > van)) return 0;
+  let n = 0;
+  for (let t = van + DAG_MS; t <= tot; t += DAG_MS) {
+    const dag = new Date(t).getUTCDay();
+    if (dag !== 0 && dag !== 6) n++;
+  }
+  return n;
+}
+
+// Een meetgat: tussen twee opeenvolgende meetdagen is meer dan één werkdag
+// verstreken, dus er is minstens één werkdag niet geplakt. Een weekend is
+// hierdoor vanzelf géén gat — precies goed, want daar is ook niets gebeurd.
+const MEETGAT_WERKDAGEN = 1;
+function isMeetGat(vanIso, totIso) {
+  return werkdagenTussen(vanIso, totIso) > MEETGAT_WERKDAGEN;
+}
+
 // Een kalenderdag opschuiven, terug als YYYY-MM-DD. Via UTC-millisecondes en
 // niet via setDate, zodat een zomertijdovergang er geen dag naast gaat zitten.
 function dagPlus(iso, dagen) {
@@ -5005,21 +5092,31 @@ function buildStatusDuurStats() {
   // Per status: alle afgeronde "hoe lang stond het hierop"-metingen, in weken.
   const afgerond = {};
 
-  // Hoeveel metingen per status zijn weggelaten omdat de storing in die
-  // periode geblokkeerd stond. Gaat mee naar buiten: een verdeling die stiller
-  // wordt zonder te zeggen hoeveel er is weggelaten, is niet te vertrouwen.
-  const overgeslagen = {};
-  // Een meting sluit af. Stond de storing ergens in die periode geblokkeerd om
-  // een reden die niet meetelt, dan is dit geen meting van ons tempo.
+  // Hoeveel metingen per status zijn weggelaten, en waarom. Een verdeling die
+  // stiller wordt zonder te zeggen hoeveel er is weggelaten, is niet te
+  // vertrouwen.
+  const overgeslagen = {};   // geblokkeerd
+  const gatOvergeslagen = {}; // liep over een meetgat
+  // Een meting sluit af. Twee redenen om 'm niet mee te tellen:
+  //  - de storing stond geblokkeerd: dan meet je de wachttijd van een ander;
+  //  - de periode liep over een meetgat: dan is de gemeten duur geen feit maar
+  //    een bovengrens. Stond er op 1 oktober "In onderzoek" en op 20 oktober
+  //    "Planning", dan weet je niet of die wissel op de 2e of de 19e gebeurde,
+  //    en 19 dagen in de verdeling zetten suggereert stilstand die er misschien
+  //    nooit was.
   const sluitAf = (cur, totDag) => {
-    const dagen = dagenTussen(cur.sinds, totDag);
+    const dagen = werkdagenTussen(cur.sinds, totDag);
     if (dagen < 0) return;
     if (cur.geblokkeerd) overgeslagen[cur.status] = (overgeslagen[cur.status] || 0) + 1;
+    else if (cur.overGat && state.gatenUitsluiten) gatOvergeslagen[cur.status] = (gatOvergeslagen[cur.status] || 0) + 1;
     else (afgerond[cur.status] = afgerond[cur.status] || []).push(dagen);
   };
 
   snaps.forEach((sn, idx) => {
     const seen = new Set();
+    // Is er sinds de vorige meetdag een werkdag overgeslagen? Dan is alles wat
+    // over deze overgang heen loopt onzeker.
+    const naGat = idx > 0 && isMeetGat(snaps[idx - 1].week, sn.week);
     visibleOf(sn.storingen).forEach(s => {
       if (!s.ovStatus) return;
       seen.add(s.order);
@@ -5029,20 +5126,25 @@ function buildStatusDuurStats() {
       const geblokkeerd = meetBlokkadeUit(s, true) || (idx === snaps.length - 1 && meetBlokkadeUit(s, false));
       const cur = lopend[s.order];
       if (!cur) {
-        lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx, geblokkeerd };
+        lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx, geblokkeerd, overGat: false };
       } else if (cur.status !== s.ovStatus) {
+        // Het gat van deze overgang telt mee: de wissel kan er middenin
+        // hebben plaatsgevonden.
+        if (naGat) cur.overGat = true;
         sluitAf(cur, sn.week);
-        lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx, geblokkeerd };
-      } else if (geblokkeerd) {
-        // Zelfde status, maar inmiddels geblokkeerd: de hele lopende periode
-        // is daarmee besmet.
-        cur.geblokkeerd = true;
+        lopend[s.order] = { status: s.ovStatus, sinds: sn.week, index: idx, geblokkeerd, overGat: false };
+      } else {
+        // Zelfde status. Een blokkade of een meetgat onderweg maakt de hele
+        // lopende periode onbetrouwbaar, ook als 'ie pas later afsluit.
+        if (geblokkeerd) cur.geblokkeerd = true;
+        if (naGat) cur.overGat = true;
       }
     });
     // Verdwenen storingen sluiten hun lopende status-periode af: ook dát is
     // een meting van hoe lang die status normaal duurt.
     Object.keys(lopend).forEach(order => {
       if (seen.has(order) || lopend[order].index >= idx) return;
+      if (naGat) lopend[order].overGat = true;
       sluitAf(lopend[order], sn.week);
       delete lopend[order];
     });
@@ -5063,7 +5165,7 @@ function buildStatusDuurStats() {
   });
   // De losse metingen gaan mee naar buiten: een boxplot heeft de punten zelf
   // nodig, niet alleen de samenvatting ervan.
-  return { lopend, medianen, metingen, verdelingen, metingenPerStatus: afgerond, overgeslagen };
+  return { lopend, medianen, metingen, verdelingen, metingenPerStatus: afgerond, overgeslagen, gatOvergeslagen };
 }
 
 // De norm per status: waartegen wordt "te lang" afgemeten?
@@ -5205,7 +5307,7 @@ const STAGNATIE_COLUMNS = [
   { key: 'plaats', label: 'Plaats', cell: r => `<td>${esc(r.plaats)}</td>` },
   { key: 'gebiedscode', label: 'Gebied', cell: r => `<td>${esc(r.gebiedscode)}</td>` },
   { key: 'ovStatus', label: 'Status', cell: r => `<td>${esc(r.ovStatus)}</td>` },
-  { key: 'dagen', label: 'Dagen in status', num: true, cell: r => `<td class="num${r.teLangStatus ? ' prognose-bad' : ''}"><strong>${r.dagen}</strong></td>` },
+  { key: 'dagen', label: 'Werkdagen in status', num: true, cell: r => `<td class="num${r.teLangStatus ? ' prognose-bad' : ''}"><strong>${r.dagen}</strong></td>` },
   { key: 'norm', label: 'Norm status', num: true, cell: normCelHtml },
   { key: 'over', label: 'Te lang in status', num: true, cell: r => `<td class="num">${r.teLangStatus ? `<span class="prognose-bad">+${Math.round(r.over)}</span>` : '<span class="muted">binnen norm</span>'}</td>` },
   // Het traject is de norm die er echt toe doet; die staat daarom naast de
@@ -5430,7 +5532,7 @@ function boxplotVan(waarden) {
 }
 
 function buildBoxplotRijen() {
-  const { metingenPerStatus, overgeslagen } = buildStatusDuurStats();
+  const { metingenPerStatus, overgeslagen, gatOvergeslagen } = buildStatusDuurStats();
   return OV_STATUS_ORDER.map(status => {
     const waarden = (metingenPerStatus && metingenPerStatus[status]) || [];
     return {
@@ -5439,6 +5541,7 @@ function buildBoxplotRijen() {
       waarden,
       box: boxplotVan(waarden),
       overgeslagen: (overgeslagen && overgeslagen[status]) || 0,
+      gatOvergeslagen: (gatOvergeslagen && gatOvergeslagen[status]) || 0,
     };
   });
 }
@@ -5481,7 +5584,8 @@ function renderBoxplotCard() {
   const rijen = buildBoxplotRijen();
   if (rijen.every(r => !r.box)) {
     const meeste = Math.max(0, ...rijen.map(r => r.waarden.length));
-    container.innerHTML = `<p class="empty-note">Nog te weinig afgeronde metingen voor een verdeling: er zijn er ${MIN_METINGEN_BOX} per stap nodig en de verste staat nu op ${meeste}. Elke keer dat een storing doorstroomt komt er een meting bij; deze plot vult zich vanzelf.</p>`;
+    container.innerHTML = `<p class="empty-note">Nog te weinig afgeronde metingen voor een verdeling: er zijn er ${MIN_METINGEN_BOX} per stap nodig en de verste staat nu op ${meeste}. Elke keer dat een storing doorstroomt komt er een meting bij; deze plot vult zich vanzelf.</p>`
+      + boxplotNoteHtml(rijen);
     return;
   }
   const kop = boxplotStaartKop(rijen);
@@ -5513,6 +5617,10 @@ function boxplotNoteHtml(rijen) {
   if (zonder.length) delen.push(`${zonder.map(r => esc(r.label)).join(', ')} ${zonder.length === 1 ? 'heeft' : 'hebben'} nog minder dan ${MIN_METINGEN_BOX} afgeronde metingen — daar staan de losse punten getekend zonder box.`);
   if (leeg.length) delen.push(`${leeg.map(r => esc(r.label)).join(', ')} ${leeg.length === 1 ? 'heeft' : 'hebben'} nog geen enkele afgeronde meting.`);
   delen.push('Een meting ontstaat zodra een storing van status wisselt, dus de plot wordt vanzelf scherper naarmate je langer meet.');
+  const gatWeg = rijen.reduce((sum, r) => sum + (r.gatOvergeslagen || 0), 0);
+  if (gatWeg > 0) {
+    delen.push(`${gatWeg === 1 ? 'Eén meting is' : `${gatWeg} metingen zijn`} weggelaten omdat de periode over een meetgat liep — dan is de duur geen feit maar een bovengrens. ${meetGatLink()}`);
+  }
   const weg = rijen.reduce((sum, r) => sum + (r.overgeslagen || 0), 0);
   if (weg > 0) {
     delen.push(`${weg === 1 ? 'Eén meting is' : `${weg} metingen zijn`} weggelaten omdat de storing in die periode geblokkeerd stond (${esc(blokkadeUitgeslotenTekst())}) — dan meet je de wachttijd van iemand anders, niet die van dit team. ${blokkadeUitlegLink()}`);
@@ -6851,6 +6959,39 @@ function renderTypeWhitelist() {
 // Per blokkade-reden een vinkje, met het huidige aantal erachter. Dat aantal
 // hoort erbij: of je "Onderzoek loopt" wilt uitsluiten hangt er maar van af
 // hoeveel storingen het raakt.
+function renderMeetGatenCard() {
+  const el = document.getElementById('meetgaten-body');
+  const vink = document.getElementById('gaten-uitsluiten');
+  if (!el) return;
+  if (vink) vink.checked = !!state.gatenUitsluiten;
+
+  const o = state.snapshots.length > 0 ? buildMeetGaten() : { gemeten: false, gaten: [] };
+  if (!o.gemeten) { el.innerHTML = '<p class="muted small">Nog te weinig meetdagen om gaten te kunnen zien.</p>'; return; }
+
+  if (o.gaten.length === 0) {
+    el.innerHTML = `<p class="muted small">Geen gaten: op alle ${o.werkdagenTotaal} werkdagen sinds ${esc(fmtDag(o.van, true))} is er geplakt. Weekenden tellen niet als gat.</p>`;
+    return;
+  }
+
+  const dekking = o.werkdagenTotaal > 0
+    ? Math.round(((o.werkdagenTotaal - o.werkdagenGemist) / o.werkdagenTotaal) * 100)
+    : 100;
+  const rijen = o.gaten.slice().sort((a, b) => b.gemist - a.gemist).map(g => `<tr>
+      <td>${esc(fmtDag(g.van, true))} → ${esc(fmtDag(g.tot, true))}</td>
+      <td class="num${g.gemist >= 3 ? ' geblokkeerd-cel' : ''}">${g.gemist}</td>
+      <td class="num">${g.kalenderdagen}</td>
+    </tr>`).join('');
+
+  el.innerHTML = `<p class="prognose-headline">Sinds ${esc(fmtDag(o.van, true))} ${o.gaten.length === 1 ? 'is er <strong>1 gat</strong>' : `zijn er <strong>${o.gaten.length} gaten</strong>`} in de metingen: samen <strong>${o.werkdagenGemist}</strong> werkdag${o.werkdagenGemist === 1 ? '' : 'en'} niet geplakt, van de ${o.werkdagenTotaal}. Dekking: <strong>${dekking}%</strong>.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Tussen deze meetdagen</th><th class="num">Werkdagen gemist</th><th class="num">Kalenderdagen</th></tr></thead>
+        <tbody>${rijen}</tbody>
+      </table>
+    </div>
+    <p class="muted small">Grootste gaten eerst. Elk gat maakt de metingen onbetrouwbaar van storingen die er op dat moment doorheen liepen — hoeveel dat er zijn staat onder de boxplot op Prognose.</p>`;
+}
+
 function renderBlokkadeUitsluitenCard() {
   const el = document.getElementById('blokkade-uitsluiten-body');
   if (!el) return;
@@ -6895,7 +7036,7 @@ function renderStatusStreefCard() {
       <label for="streef-${i}">${esc(status)}</label>
       <input type="number" id="streef-${i}" data-streef-status="${esc(status)}" min="0" max="365" step="1"
              inputmode="numeric" placeholder="—" value="${Number.isFinite(waarde) ? waarde : ''}" style="width:80px;">
-      <span class="muted small">dagen · ${esc(hint)}</span>
+      <span class="muted small">werkdagen · ${esc(hint)}</span>
     </div>`;
   }).join('');
 
@@ -6989,6 +7130,7 @@ function renderDashboardFromState() {
   renderTypeWhitelist();
   renderStatusStreefCard();
   renderBlokkadeUitsluitenCard();
+  renderMeetGatenCard();
   renderDataMapCard();
   renderFilterTabs(latestVisible);
 
@@ -7098,6 +7240,7 @@ async function laadInstellingenInState() {
   state.statusStreef = await loadStatusStreef();
   state.doorlooptijdNorm = await loadDoorlooptijdNorm();
   state.blokkadeUitsluiten = await loadBlokkadeUitsluiten();
+  state.gatenUitsluiten = await loadGatenUitsluiten();
   state.opvolging = await loadOpvolging();
 }
 
@@ -7121,7 +7264,7 @@ async function reloadAllStateAndRender() {
   renderDataMapCard();
 
   if (state.snapshots.length > 0) renderDashboardFromState();
-  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderStatusStreefCard(); renderBlokkadeUitsluitenCard(); renderDataMapCard(); renderBackupReminder(); renderBackupStatus(); }
+  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderStatusStreefCard(); renderBlokkadeUitsluitenCard(); renderMeetGatenCard(); renderDataMapCard(); renderBackupReminder(); renderBackupStatus(); }
 }
 
 function wireEvents() {
@@ -7561,6 +7704,13 @@ function wireEvents() {
     else renderStatusStreefCard();
   });
 
+  document.getElementById('gaten-uitsluiten').addEventListener('change', async (e) => {
+    state.gatenUitsluiten = e.target.checked;
+    await saveGatenUitsluiten(state.gatenUitsluiten);
+    if (state.snapshots.length > 0) renderDashboardFromState();
+    else renderMeetGatenCard();
+  });
+
   document.getElementById('blokkade-save-btn').addEventListener('click', async () => {
     const aangevinkt = Array.from(document.querySelectorAll('#blokkade-uitsluiten-body input[data-blokkade-reden]'))
       .filter(i => i.checked)
@@ -7777,6 +7927,7 @@ function applyStaticExportData() {
     ? STATIC_DATA.blokkadeUitsluiten.filter(r => r in OV_BLOCK_REASON_LABELS)
     : DEFAULT_BLOKKADE_UITSLUITEN.slice();
   state.opvolging = STATIC_DATA.opvolging || {};
+  state.gatenUitsluiten = STATIC_DATA.gatenUitsluiten !== false;
 
   if (state.snapshots.length > 0) renderDashboardFromState();
   else setDashboardEmpty('dashboard', 'dashboard-empty', true);

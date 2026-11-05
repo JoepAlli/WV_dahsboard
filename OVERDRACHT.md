@@ -191,6 +191,21 @@ Instellingen → *Blokkades en meten*.
 uitsluiten poetst echte stilstand in het onderzoek weg. Kijk of de instelling
 nog past bij hoe jij wilt sturen.
 
+**De duur per processtap wordt in werkdagen gerekend, het hele traject in
+kalenderdagen.** Dat is geen slordigheid maar een keuze. Een processtap meet
+hoe snel dit team werkt, en in het weekend werkt er niemand: met kalenderdagen
+zou een stap die één werkdag duurt als drie meten zodra 'ie toevallig op
+vrijdag valt, en dat raakt juist de stappen met een norm van één dag. Het hele
+traject meet hoe lang een klant in het donker staat, en die merkt het weekend
+wel degelijk.
+
+**Metingen die over een meetgat lopen tellen standaard niet mee.** Sla je een
+werkdag over, dan ziet het dashboard de statuswissels van die dag pas later en
+krijgt de vorige status er al die tijd bij. Een week vakantie levert zo
+metingen van negen dagen op die niets met stagnatie te maken hebben maar wel
+bovenaan in de boxplot komen. Bij Instellingen → *Meetgaten en werkdagen* zie
+je je eigen gaten en de dekking, en kun je de uitsluiting uitzetten.
+
 **De norm is 12 dagen voor het hele traject** (10 werkdagen), verdeeld over de
 zes statussen. Die verdeling telt op tot 12: blijft elke stap binnen zijn deel,
 dan haalt het traject het vanzelf. Aan te passen bij

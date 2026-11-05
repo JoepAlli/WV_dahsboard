@@ -1342,6 +1342,16 @@ tr.detail-row > td {
   opacity: 1;
 }
 .kaart-uitleg { margin-bottom: 0.6rem; }
+/* De eenheid naast een kaarttitel. De duur per processtap is in werkdagen en
+   het traject in kalenderdagen; zonder dat erbij te zetten vergelijkt iemand
+   vroeg of laat appels met peren. */
+.eenheid-merk {
+  margin-left: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.01em;
+}
 
 .werklijst-chips { margin-bottom: 0.75rem; }
 /* De redenkolom mag breed zijn maar niet onbeperkt: labels horen te stapelen

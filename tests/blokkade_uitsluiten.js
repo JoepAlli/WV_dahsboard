@@ -9,8 +9,12 @@
 //             15 juli naar "In voorbereiding"  = 44 dagen (30-1 + 15)
 //
 // Verwacht voor status "In onderzoek":
-//   met uitsluiting   : 5 metingen, allemaal 2 dagen, 1 meting overgeslagen
-//   zonder uitsluiting: 6 metingen, langste 44 dagen
+//   met uitsluiting   : 5 metingen, allemaal 2 werkdagen, 1 overgeslagen
+//   zonder uitsluiting: 6 metingen, langste 32 werkdagen (= 44 kalenderdagen)
+//
+// Let op: sinds de duur per stap in werkdagen wordt gerekend, zijn dit
+// werkdagen. 1 juni -> 3 juni is 2 werkdagen (di en wo), en 1 juni -> 15 juli
+// is 32 werkdagen.
 //
 // Dat is precies het scheve beeld waar het om gaat: één blokkade verdubbelt de
 // langste meting ruim twintig keer.
@@ -97,6 +101,12 @@ const gebiedLijst = (groepen) => 'ZZE5A\n' + Object.values(groepen).flat().map(k
   await page.fill('#new-type-input', OV);
   await page.click('#add-type-btn');
   await page.waitForTimeout(150);
+  // Deze opzet meet om de paar dagen, en dat zijn sinds de werkdagen-telling
+  // allemaal meetgaten. Die worden standaard uitgesloten, en dan blijft er
+  // niets over om de blokkade-uitsluiting op te testen. Hier gaat het om
+  // blokkades, dus de gaten-uitsluiting staat uit; meetgaten.js bewaakt die.
+  await page.uncheck('#gaten-uitsluiten');
+  await page.waitForTimeout(400);
 
   // Blokkades worden via de echte UI gezet (de keuzelijst in de volledige
   // lijst), niet door in de state te prikken: dan loopt de test door dezelfde
@@ -201,7 +211,7 @@ const gebiedLijst = (groepen) => 'ZZE5A\n' + Object.values(groepen).flat().map(k
   const m2 = await metingen();
   console.log('    waarden:', JSON.stringify(m2.waarden), '| overgeslagen:', m2.overgeslagen);
   check('zes metingen', m2.waarden.length, 6);
-  check('en de langste is 44 dagen', m2.waarden[m2.waarden.length - 1], 44);
+  check('en de langste is 32 werkdagen (44 kalenderdagen)', m2.waarden[m2.waarden.length - 1], 32);
   check('niets meer overgeslagen', m2.overgeslagen, 0);
   // Zonder uitsluiting volgt de voorraadkaart dezelfde regel: de storing telt
   // dan weer gewoon mee in de opgehoopte wachttijd in plaats van in de

@@ -308,10 +308,10 @@
 
     <section class="card" id="boxplot-card">
       <div class="card-header">
-        <h2>📦 Hoe lang duurt elke stap?</h2>
+        <h2>📦 Hoe lang duurt elke stap? <span class="eenheid-merk">in werkdagen</span></h2>
         <button class="btn-link toggle-table" data-target="boxplot">Toon als tabel</button>
       </div>
-      <p class="muted small">Niet de voorraad van nu, maar alle afgeronde metingen bij elkaar: hoe lang een storing daadwerkelijk in elke stap bleef. Dagen omhoog, de statussen in procesvolgorde van links naar rechts. Per status: de box is de middelste helft van alle metingen, de streep erin is de mediaan (P50 — de helft is er sneller doorheen), de whiskers zijn het normale bereik en de losse punten zijn de uitschieters. Ligt de streep niet in het midden van de box, dan is de verdeling scheef en zit het probleem bij een paar gevallen in plaats van bij de hele bak — precies wat een gemiddelde onzichtbaar maakt. De plot werkt zich bij zodra je nieuwe data plakt.</p>
+      <p class="muted small">Niet de voorraad van nu, maar alle afgeronde metingen bij elkaar: hoe lang een storing daadwerkelijk in elke stap bleef. <strong>Gerekend in werkdagen</strong>, want in het weekend werkt er niemand: vrijdag → maandag is één dag. Werkdagen omhoog, de statussen in procesvolgorde van links naar rechts. Per status: de box is de middelste helft van alle metingen, de streep erin is de mediaan (P50 — de helft is er sneller doorheen), de whiskers zijn het normale bereik en de losse punten zijn de uitschieters. Ligt de streep niet in het midden van de box, dan is de verdeling scheef en zit het probleem bij een paar gevallen in plaats van bij de hele bak — precies wat een gemiddelde onzichtbaar maakt. De plot werkt zich bij zodra je nieuwe data plakt.</p>
       <div class="filter-tabs" id="boxplot-schaal">
         <button type="button" class="filter-tab active" data-boxplot-schaal="whisker">Tot het normale bereik</button>
         <button type="button" class="filter-tab" data-boxplot-schaal="alles">Inclusief uitschieters</button>
@@ -449,11 +449,11 @@
 
     <section class="card" id="status-streef-card">
       <h2>🎯 Doorlooptijd-normen</h2>
-      <p class="muted small">Eerst de norm voor het hele traject: hoe lang een NUS er hoogstens over mag doen van melding tot afsluiting. Daaronder diezelfde tijd verdeeld over de zes statussen — blijft elke stap binnen zijn deel, dan haalt het traject het vanzelf. Alles wat er overheen gaat komt op de Prognose-pagina in "Te lang onderweg".</p>
+      <p class="muted small">Eerst de norm voor het hele traject: hoe lang een NUS er hoogstens over mag doen van melding tot afsluiting, in <strong>kalenderdagen</strong>. Daaronder de norm per status, in <strong>werkdagen</strong> — dat is de eenheid waarin die duur ook gemeten wordt. Samen zijn het diezelfde 12 dagen verdeeld over de zes statussen — blijft elke stap binnen zijn deel, dan haalt het traject het vanzelf. Alles wat er overheen gaat komt op de Prognose-pagina in "Te lang onderweg".</p>
       <div class="input-row">
         <label for="doorlooptijd-norm-input">Hele traject</label>
         <input type="number" id="doorlooptijd-norm-input" min="1" max="365" step="1" inputmode="numeric" style="width:80px;">
-        <span class="muted small">dagen (12 dagen = 10 werkdagen)</span>
+        <span class="muted small">kalenderdagen (12 = ongeveer 10 werkdagen)</span>
       </div>
       <p id="status-streef-filter" class="muted small hidden"></p>
       <div id="status-streef-body"></div>
@@ -463,6 +463,20 @@
         <button id="status-streef-save-btn" class="btn-primary">Opslaan</button>
         <span id="status-streef-status" class="muted small"></span>
       </div>
+    </section>
+
+    <section class="card" id="meetgaten-card">
+      <h2>📅 Meetgaten en werkdagen</h2>
+      <p class="muted small">Het dashboard weet alleen wat je hebt geplakt. Sla je een werkdag over, dan ziet het de statuswissels van die dag pas later — en krijgt de vorige status er al die tijd bij. Een week vakantie levert zo metingen van negen dagen op die niets met stagnatie te maken hebben, maar wel bovenaan in de boxplot komen te staan.</p>
+      <p class="muted small">De duur <strong>per processtap</strong> wordt daarom in <strong>werkdagen</strong> gerekend: vrijdag → maandag is één dag, niet drie. Zonder dat zou elke stap die toevallig in het weekend valt verdrievoudigen, en dat raakt juist de korte stappen met een norm van één dag. De duur van het <strong>hele traject</strong> blijft in kalenderdagen — een klant staat in het weekend ook in het donker.</p>
+      <div class="input-row">
+        <label for="gaten-uitsluiten">
+          <input type="checkbox" id="gaten-uitsluiten">
+          Metingen die over een meetgat lopen niet meetellen
+        </label>
+      </div>
+      <p class="muted small">Aan laten staan is de eerlijke keuze: bij zo'n meting weet je niet hoe lang de stap duurde, alleen dat het hooguit zoveel was. Uitzetten kan als je weinig metingen hebt en liever een onzeker getal ziet dan geen — als je maar weet wat je dan bekijkt.</p>
+      <div id="meetgaten-body"></div>
     </section>
 
     <section class="card" id="blokkade-card">
