@@ -33,6 +33,18 @@ const { chromium } = require('playwright');
   check('noemt de mediaan', /binnen 1 dag doorheen/.test(uit.metStaart), true);
   check('zwijgt bij een vlakke verdeling', uit.zonderStaart, '');
   check('zwijgt bij te weinig metingen', uit.teWeinig, '');
+  // De eenheid op de grafiek zelf. Een as die "dagen" zegt boven werkdagen is
+  // stille verwarring: iemand vergelijkt het dan met de trajectduur, die wél
+  // in kalenderdagen staat.
+  const asTeksten = await p.evaluate(() => {
+    const waarden = [1, 2, 3, 4, 5, 6];
+    const rijen = [{ key: 'Nieuw', label: 'Nieuw', waarden, box: boxplotVan(waarden), overgeslagen: 0, gatOvergeslagen: 0 }];
+    const el = document.createElement('div');
+    el.innerHTML = boxplotSvgHtml(rijen);
+    return Array.from(el.querySelectorAll('text')).map(t => t.textContent);
+  });
+  check('de Y-as noemt werkdagen', asTeksten.includes('werkdagen'), true);
+  check('en nergens een kale "dagen"-as', asTeksten.includes('dagen'), false);
   check('geen paginafouten', errs.join(' ') || 'geen', 'geen');
   console.log(fouten === 0 ? '\nALLES GOED' : `\n${fouten} controle(s) mislukt`);
   await b.close();

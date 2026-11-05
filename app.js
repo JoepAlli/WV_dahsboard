@@ -5444,8 +5444,8 @@ function normBalkHtml(perStatus, traject) {
     }
     const norm = Math.round(p.normInfo.norm * 10) / 10;
     const bronTekst = p.normInfo.bron === 'streef'
-      ? `streefwaarde ${norm} ${norm === 1 ? 'dag' : 'dagen'}`
-      : `P50 ${norm} ${norm === 1 ? 'dag' : 'dagen'} · melden vanaf ${Math.round(p.normInfo.drempel)}`;
+      ? `streefwaarde ${norm} ${norm === 1 ? 'werkdag' : 'werkdagen'}`
+      : `P50 ${norm} ${norm === 1 ? 'werkdag' : 'werkdagen'} · melden vanaf ${Math.round(p.normInfo.drempel)}`;
     vakken.push(normVakHtml({
       filter: p.status,
       alarm: p.teLang > 0,
@@ -5701,10 +5701,10 @@ function boxplotSvgHtml(rijen) {
 
   return `<div class="box-scroll"><svg class="chart-svg boxplot-svg" viewBox="0 0 ${BOX_BREEDTE} ${BOX_HOOGTE}"
       style="width:100%;min-width:640px;height:${BOX_HOOGTE}px" role="img"
-      aria-label="Boxplot van de doorlooptijd per status, in dagen">
+      aria-label="Boxplot van de doorlooptijd per status, in werkdagen">
     ${grid}
     <text x="14" y="${BOX_MARGE.boven + plotH / 2}" class="box-as-titel" text-anchor="middle"
-          transform="rotate(-90 14 ${BOX_MARGE.boven + plotH / 2})">dagen</text>
+          transform="rotate(-90 14 ${BOX_MARGE.boven + plotH / 2})">werkdagen</text>
     ${kolommen}
   </svg></div>`;
 }
