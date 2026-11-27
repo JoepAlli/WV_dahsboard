@@ -1342,6 +1342,17 @@ tr.detail-row > td {
   opacity: 1;
 }
 .kaart-uitleg { margin-bottom: 0.6rem; }
+
+/* De opstartfoutbalk. Bovenaan en over de volle breedte, want als deze
+   verschijnt is er iets wezenlijk mis en moet het niet te missen zijn. */
+.opstart-fout {
+  padding: 0.8rem 1.1rem;
+  background: color-mix(in srgb, var(--status-critical) 12%, var(--surface-1));
+  border-bottom: 2px solid var(--status-critical);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
 /* De eenheid naast een kaarttitel. De duur per processtap is in werkdagen en
    het traject in kalenderdagen; zonder dat erbij te zetten vergelijkt iemand
    vroeg of laat appels met peren. */

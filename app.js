@@ -7388,27 +7388,65 @@ async function laadInstellingenInState() {
   state.opvolging = await loadOpvolging();
 }
 
+// Een belofte die niet eindeloos mag duren. Nodig voor de datamap: staat een
+// bestand in OneDrive als "alleen online", dan kan het uitlezen minutenlang
+// hangen — en zonder grens hangt het hele dashboard mee.
+function metTijdslimiet(belofte, ms, melding) {
+  let klok;
+  return Promise.race([
+    Promise.resolve(belofte).finally(() => clearTimeout(klok)),
+    new Promise((_, verwerp) => { klok = setTimeout(() => verwerp(new Error(melding)), ms); }),
+  ]);
+}
+const MAP_TIJDSLIMIET_MS = 20000;
+
+function tekenAllesNaLaden() {
+  if (state.snapshots.length > 0) { renderDashboardFromState(); return; }
+  setDashboardEmpty('dashboard', 'dashboard-empty', true);
+  renderTypeWhitelist();
+  renderStatusStreefCard();
+  renderBlokkadeUitsluitenCard();
+  renderMeetGatenCard();
+  renderDataMapCard();
+  renderBackupReminder();
+  renderBackupStatus();
+}
+
+// De datamap synchroniseren. Bewust NA het tekenen en met een tijdslimiet:
+// het dashboard moet bruikbaar zijn op de lokale kopie, ook als de map traag
+// of onbereikbaar is. Anders maakt een haperende netwerkmap de hele tool
+// onbruikbaar — en dan kun je de koppeling niet eens meer losmaken, want
+// daarvoor moet je kunnen klikken.
+async function synchroniseerDataMapBijStart() {
+  try {
+    state.dataMap.handle = await metTijdslimiet(loadMapHandle(), 5000, 'de opgeslagen map kon niet worden gelezen');
+  } catch (e) {
+    state.dataMap.fout = e.message || String(e);
+    renderDataMapCard();
+    return;
+  }
+  if (!state.dataMap.handle) { renderDataMapCard(); return; }
+  state.dataMap.naam = state.dataMap.handle.name || '';
+  renderDataMapCard();
+  try {
+    const uitkomst = await metTijdslimiet(
+      mapSynchroniseerBijStart(), MAP_TIJDSLIMIET_MS,
+      `de map reageerde niet binnen ${MAP_TIJDSLIMIET_MS / 1000} seconden — er is met de lokale kopie verder gewerkt`);
+    state.dataMap.bronBijStart = uitkomst ? uitkomst.uitkomst : null;
+  } catch (e) {
+    state.dataMap.fout = e.message || String(e);
+  }
+  renderDataMapCard();
+  if (state.dataMap.bronBijStart === 'map-nieuwer') tekenAllesNaLaden();
+}
+
 async function reloadAllStateAndRender() {
   state.snapshots = await loadSnapshots();
   state.lastBackupAt = await loadLastBackupAt();
   await laadInstellingenInState();
-
-  // De map als laatste, want die kan de hele stand overnemen van een
-  // voorganger. Mislukt dit, dan werkt het dashboard gewoon lokaal door.
-  state.dataMap.handle = await loadMapHandle();
-  if (state.dataMap.handle) {
-    state.dataMap.naam = state.dataMap.handle.name || '';
-    try {
-      const uitkomst = await mapSynchroniseerBijStart();
-      state.dataMap.bronBijStart = uitkomst ? uitkomst.uitkomst : null;
-    } catch (e) {
-      state.dataMap.fout = e.message || String(e);
-    }
-  }
-  renderDataMapCard();
-
-  if (state.snapshots.length > 0) renderDashboardFromState();
-  else { setDashboardEmpty('dashboard', 'dashboard-empty', true); renderTypeWhitelist(); renderStatusStreefCard(); renderBlokkadeUitsluitenCard(); renderMeetGatenCard(); renderDataMapCard(); renderBackupReminder(); renderBackupStatus(); }
+  // Eerst tekenen op wat lokaal staat, dan pas de map erbij halen.
+  tekenAllesNaLaden();
+  await synchroniseerDataMapBijStart();
 }
 
 function wireEvents() {
@@ -8134,17 +8172,43 @@ function verbergKaartUitleg() {
   });
 }
 
+// Een pagina die bij een fout halverwege blijft staan is erger dan een pagina
+// met een foutmelding: je ziet een dashboard dat nergens op reageert en weet
+// niet of het aan jou ligt. Deze balk zegt wat er mis is en hoe je verder komt.
+function toonOpstartFout(e) {
+  console.error('Opstarten mislukt:', e);
+  const banner = document.getElementById('opstart-fout');
+  if (!banner) return;
+  banner.innerHTML = `<strong>Het laden van je gegevens is misgegaan.</strong> `
+    + `De tabbladen werken wel, dus je kunt naar Instellingen om een back-up terug te zetten of de datamap los te koppelen. `
+    + `Melding: ${esc(e && e.message ? e.message : String(e))}`;
+  banner.classList.remove('hidden');
+}
+
 async function init() {
   document.getElementById('week-date').value = new Date().toISOString().slice(0, 10);
   wireEvents();
   renderLijstKeuze();
-  if (isStaticExport) applyStaticExportData();
-  else await reloadAllStateAndRender();
-  document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
-  document.getElementById('cap-meetdienst').value = state.capaciteit.meetdienst;
-  document.getElementById('cap-mio').value = state.capaciteit.mio;
+  // De navigatie staat bewust vóór het laden van de data. Gaat dat laden mis
+  // of blijft het hangen, dan werkt het dashboard niet — maar kun je wél nog
+  // klikken, en dus bij Instellingen komen om het op te lossen.
   setupTabNav();
   verbergKaartUitleg();
+  try {
+    if (isStaticExport) applyStaticExportData();
+    else await reloadAllStateAndRender();
+    document.getElementById('bijna-verlopen-threshold-input').value = state.bijnaVerlopenThreshold;
+    document.getElementById('cap-meetdienst').value = state.capaciteit.meetdienst;
+    document.getElementById('cap-mio').value = state.capaciteit.mio;
+  } catch (e) {
+    toonOpstartFout(e);
+  }
 }
+
+// Een fout buiten het opstarten om mag ook niet stil blijven: zonder server
+// zijn er geen logboeken, dus als het scherm niets doet is dit het enige
+// spoor dat de gebruiker heeft.
+window.addEventListener('error', (e) => toonOpstartFout(e.error || e.message));
+window.addEventListener('unhandledrejection', (e) => toonOpstartFout(e.reason));
 
 document.addEventListener('DOMContentLoaded', init);

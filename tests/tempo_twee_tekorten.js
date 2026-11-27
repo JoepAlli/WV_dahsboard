@@ -40,7 +40,7 @@ const VERWACHT = { instroomPW: '5.0', opgelostPW: '3.0', achterPW: '2.0', capaci
 (async () => {
   const errs = [];
   let fouten = 0;
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', headless: true });
+  const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1500, height: 1100 } });
   page.on('pageerror', e => errs.push('pageerror: ' + e.message));
   page.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text()); });

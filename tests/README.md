@@ -9,7 +9,9 @@ Draaien:
 
     NODE_PATH=/opt/node22/lib/node_modules node tests/<bestand>.js
 
-Chromium staat op `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`. Elke
+Playwright zoekt Chromium zelf op via `PLAYWRIGHT_BROWSERS_PATH`; leg dat pad
+niet vast in een test, want het versienummer verandert bij elke update van de
+omgeving en dan is de hele suite in één klap stuk. Elke
 test opent `file:///home/user/WV_dahsboard/index.html`, werkt met een eigen
 IndexedDB en sluit af met `ALLES GOED` of het aantal mislukte controles.
 
@@ -29,3 +31,4 @@ IndexedDB en sluit af met `ALLES GOED` of het aantal mislukte controles.
 | `dubbele_meldingen.js` | Dat alleen storingen die tegelijk openstonden als dubbele melding tellen, en herhaling op dezelfde plek juist niet |
 | `meetgaten.js` | Dat de duur per processtap in werkdagen wordt gerekend (het weekend telt niet mee) en dat metingen over een meetgat worden weggelaten in plaats van als stagnatie te verschijnen |
 | `overgangen.js` | Dat terugstappen in het proces als zodanig worden herkend, inclusief overgangen die stappen overslaan, en dat de richting per overgang klopt |
+| `opstart_robuust.js` | Dat een trage of onbereikbare datamap het dashboard niet blokkeert, en dat bij een laadfout de tabbladen blijven werken met een zichtbare melding |

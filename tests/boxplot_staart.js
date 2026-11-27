@@ -3,7 +3,7 @@
 // niet voor. Hier voeren we de rijen direct in.
 const { chromium } = require('playwright');
 (async () => {
-  const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', headless: true });
+  const b = await chromium.launch({ headless: true });
   const p = await b.newPage();
   const errs = [];
   p.on('pageerror', e => errs.push(e.message));
